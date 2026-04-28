@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Talking Agent · App 3 Avatar Puppet Lab</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/",
+          "@pixiv/three-vrm": "/vendor/@pixiv/three-vrm/three-vrm.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="shell stack-xl">
+      <section class="panel hero stack-lg">
+        <div class="stack-md">
+          <span class="eyebrow">App 3 · Avatar Puppet Lab</span>
+          <h1>Validate a browser-side 3D avatar stack before the live room exists.</h1>
+          <p class="lede">
+            This probe drops the failed 2D portrait path. The question is now narrower and more
+            useful: can a local VRM avatar, running in the browser with expressions, gaze, and a
+            few controlled gesture presets, feel good enough for the first talking agent.
+          </p>
+        </div>
+
+        <div class="hero-meta">
+          <div class="status-tile">
+            <span class="status-label">Renderer</span>
+            <strong>VRM 1.0 on Three.js</strong>
+          </div>
+          <div class="status-tile">
+            <span class="status-label">Default Model</span>
+            <strong>Bundled VRoid sample</strong>
+          </div>
+          <div class="status-tile">
+            <span class="status-label">Control Layer</span>
+            <strong>Speech, gaze, and gesture presets</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="dashboard">
+        <article class="panel controls stack-lg">
+          <div class="stack-sm">
+            <h2>Puppet Controls</h2>
+            <p class="muted">
+              The model is now a real VRM avatar. The app drives mouth presets, emotes, look-at,
+              and a small gesture vocabulary instead of drawing anatomy by hand.
+            </p>
+          </div>
+
+          <div class="status-grid">
+            <div id="runtime-card" class="status-card" data-state="loading">
+              <span class="status-label">Runtime</span>
+              <strong id="runtime-status">Loading runtime config…</strong>
+              <p id="runtime-detail" class="status-detail">Preparing the local VRM stack.</p>
+            </div>
+
+            <div id="voice-card" class="status-card" data-state="loading">
+              <span class="status-label">Voice Engine</span>
+              <strong id="voice-status">Loading system voices…</strong>
+              <p id="voice-detail" class="status-detail">Waiting for the browser voice registry.</p>
+            </div>
+
+            <div id="playback-card" class="status-card" data-state="idle">
+              <span class="status-label">Playback</span>
+              <strong id="playback-status">Idle</strong>
+              <p id="playback-detail" class="status-detail">Nothing is speaking right now.</p>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-header">
+              <span class="legend">Avatar</span>
+              <p class="field-note">
+                The bundled default is a permissive VRoid sample. You can swap in your own `.vrm`
+                file locally without changing the app code.
+              </p>
+            </div>
+            <div class="chip-row" role="group" aria-label="Avatar source actions">
+              <button id="load-local-model" type="button">Use Local VRM…</button>
+              <button id="use-bundled-model" type="button">Use Bundled Model</button>
+            </div>
+            <input id="local-model-input" type="file" accept=".vrm" hidden />
+            <div class="callout" id="model-note" data-state="loading">
+              Loading the bundled avatar.
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-header">
+              <label for="script-input">Script</label>
+              <p class="field-note">
+                English-only is fine for this pass. We are validating the motion contract, not the
+                final TTS stack.
+              </p>
+            </div>
+            <div id="script-presets" class="chip-row" role="toolbar" aria-label="Script presets"></div>
+            <textarea
+              id="script-input"
+              name="script-input"
+              rows="5"
+              autocomplete="off"
+              spellcheck="false"
+            ></textarea>
+          </div>
+
+          <div class="field">
+            <div class="field-header">
+              <span class="legend">Stage</span>
+              <p class="field-note">
+                Stage presets change the shell atmosphere and the key, fill, and rim lights around
+                the same avatar.
+              </p>
+            </div>
+            <div id="stage-options" class="chip-row" role="toolbar" aria-label="Stage presets"></div>
+          </div>
+
+          <div class="field">
+            <div class="field-header">
+              <span class="legend">Emote</span>
+              <p class="field-note">
+                Emotion drives VRM expression weights, head attitude, and gaze softness without
+                changing the selected gesture.
+              </p>
+            </div>
+            <div id="emote-options" class="chip-row" role="toolbar" aria-label="Emote presets"></div>
+          </div>
+
+          <div class="field">
+            <div class="field-header">
+              <span class="legend">Gesture</span>
+              <p class="field-note">
+                Gestures are deliberately few and named semantically so an agent can choose among
+                them safely later.
+              </p>
+            </div>
+            <div
+              id="gesture-options"
+              class="chip-row"
+              role="toolbar"
+              aria-label="Gesture presets"
+            ></div>
+          </div>
+
+          <div class="slider-grid">
+            <div class="field">
+              <label for="voice-select">Voice</label>
+              <select id="voice-select" name="voice-select" autocomplete="off" disabled>
+                <option>Loading system voices…</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="speech-rate"
+                >Speech Rate <span id="speech-rate-value" class="value-tag">1.00x</span></label
+              >
+              <input id="speech-rate" type="range" min="0.7" max="1.35" step="0.05" value="1" />
+            </div>
+
+            <div class="field">
+              <label for="speech-pitch"
+                >Pitch <span id="speech-pitch-value" class="value-tag">1.00x</span></label
+              >
+              <input id="speech-pitch" type="range" min="0.75" max="1.4" step="0.05" value="1" />
+            </div>
+
+            <div class="field">
+              <label for="speech-energy"
+                >Motion Energy <span id="speech-energy-value" class="value-tag">1.00x</span></label
+              >
+              <input
+                id="speech-energy"
+                type="range"
+                min="0.65"
+                max="1.5"
+                step="0.05"
+                value="1"
+              />
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="play-script" class="primary" type="button">Play With Voice</button>
+            <button id="silent-preview" type="button">Run Silent Preview</button>
+            <button id="stop-script" type="button" disabled>Stop</button>
+            <button id="randomize-scene" type="button">Randomize State</button>
+            <button id="recenter-look" type="button">Center Gaze</button>
+          </div>
+
+          <div id="voice-state-panel" class="callout" data-state="loading">
+            Loading system voices. Silent preview stays available even if the browser never exposes a
+            local voice.
+          </div>
+        </article>
+
+        <article class="panel stage-panel stack-lg">
+          <div class="stage-header">
+            <div class="stack-sm">
+              <h2>Stage Preview</h2>
+              <p class="muted">
+                The canvas now hosts a real WebGL scene and VRM avatar, ready to be composited into
+                a future call layout.
+              </p>
+            </div>
+
+            <div class="badge-row">
+              <span class="badge">
+                <span class="badge-label">Avatar</span>
+                <strong id="active-avatar">Bundled Sample</strong>
+              </span>
+              <span class="badge">
+                <span class="badge-label">Emote</span>
+                <strong id="active-emote">Neutral</strong>
+              </span>
+              <span class="badge">
+                <span class="badge-label">Gesture</span>
+                <strong id="active-gesture">Idle</strong>
+              </span>
+            </div>
+          </div>
+
+          <div id="stage-shell" class="stage-shell">
+            <div class="stage-grid" aria-hidden="true"></div>
+            <div class="pulse pulse-a" aria-hidden="true"></div>
+            <div class="pulse pulse-b" aria-hidden="true"></div>
+            <canvas
+              id="avatar-canvas"
+              class="avatar-canvas"
+              width="1040"
+              height="1240"
+              role="img"
+              aria-label="Bust-up VRM avatar preview with speech, gaze, and gesture control"
+            ></canvas>
+            <div class="canvas-note">VRM avatar on the same capture-ready canvas.</div>
+          </div>
+
+          <div class="detail-grid">
+            <div>
+              <dt>Speech Mode</dt>
+              <dd id="speech-mode">idle</dd>
+            </div>
+            <div>
+              <dt>Estimated Duration</dt>
+              <dd id="estimated-duration">0.0s</dd>
+            </div>
+            <div>
+              <dt>Mouth Preset</dt>
+              <dd id="active-viseme">rest</dd>
+            </div>
+            <div>
+              <dt>Look Target</dt>
+              <dd id="look-target">center</dd>
+            </div>
+          </div>
+
+          <div id="scene-note" class="scene-note">Idle. Pick a script and run the avatar.</div>
+        </article>
+      </section>
+
+      <section class="dashboard secondary">
+        <article class="panel stack-lg">
+          <div class="stack-sm">
+            <h2>What This Validates</h2>
+            <p class="muted">
+              This pass is about picking the right rendering contract, not finishing the whole
+              character product.
+            </p>
+          </div>
+
+          <ul class="signal-list">
+            <li>The avatar is a real rigged model with a standardized humanoid skeleton.</li>
+            <li>Speech drives VRM mouth presets instead of hand-drawn 2D shapes.</li>
+            <li>Emotes and gaze remain separate from gestures so agent control stays composable.</li>
+            <li>Gesture choice is intentionally semantic and bounded, not arbitrary bone puppeting.</li>
+            <li>The browser stack stays open and local: VRM, Three.js, and local model assets.</li>
+          </ul>
+        </article>
+
+        <article class="panel stack-lg">
+          <div class="stack-sm">
+            <h2>Run Log</h2>
+            <p class="muted">
+              Model loads, runtime fetches, voice refreshes, playback starts, and failures land here
+              for quick local debugging.
+            </p>
+          </div>
+
+          <ol id="log-list" class="log-list">
+            <li class="log-line">App booting…</li>
+          </ol>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

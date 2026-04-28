@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LiveKit Smoke</title>
+  </head>
+  <body>
+    <main>
+      <h1>LiveKit Smoke</h1>
+      <pre id="result">booting</pre>
+    </main>
+    <script type="module">
+      import { Room } from '/vendor/livekit-client.mjs';
+
+      const result = document.querySelector('#result');
+
+      function setResult(payload) {
+        result.textContent = JSON.stringify(payload, null, 2);
+      }
+
+      async function run() {
+        const roomName = `smoke-${Math.random().toString(36).slice(2, 8)}`;
+        const identity = `smoke-${Math.random().toString(36).slice(2, 8)}`;
+
+        const tokenResponse = await fetch('/api/token', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            roomName,
+            identity,
+            participantName: 'Smoke Probe',
+            metadata: '{"role":"smoke"}',
+          }),
+        });
+
+        const tokenPayload = await tokenResponse.json();
+        if (!tokenResponse.ok || !tokenPayload.ok) {
+          setResult({
+            ok: false,
+            stage: 'token',
+            payload: tokenPayload,
+          });
+          return;
+        }
+
+        const room = new Room();
+
+        try {
+          await room.connect('ws://127.0.0.1:7880', tokenPayload.token);
+          setResult({
+            ok: true,
+            stage: 'connected',
+            room: room.name,
+            identity: room.localParticipant.identity,
+            state: room.state,
+          });
+        } catch (error) {
+          setResult({
+            ok: false,
+            stage: 'connect',
+            error: {
+              name: error?.name,
+              message: error?.message,
+              stack: error?.stack,
+            },
+          });
+        } finally {
+          try {
+            await room.disconnect();
+          } catch {}
+        }
+      }
+
+      run().catch((error) => {
+        setResult({
+          ok: false,
+          stage: 'crash',
+          error: {
+            name: error?.name,
+            message: error?.message,
+            stack: error?.stack,
+          },
+        });
+      });
+    </script>
+  </body>
+</html>

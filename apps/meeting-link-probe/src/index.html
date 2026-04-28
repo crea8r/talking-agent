@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Talking Agent · App 1 LiveKit Probe</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell stack-lg">
+      <section class="card hero stack-lg">
+        <div class="stack-md">
+          <span class="eyebrow">App 1 · LiveKit Self-Host Probe</span>
+          <h1>Probe the room layer before we build the agent.</h1>
+          <p class="lede">
+            This replaces the public Jitsi experiment with a self-hosted LiveKit spike. The goal is
+            narrower now: prove that a human browser client can mint a token, join a room, publish
+            media, and see future machine participants on infrastructure we control.
+          </p>
+        </div>
+        <div class="callout">
+          This app is local-only. It binds to <code>127.0.0.1:4381</code> and can mint dev tokens
+          through the local server. It is not production auth. The sample agent below is an in-page
+          publisher for the prerecorded media, not the final headless runtime.
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="card stack-lg">
+          <div class="stack-sm">
+            <h2>Connection Setup</h2>
+            <p class="muted">
+              Use a self-hosted LiveKit URL. For a local dev server, the default is
+              <code>ws://127.0.0.1:7880</code>.
+            </p>
+          </div>
+
+          <div class="field">
+            <label for="livekit-url">LiveKit WebSocket URL</label>
+            <input id="livekit-url" name="livekit-url" placeholder="ws://127.0.0.1:7880" />
+          </div>
+
+          <div class="detail-grid">
+            <div>
+              <dt>Server Defaults</dt>
+              <dd id="server-defaults">Loading runtime config…</dd>
+            </div>
+            <div>
+              <dt>Probe Status</dt>
+              <dd id="probe-status">Idle</dd>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="room-name">Room Name</label>
+            <input id="room-name" name="room-name" placeholder="app1-probe-room" />
+          </div>
+
+          <div class="detail-grid">
+            <div>
+              <dt>Identity</dt>
+              <dd>
+                <input id="identity" name="identity" placeholder="human-probe-01" />
+              </dd>
+            </div>
+            <div>
+              <dt>Display Name</dt>
+              <dd>
+                <input id="participant-name" name="participant-name" placeholder="Human Probe" />
+              </dd>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="metadata">Participant Metadata</label>
+            <textarea
+              id="metadata"
+              name="metadata"
+              rows="4"
+              placeholder='{"role":"human","app":"app1"}'
+            ></textarea>
+          </div>
+
+          <div class="detail-grid">
+            <div>
+              <dt>API Key</dt>
+              <dd>
+                <input id="api-key" name="api-key" placeholder="devkey" />
+              </dd>
+            </div>
+            <div>
+              <dt>API Secret</dt>
+              <dd>
+                <input
+                  id="api-secret"
+                  name="api-secret"
+                  type="password"
+                  autocomplete="off"
+                  placeholder="secret"
+                />
+              </dd>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="token">Access Token</label>
+            <textarea
+              id="token"
+              name="token"
+              rows="5"
+              placeholder="Mint locally or paste an existing participant token"
+            ></textarea>
+          </div>
+
+          <div class="toolbar">
+            <label class="toggle">
+              <input id="enable-camera" type="checkbox" />
+              <span>Enable camera after connect</span>
+            </label>
+            <label class="toggle">
+              <input id="enable-microphone" type="checkbox" />
+              <span>Enable microphone after connect</span>
+            </label>
+            <label class="toggle">
+              <input id="auto-launch-sample-agent" type="checkbox" checked />
+              <span>Auto-launch sample agent after connect</span>
+            </label>
+          </div>
+
+          <div class="detail-grid">
+            <div>
+              <dt>Sample Agent</dt>
+              <dd id="sample-agent-status">idle</dd>
+            </div>
+            <div>
+              <dt>Sample Media</dt>
+              <dd><code>/media/sample.mov</code> + <code>/media/sample.mp3</code></dd>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="mint-token" class="primary" type="button">Mint Local Token</button>
+            <button id="join-room" type="button">Join Room</button>
+            <button id="disconnect-room" type="button" disabled>Disconnect</button>
+            <button id="launch-sample-agent" type="button">Launch Sample Agent</button>
+            <button id="stop-sample-agent" type="button" disabled>Stop Sample Agent</button>
+            <button id="copy-probe-link" type="button">Copy Probe URL</button>
+          </div>
+        </article>
+
+        <article class="card stack-lg">
+          <div class="stack-sm">
+            <h2>Room Snapshot</h2>
+            <p class="muted">
+              This reflects the current LiveKit room object and the participant state we need before
+              introducing the headless agent runtime.
+            </p>
+          </div>
+
+          <div class="detail-grid">
+            <div>
+              <dt>Connection State</dt>
+              <dd id="connection-state">disconnected</dd>
+            </div>
+            <div>
+              <dt>Room</dt>
+              <dd id="current-room">none</dd>
+            </div>
+            <div>
+              <dt>Local Identity</dt>
+              <dd id="current-identity">none</dd>
+            </div>
+            <div>
+              <dt>Remote Participants</dt>
+              <dd id="remote-count">0</dd>
+            </div>
+          </div>
+
+          <div class="callout" id="audio-gate">
+            Remote audio will autoplay when the browser allows it. If the browser blocks playback,
+            this panel will prompt you to start audio manually.
+          </div>
+
+          <div class="actions">
+            <button id="start-audio" type="button" hidden>Start Room Audio</button>
+            <button id="copy-debug-snapshot" type="button">Copy Debug Snapshot</button>
+          </div>
+
+          <div class="field">
+            <label for="token-claims">Decoded Token Claims</label>
+            <pre id="token-claims" class="debug-output">No token yet.</pre>
+          </div>
+
+          <div class="field">
+            <label for="debug-snapshot">Debug Snapshot</label>
+            <pre id="debug-snapshot" class="debug-output">Idle.</pre>
+          </div>
+        </article>
+      </section>
+
+      <section class="grid">
+        <article class="card stack-lg">
+          <div class="stack-sm">
+            <h2>Local Preview</h2>
+            <p class="muted">
+              This is only for the browser participant. The future headless agent participant will
+              publish media without this UI.
+            </p>
+          </div>
+          <div id="local-stage" class="participant-stage">
+            <div class="empty-state">Connect and publish a camera track to see the local preview.</div>
+          </div>
+        </article>
+
+        <article class="card stack-lg">
+          <div class="stack-sm">
+            <h2>Remote Participants</h2>
+            <p class="muted">
+              When another human tab, bot, or future agent joins the same room, it will appear here.
+            </p>
+          </div>
+          <div id="remote-grid" class="participant-grid">
+            <div class="empty-state">
+              No remote participants yet. Launch the sample agent or join the same room from another
+              browser context.
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="card stack-lg">
+        <div class="stack-sm">
+          <h2>Event Log</h2>
+          <p class="muted">
+            SDK events and app decisions are logged here so we can debug transport behavior before we
+            add the prerecorded media bot.
+          </p>
+        </div>
+        <ol id="log-list" class="log-list">
+          <li class="log-line">App booting…</li>
+        </ol>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "updatedAt": "2026-04-26T05:08:58.950Z",
+  "sessions": {
+    "f256786f-babf-4ab7-99b8-5ea5a63a8a30": {
+      "id": "f256786f-babf-4ab7-99b8-5ea5a63a8a30",
+      "title": "Smoke Test 2 x Codex",
+      "roomName": "app4-smoke",
+      "livekitUrl": "ws://127.0.0.1:7880",
+      "createdAt": "2026-04-26T05:08:15.600Z",
+      "updatedAt": "2026-04-26T05:08:58.950Z",
+      "lastSeenAt": "2026-04-26T05:08:58.950Z",
+      "human": {
+        "identity": "human-smoke-2",
+        "name": "Smoke Test 2"
+      },
+      "agent": {
+        "id": "local-demo-agent",
+        "label": "Local Demo Agent",
+        "lastSeenAt": "2026-04-26T05:08:35.800Z"
+      },
+      "metadata": {
+        "source": "verification"
+      },
+      "turns": [
+        {
+          "id": "462e6b53-a01f-48ca-b73c-5fef7fcce748",
+          "source": "typed",
+          "transcript": "Hello Codex, give me a status update.",
+          "createdAt": "2026-04-26T05:08:21.993Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-smoke-2",
+            "name": "Smoke Test 2"
+          },
+          "agentClaim": {
+            "agentId": "local-demo-agent",
+            "agentLabel": "Local Demo Agent",
+            "claimedAt": "2026-04-26T05:08:35.798Z"
+          },
+          "agentReply": {
+            "id": "7881d5c0-e414-4c3a-8f45-68e3e20f0c6c",
+            "text": "Hello. The one-to-one room is active, the avatar is listening, and the MCP bridge is ready for Codex.",
+            "createdAt": "2026-04-26T05:08:35.800Z",
+            "playedAt": "2026-04-26T05:08:58.923Z",
+            "agentId": "local-demo-agent",
+            "agentLabel": "Local Demo Agent",
+            "emoteId": "warm",
+            "gestureId": "greet",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Injected by the local fallback route for spike verification."
+          }
+        }
+      ]
+    }
+  }
+}

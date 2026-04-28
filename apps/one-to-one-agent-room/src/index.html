@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Talking Agent · App 4 One-to-One Agent Room</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/",
+          "@pixiv/three-vrm": "/vendor/@pixiv/three-vrm/three-vrm.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="shell stack-xl">
+      <section class="panel hero stack-lg">
+        <div class="stack-md">
+          <span class="eyebrow">App 4 · One-to-One Agent Room</span>
+          <h1>Join one human to one live avatar agent through a Codex MCP bridge.</h1>
+          <p class="lede">
+            This is the integration spike described in
+            <code>docs/6-app-plan.md</code>. The room transport, browser voice path, avatar rig,
+            and MCP bridge are now combined into one call flow. The app shell stays thin so the
+            reusable parts can survive into the final product.
+          </p>
+        </div>
+
+        <div class="hero-meta">
+          <div class="status-tile">
+            <span class="status-label">Transport</span>
+            <strong>LiveKit room-layer</strong>
+          </div>
+          <div class="status-tile">
+            <span class="status-label">Avatar Speech</span>
+            <strong>Reusable browser package</strong>
+          </div>
+          <div class="status-tile">
+            <span class="status-label">Agent Runtime</span>
+            <strong>Codex via MCP bridge</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="dashboard">
+        <article class="panel controls stack-lg">
+          <div class="stack-sm">
+            <h2>Call Setup</h2>
+            <p class="muted">
+              Create a human call session, connect the browser to the room, then hand the turns to
+              Codex through the MCP bridge command below.
+            </p>
+          </div>
+
+          <div class="status-grid">
+            <div class="status-card" data-state="idle">
+              <span class="status-label">Room</span>
+              <strong id="room-status">Idle</strong>
+              <p class="status-detail" id="room-detail">Not connected to a LiveKit room yet.</p>
+            </div>
+
+            <div class="status-card" data-state="idle">
+              <span class="status-label">Bridge</span>
+              <strong id="bridge-status">No session</strong>
+              <p class="status-detail" id="bridge-detail">Create the call before Codex can claim turns.</p>
+            </div>
+
+            <div class="status-card" data-state="idle">
+              <span class="status-label">Agent</span>
+              <strong id="agent-status">Waiting</strong>
+              <p class="status-detail" id="agent-detail">No reply is playing.</p>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="livekit-url">LiveKit WebSocket URL</label>
+            <input id="livekit-url" name="livekit-url" placeholder="ws://127.0.0.1:7880" />
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="room-name">Room Name</label>
+              <input id="room-name" name="room-name" placeholder="app4-one-to-one-room" />
+            </div>
+
+            <div class="field">
+              <label for="identity">Human Identity</label>
+              <input id="identity" name="identity" placeholder="human-room-01" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="participant-name">Human Display Name</label>
+            <input id="participant-name" name="participant-name" placeholder="Human Caller" />
+          </div>
+
+          <div class="toggle-row" role="group" aria-label="Media publish settings">
+            <label class="toggle">
+              <input id="enable-camera" type="checkbox" />
+              <span>Publish camera after connect</span>
+            </label>
+            <label class="toggle">
+              <input id="enable-microphone" type="checkbox" />
+              <span>Publish microphone after connect</span>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="join-call" class="primary" type="button">Create Call</button>
+            <button id="disconnect-call" type="button" disabled>Disconnect</button>
+            <button id="copy-mcp-command" type="button">Copy MCP Command</button>
+            <button id="run-demo-reply" type="button" disabled>Run Local Fallback Reply</button>
+          </div>
+
+          <div class="field">
+            <label for="mcp-command">Codex MCP Bootstrap</label>
+            <textarea id="mcp-command" rows="3" readonly></textarea>
+          </div>
+
+          <div class="detail-grid">
+            <div>
+              <dt>Session</dt>
+              <dd id="session-id">none</dd>
+            </div>
+            <div>
+              <dt>Pending Turns</dt>
+              <dd id="pending-count">0</dd>
+            </div>
+            <div>
+              <dt>Local Identity</dt>
+              <dd id="local-identity">none</dd>
+            </div>
+            <div>
+              <dt>Remote Count</dt>
+              <dd id="remote-count">0</dd>
+            </div>
+          </div>
+
+          <div class="callout">
+            <strong>Bridge State File</strong>
+            <p id="state-file" class="status-detail">Loading runtime config…</p>
+          </div>
+        </article>
+
+        <article class="panel room-panel stack-lg">
+          <div class="stack-sm">
+            <h2>Human Side</h2>
+            <p class="muted">
+              The human browser owns the room join, local preview, and transcription path. Spoken
+              turns are queued into the reusable bridge instead of being answered in the page.
+            </p>
+          </div>
+
+          <div id="local-stage" class="participant-stage-frame">
+            <div class="empty-state">Create the call to see the local room preview.</div>
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="human-locale">Recognition Locale</label>
+              <select id="human-locale" name="human-locale">
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
+                <option value="vi-VN">Vietnamese</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="human-status">Voice Status</label>
+              <div id="human-status" class="status-pill">idle</div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="start-listening" class="primary" type="button" disabled>Start Listening</button>
+            <button id="stop-listening" type="button" disabled>Stop Listening</button>
+          </div>
+
+          <div class="callout">
+            <strong>Transcript Preview</strong>
+            <p id="human-transcript" class="status-detail">none</p>
+          </div>
+
+          <div class="field">
+            <label for="typed-input">Typed Fallback</label>
+            <textarea
+              id="typed-input"
+              name="typed-input"
+              rows="4"
+              placeholder="Type a question or prompt for the agent."
+            ></textarea>
+          </div>
+
+          <div class="actions">
+            <button id="send-typed" type="button" disabled>Queue Typed Turn</button>
+            <button id="clear-typed" type="button">Clear</button>
+          </div>
+        </article>
+
+        <article class="panel agent-panel stack-lg">
+          <div class="stage-header">
+            <div class="stack-sm">
+              <h2>Agent Side</h2>
+              <p class="muted">
+                Avatar rendering and speech playback are reusable browser packages. The app only
+                polls for bridge replies and applies simple direction like emote and gesture.
+              </p>
+            </div>
+
+            <div class="badge-row">
+              <span class="badge">
+                <span class="badge-label">Avatar</span>
+                <strong id="active-avatar">Loading…</strong>
+              </span>
+              <span class="badge">
+                <span class="badge-label">Emote</span>
+                <strong id="active-emote">Neutral</strong>
+              </span>
+              <span class="badge">
+                <span class="badge-label">Gesture</span>
+                <strong id="active-gesture">Idle</strong>
+              </span>
+              <span class="badge">
+                <span class="badge-label">Mouth</span>
+                <strong id="active-mouth">rest</strong>
+              </span>
+            </div>
+          </div>
+
+          <div id="stage-shell" class="stage-shell">
+            <canvas id="agent-canvas" aria-label="Agent avatar stage"></canvas>
+          </div>
+
+          <div class="callout">
+            <strong>Stage Direction</strong>
+            <p id="scene-note" class="status-detail">Loading avatar scene…</p>
+            <p class="status-detail">Look target: <span id="look-target">center</span></p>
+          </div>
+
+          <div class="field">
+            <span class="legend">Stage</span>
+            <div id="stage-options" class="chip-row" role="toolbar" aria-label="Stage presets"></div>
+          </div>
+
+          <div class="field">
+            <span class="legend">Emote</span>
+            <div id="emote-options" class="chip-row" role="toolbar" aria-label="Emote presets"></div>
+          </div>
+
+          <div class="field">
+            <span class="legend">Gesture</span>
+            <div id="gesture-options" class="chip-row" role="toolbar" aria-label="Gesture presets"></div>
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="voice-select">Agent Voice</label>
+              <select id="voice-select" name="voice-select" disabled>
+                <option>Loading voices…</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="speech-rate"
+                >Speech Rate <span id="speech-rate-value" class="value-tag">1.00x</span></label
+              >
+              <input id="speech-rate" type="range" min="0.75" max="1.35" step="0.05" value="1" />
+            </div>
+
+            <div class="field">
+              <label for="speech-pitch"
+                >Pitch <span id="speech-pitch-value" class="value-tag">1.00x</span></label
+              >
+              <input id="speech-pitch" type="range" min="0.75" max="1.4" step="0.05" value="1" />
+            </div>
+          </div>
+
+          <div class="callout">
+            <strong>Latest Agent Reply</strong>
+            <p id="last-agent-reply" class="status-detail">none</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel stack-lg">
+        <div class="stack-sm">
+          <h2>Conversation Trace</h2>
+          <p class="muted">
+            Human turns remain pending until Codex or the local fallback route submits a reply
+            through the bridge.
+          </p>
+        </div>
+
+        <ol id="transcript-list" class="turn-list">
+          <li class="empty-state">No turns yet.</li>
+        </ol>
+      </section>
+
+      <section class="panel stack-lg">
+        <div class="stack-sm">
+          <h2>Debug Snapshot</h2>
+          <p class="muted">Room, bridge, and avatar state in one place.</p>
+        </div>
+        <pre id="debug-snapshot" class="debug-output">booting</pre>
+      </section>
+
+      <section class="panel stack-lg">
+        <div class="stack-sm">
+          <h2>Event Log</h2>
+          <p class="muted">The browser room flow and bridge polling are logged together here.</p>
+        </div>
+        <ol id="log-list" class="log-list">
+          <li class="log-line">App booting…</li>
+        </ol>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Talking Agent · App 2 Voice Loop Lab</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero card">
+        <div class="eyebrow">App 2 · Voice Loop Lab</div>
+        <h1>Probe the spoken turn loop before we spend tokens.</h1>
+        <p class="lede">
+          This is the non-LLM path: browser mic, browser speech recognition, deterministic replies,
+          browser speech synthesis, and latency instrumentation. The goal is not intelligence. The
+          goal is to learn whether the voice loop feels fast and controllable enough to deserve a
+          later model.
+        </p>
+        <div class="callout">
+          This app uses browser-native speech APIs. It is best tested in Chrome. If speech
+          recognition is unavailable, the typed input path still exercises the reply and TTS loop.
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="card panel">
+          <div class="panel-head">
+            <h2>Session</h2>
+            <p class="muted">Start the loop, speak, and inspect each stage.</p>
+          </div>
+
+          <div class="field">
+            <label for="recognition-locale">Recognition Locale</label>
+            <select id="recognition-locale" name="recognition-locale">
+              <option value="en-US">English (US)</option>
+              <option value="en-GB">English (UK)</option>
+              <option value="vi-VN">Vietnamese</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="voice-select">Speech Voice</label>
+            <select id="voice-select" name="voice-select">
+              <option value="">Loading voices…</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="reply-mode">Deterministic Reply Mode</label>
+            <select id="reply-mode" name="reply-mode">
+              <option value="assistant">Assistant Commands</option>
+              <option value="mirror">Mirror Back</option>
+              <option value="concise">Concise Echo</option>
+            </select>
+          </div>
+
+          <div class="toggles">
+            <label class="toggle">
+              <input id="auto-restart" type="checkbox" checked />
+              <span>Auto-restart recognition after each reply</span>
+            </label>
+            <label class="toggle">
+              <input id="speak-replies" type="checkbox" checked />
+              <span>Speak replies with browser TTS</span>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="start-session" class="primary" type="button">Start Listening</button>
+            <button id="stop-session" type="button" disabled>Stop Listening</button>
+            <button id="stop-speaking" type="button">Stop Speaking</button>
+            <button id="run-latency-check" type="button">Run Typed Check</button>
+          </div>
+
+          <dl class="stats">
+            <div>
+              <dt>Status</dt>
+              <dd id="status">idle</dd>
+            </div>
+            <div>
+              <dt>Mic Energy</dt>
+              <dd><span id="mic-energy">0%</span></dd>
+            </div>
+            <div>
+              <dt>Last Transcript</dt>
+              <dd id="last-transcript">none</dd>
+            </div>
+            <div>
+              <dt>Last Reply</dt>
+              <dd id="last-reply">none</dd>
+            </div>
+          </dl>
+        </article>
+
+        <article class="card panel">
+          <div class="panel-head">
+            <h2>Latency Snapshot</h2>
+            <p class="muted">These numbers are the reason this app exists.</p>
+          </div>
+
+          <dl class="stats">
+            <div>
+              <dt>Speech Start</dt>
+              <dd id="latency-speech-start">n/a</dd>
+            </div>
+            <div>
+              <dt>Transcript Final</dt>
+              <dd id="latency-transcript-final">n/a</dd>
+            </div>
+            <div>
+              <dt>Reply Ready</dt>
+              <dd id="latency-reply-ready">n/a</dd>
+            </div>
+            <div>
+              <dt>TTS Start</dt>
+              <dd id="latency-tts-start">n/a</dd>
+            </div>
+            <div>
+              <dt>TTS End</dt>
+              <dd id="latency-tts-end">n/a</dd>
+            </div>
+            <div>
+              <dt>Turn Total</dt>
+              <dd id="latency-turn-total">n/a</dd>
+            </div>
+          </dl>
+
+          <div class="field">
+            <label for="debug-snapshot">Debug Snapshot</label>
+            <pre id="debug-snapshot" class="debug-output">booting</pre>
+          </div>
+        </article>
+      </section>
+
+      <section class="grid">
+        <article class="card panel">
+          <div class="panel-head">
+            <h2>Typed Fallback</h2>
+            <p class="muted">Use this when the browser blocks recognition or when you want repeatable checks.</p>
+          </div>
+
+          <div class="field">
+            <label for="typed-input">Input</label>
+            <textarea
+              id="typed-input"
+              name="typed-input"
+              rows="4"
+              placeholder="Type a sentence such as: hello, what time is it, repeat after me, or status"
+            ></textarea>
+          </div>
+
+          <div class="actions">
+            <button id="send-typed" class="primary" type="button">Send Text</button>
+            <button id="clear-history" type="button">Clear History</button>
+          </div>
+        </article>
+
+        <article class="card panel">
+          <div class="panel-head">
+            <h2>Support</h2>
+            <p class="muted">This app is supposed to fail clearly when the browser cannot do speech recognition.</p>
+          </div>
+
+          <ul class="decision-list">
+            <li>Chrome exposes the widest support for browser speech recognition.</li>
+            <li>Speech synthesis voices are device-specific, so voice quality varies.</li>
+            <li>No LLM is involved here, so every response is generated by deterministic rules.</li>
+            <li>If this loop feels too slow or too fragile, adding a model later will not save it.</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="card panel">
+        <div class="panel-head">
+          <h2>Conversation Trace</h2>
+          <p class="muted">Every turn is recorded so we can inspect what happened and how long it took.</p>
+        </div>
+
+        <ol id="turn-list" class="turn-list">
+          <li class="empty-state">No turns yet.</li>
+        </ol>
+      </section>
+
+      <section class="card panel">
+        <div class="panel-head">
+          <h2>Event Log</h2>
+          <p class="muted">Raw lifecycle logs for recognition, reply routing, and speech synthesis.</p>
+        </div>
+
+        <ol id="log-list" class="log-list">
+          <li class="log-line">App booting…</li>
+        </ol>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

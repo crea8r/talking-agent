@@ -1,0 +1,5 @@
+{
+  "name": "@talking-agent/voice-layer-browser",
+  "private": true,
+  "type": "module"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@talking-agent/avatar-layer-browser",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.5.2",
+    "three": "^0.184.0"
+  }
+}

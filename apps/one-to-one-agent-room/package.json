@@ -1,0 +1,9 @@
+{
+  "name": "@talking-agent/one-to-one-agent-room",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@talking-agent/agent-room-bridge",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs",
+    "./mcp-server": "./mcp-server.mjs"
+  }
+}

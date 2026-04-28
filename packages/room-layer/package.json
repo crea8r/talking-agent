@@ -1,0 +1,9 @@
+{
+  "name": "@talking-agent/room-layer",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": "./client.mjs",
+    "./server": "./server.mjs"
+  }
+}

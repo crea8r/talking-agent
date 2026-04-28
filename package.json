@@ -1,0 +1,21 @@
+{
+  "name": "talking-agent",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:meeting-link-probe": "PORT=4381 npm run dev -w @talking-agent/meeting-link-probe",
+    "start:meeting-link-probe": "PORT=4381 npm run start -w @talking-agent/meeting-link-probe",
+    "dev:voice-loop-lab": "PORT=4382 npm run dev -w @talking-agent/voice-loop-lab",
+    "start:voice-loop-lab": "PORT=4382 npm run start -w @talking-agent/voice-loop-lab",
+    "dev:avatar-puppet-lab": "PORT=4383 npm run dev -w @talking-agent/avatar-puppet-lab",
+    "start:avatar-puppet-lab": "PORT=4383 npm run start -w @talking-agent/avatar-puppet-lab",
+    "dev:one-to-one-agent-room": "PORT=4384 npm run dev -w @talking-agent/one-to-one-agent-room",
+    "start:one-to-one-agent-room": "PORT=4384 npm run start -w @talking-agent/one-to-one-agent-room"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
