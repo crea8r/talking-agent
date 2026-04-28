@@ -1,55 +1,615 @@
 {
   "version": 1,
-  "updatedAt": "2026-04-26T05:08:58.950Z",
+  "updatedAt": "2026-04-28T14:44:24.014Z",
   "sessions": {
-    "f256786f-babf-4ab7-99b8-5ea5a63a8a30": {
-      "id": "f256786f-babf-4ab7-99b8-5ea5a63a8a30",
-      "title": "Smoke Test 2 x Codex",
-      "roomName": "app4-smoke",
+    "783150e3-3acd-461a-9a2d-f49c81d49f31": {
+      "id": "783150e3-3acd-461a-9a2d-f49c81d49f31",
+      "title": "Human Caller x Codex",
+      "roomName": "app4-one-to-one-room",
       "livekitUrl": "ws://127.0.0.1:7880",
-      "createdAt": "2026-04-26T05:08:15.600Z",
-      "updatedAt": "2026-04-26T05:08:58.950Z",
-      "lastSeenAt": "2026-04-26T05:08:58.950Z",
+      "createdAt": "2026-04-28T13:54:01.968Z",
+      "updatedAt": "2026-04-28T14:04:43.973Z",
+      "lastSeenAt": "2026-04-28T14:04:43.973Z",
       "human": {
-        "identity": "human-smoke-2",
-        "name": "Smoke Test 2"
+        "identity": "human-t45yb8",
+        "name": "Human Caller"
       },
       "agent": {
-        "id": "local-demo-agent",
-        "label": "Local Demo Agent",
-        "lastSeenAt": "2026-04-26T05:08:35.800Z"
+        "id": "codex-openai",
+        "label": "Codex OpenAI",
+        "lastSeenAt": "2026-04-28T14:00:40.277Z"
       },
       "metadata": {
-        "source": "verification"
+        "app": "one-to-one-agent-room",
+        "planEntry": "docs/6-app-plan.md#4-one-to-one-agent-room",
+        "reusablePackages": [
+          "@talking-agent/room-layer",
+          "@talking-agent/avatar-layer-browser",
+          "@talking-agent/voice-layer-browser",
+          "@talking-agent/avatar-speech-browser",
+          "@talking-agent/agent-room-bridge"
+        ]
       },
       "turns": [
         {
-          "id": "462e6b53-a01f-48ca-b73c-5fef7fcce748",
-          "source": "typed",
-          "transcript": "Hello Codex, give me a status update.",
-          "createdAt": "2026-04-26T05:08:21.993Z",
+          "id": "793e4c22-2412-4bdf-8d6d-2147c7cede89",
+          "source": "voice",
+          "transcript": "hello",
+          "createdAt": "2026-04-28T13:54:06.969Z",
           "status": "replied",
           "human": {
-            "identity": "human-smoke-2",
-            "name": "Smoke Test 2"
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
           },
           "agentClaim": {
-            "agentId": "local-demo-agent",
-            "agentLabel": "Local Demo Agent",
-            "claimedAt": "2026-04-26T05:08:35.798Z"
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T13:56:04.054Z"
           },
           "agentReply": {
-            "id": "7881d5c0-e414-4c3a-8f45-68e3e20f0c6c",
-            "text": "Hello. The one-to-one room is active, the avatar is listening, and the MCP bridge is ready for Codex.",
-            "createdAt": "2026-04-26T05:08:35.800Z",
-            "playedAt": "2026-04-26T05:08:58.923Z",
-            "agentId": "local-demo-agent",
-            "agentLabel": "Local Demo Agent",
+            "id": "a39049eb-4645-4c30-b209-f0207e908468",
+            "text": "I can hear you through the room bridge now. I got your hello. Say another sentence and I will answer here.",
+            "createdAt": "2026-04-28T13:56:04.058Z",
+            "playedAt": "2026-04-28T13:56:11.236Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
             "emoteId": "warm",
-            "gestureId": "greet",
+            "gestureId": "explain",
             "stageId": "",
             "voiceMode": "speak",
-            "notes": "Injected by the local fallback route for spike verification."
+            "notes": "Manual MCP smoke test from Codex"
+          }
+        },
+        {
+          "id": "d3310a90-73b2-4746-9fbe-e3ba4f139838",
+          "source": "voice",
+          "transcript": "hello",
+          "createdAt": "2026-04-28T13:54:59.451Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T13:58:05.440Z"
+          },
+          "agentReply": {
+            "id": "1d23eaf4-40d6-4954-b65c-10f7ba6b2be2",
+            "text": "I am here with you now. The bridge is active and I can keep responding in this room.",
+            "createdAt": "2026-04-28T13:58:05.449Z",
+            "playedAt": "2026-04-28T13:58:11.167Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Backlog clear before 5-minute live listen window"
+          }
+        },
+        {
+          "id": "08708ac4-0da3-4c7e-93a7-98a2f987e153",
+          "source": "voice",
+          "transcript": "where's your hand please",
+          "createdAt": "2026-04-28T13:56:16.110Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T13:58:05.451Z"
+          },
+          "agentReply": {
+            "id": "a523592b-c2dd-4ba9-bc7e-002262e4ab81",
+            "text": "This spike does not drive independent hand tracking yet. The avatar only plays preset gestures and emotes right now.",
+            "createdAt": "2026-04-28T13:58:05.452Z",
+            "playedAt": "2026-04-28T13:58:18.029Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "point",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Backlog clear before 5-minute live listen window"
+          }
+        },
+        {
+          "id": "fe9e88cc-b5fc-4e36-9d1d-645437daab43",
+          "source": "voice",
+          "transcript": "hello do you know what day is this",
+          "createdAt": "2026-04-28T13:57:08.940Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T13:58:53.207Z"
+          },
+          "agentReply": {
+            "id": "232be597-866a-44ed-b9dd-75bb2a00d4b7",
+            "text": "Today is Tuesday, April 28, 2026.",
+            "createdAt": "2026-04-28T13:59:00.015Z",
+            "playedAt": "2026-04-28T13:59:04.744Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "5-minute live listen window"
+          }
+        },
+        {
+          "id": "40cf1e01-a363-41c1-b0f9-73407c3e1b0f",
+          "source": "voice",
+          "transcript": "tell me what day is it",
+          "createdAt": "2026-04-28T13:57:16.463Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:00:08.757Z"
+          },
+          "agentReply": {
+            "id": "7c4a8e3a-1c30-4417-a9cb-f2a36ad2db3b",
+            "text": "Today is Tuesday, April 28, 2026.",
+            "createdAt": "2026-04-28T14:00:08.760Z",
+            "playedAt": "2026-04-28T14:00:14.185Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during 5-minute live listen window"
+          }
+        },
+        {
+          "id": "82bc459e-b1e6-4a2e-b0db-cd47c6644b74",
+          "source": "voice",
+          "transcript": "why don't you say something",
+          "createdAt": "2026-04-28T13:58:07.492Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:00:09.015Z"
+          },
+          "agentReply": {
+            "id": "11d1e1c6-a6ff-4564-ba19-1c0dc3a6e7f9",
+            "text": "I am speaking through the room bridge now. Keep talking and I will answer here.",
+            "createdAt": "2026-04-28T14:00:09.018Z",
+            "playedAt": "2026-04-28T14:00:18.473Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during 5-minute live listen window"
+          }
+        },
+        {
+          "id": "ae2441cc-fb78-4fa3-8029-67d91027315e",
+          "source": "voice",
+          "transcript": "tell me what day is this",
+          "createdAt": "2026-04-28T13:58:21.532Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:00:09.286Z"
+          },
+          "agentReply": {
+            "id": "705cf21c-1aaf-4ca1-98a8-935532f7b7f8",
+            "text": "Today is Tuesday, April 28, 2026.",
+            "createdAt": "2026-04-28T14:00:09.289Z",
+            "playedAt": "2026-04-28T14:00:22.585Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during 5-minute live listen window"
+          }
+        },
+        {
+          "id": "dbcb7f2e-6d34-49fd-b9f0-e3e4f9e4192b",
+          "source": "voice",
+          "transcript": "tell me what day it is",
+          "createdAt": "2026-04-28T13:58:35.123Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:00:09.543Z"
+          },
+          "agentReply": {
+            "id": "589f168c-0f7f-441d-b89c-164285fd955e",
+            "text": "Today is Tuesday, April 28, 2026.",
+            "createdAt": "2026-04-28T14:00:09.547Z",
+            "playedAt": "2026-04-28T14:00:26.910Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during 5-minute live listen window"
+          }
+        },
+        {
+          "id": "663e9dda-da7c-43b7-ada5-f176c3af0ce4",
+          "source": "voice",
+          "transcript": "hello",
+          "createdAt": "2026-04-28T13:58:56.455Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:00:09.801Z"
+          },
+          "agentReply": {
+            "id": "b9d7e8c4-6d35-402d-86eb-9041299d838e",
+            "text": "Hello. I am here and listening.",
+            "createdAt": "2026-04-28T14:00:09.803Z",
+            "playedAt": "2026-04-28T14:00:29.066Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "wave",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during 5-minute live listen window"
+          }
+        }
+      ]
+    },
+    "b0373ae0-cf27-4335-b9d6-d5245042c2a2": {
+      "id": "b0373ae0-cf27-4335-b9d6-d5245042c2a2",
+      "title": "Human Caller x Codex",
+      "roomName": "app4-one-to-one-room",
+      "livekitUrl": "ws://127.0.0.1:7880",
+      "createdAt": "2026-04-28T14:36:01.520Z",
+      "updatedAt": "2026-04-28T14:36:30.062Z",
+      "lastSeenAt": "2026-04-28T14:36:30.062Z",
+      "human": {
+        "identity": "human-t45yb8",
+        "name": "Human Caller"
+      },
+      "agent": {
+        "id": null,
+        "label": "Codex OpenAI",
+        "lastSeenAt": null
+      },
+      "metadata": {
+        "app": "one-to-one-agent-room",
+        "planEntry": "docs/6-app-plan.md#4-one-to-one-agent-room",
+        "reusablePackages": [
+          "@talking-agent/room-layer",
+          "@talking-agent/avatar-layer-browser",
+          "@talking-agent/voice-layer-browser",
+          "@talking-agent/avatar-speech-browser",
+          "@talking-agent/agent-room-bridge"
+        ]
+      },
+      "turns": [
+        {
+          "id": "f326a1a5-f9de-48d7-9815-5dc7b45cf42b",
+          "source": "voice",
+          "transcript": "hello can you hear me",
+          "createdAt": "2026-04-28T14:36:06.254Z",
+          "status": "pending",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": null,
+          "agentReply": null
+        },
+        {
+          "id": "91d894b2-1c65-4e2b-8528-eef13e3b7191",
+          "source": "voice",
+          "transcript": "hello can you hear me",
+          "createdAt": "2026-04-28T14:36:17.665Z",
+          "status": "pending",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": null,
+          "agentReply": null
+        }
+      ]
+    },
+    "41e49b40-fa41-4dc2-b9b8-7b00ca9c71c0": {
+      "id": "41e49b40-fa41-4dc2-b9b8-7b00ca9c71c0",
+      "title": "Human Caller x Codex",
+      "roomName": "app4-one-to-one-room",
+      "livekitUrl": "ws://127.0.0.1:7880",
+      "createdAt": "2026-04-28T14:36:39.108Z",
+      "updatedAt": "2026-04-28T14:44:15.108Z",
+      "lastSeenAt": "2026-04-28T14:44:15.108Z",
+      "human": {
+        "identity": "human-t45yb8",
+        "name": "Human Caller"
+      },
+      "agent": {
+        "id": "codex-openai",
+        "label": "Codex OpenAI",
+        "lastSeenAt": "2026-04-28T14:44:15.108Z"
+      },
+      "metadata": {
+        "app": "one-to-one-agent-room",
+        "planEntry": "docs/6-app-plan.md#4-one-to-one-agent-room",
+        "reusablePackages": [
+          "@talking-agent/room-layer",
+          "@talking-agent/avatar-layer-browser",
+          "@talking-agent/voice-layer-browser",
+          "@talking-agent/avatar-speech-browser",
+          "@talking-agent/agent-room-bridge"
+        ]
+      },
+      "turns": [
+        {
+          "id": "c4fffecc-5971-4b8a-90c5-4f4f868dcf17",
+          "source": "voice",
+          "transcript": "hello can you hear me",
+          "createdAt": "2026-04-28T14:36:42.484Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:36:42.806Z"
+          },
+          "agentReply": {
+            "id": "42dd5314-e630-4d1c-861c-fe32d837d2b0",
+            "text": "Hello. I am with you now. Go ahead.",
+            "createdAt": "2026-04-28T14:36:42.812Z",
+            "playedAt": "2026-04-28T14:36:46.387Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "wave",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during watched 5-minute session window"
+          }
+        },
+        {
+          "id": "e412e0e4-6333-4141-88c2-5cdceb2919dd",
+          "source": "voice",
+          "transcript": "okay what is today",
+          "createdAt": "2026-04-28T14:36:59.220Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:36:59.547Z"
+          },
+          "agentReply": {
+            "id": "f0944357-1088-4723-a4c8-590438204fe0",
+            "text": "I heard you say: okay what is today. Keep going.",
+            "createdAt": "2026-04-28T14:36:59.550Z",
+            "playedAt": "2026-04-28T14:37:03.470Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during watched 5-minute session window"
+          }
+        },
+        {
+          "id": "50c0ea78-221f-4797-b5ae-c75f1aa59c1b",
+          "source": "voice",
+          "transcript": "no I want you to tell me what is today what is the date of today",
+          "createdAt": "2026-04-28T14:37:07.542Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:37:07.827Z"
+          },
+          "agentReply": {
+            "id": "94add83b-b914-488f-b8b3-6b36935c458d",
+            "text": "Okay. Adjust me and ask again.",
+            "createdAt": "2026-04-28T14:37:07.829Z",
+            "playedAt": "2026-04-28T14:37:11.394Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "focus",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during watched 5-minute session window"
+          }
+        },
+        {
+          "id": "be6d6a53-34c9-4552-b7a7-133b80b1c78e",
+          "source": "voice",
+          "transcript": "hello",
+          "createdAt": "2026-04-28T14:37:45.968Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:37:46.346Z"
+          },
+          "agentReply": {
+            "id": "456848b4-afa6-49ca-bdf8-4e80c511cb61",
+            "text": "Hello. I am with you now. Go ahead.",
+            "createdAt": "2026-04-28T14:37:46.348Z",
+            "playedAt": "2026-04-28T14:37:49.480Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "wave",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during watched 5-minute session window"
+          }
+        },
+        {
+          "id": "bb31c15a-3d04-4214-9cd6-41aeb0eee1eb",
+          "source": "voice",
+          "transcript": "who are you",
+          "createdAt": "2026-04-28T14:37:49.131Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:37:49.342Z"
+          },
+          "agentReply": {
+            "id": "61621b0b-9ba9-4b23-add0-715ebaa83125",
+            "text": "I am Codex in this room. I can listen to you, answer back, and drive the avatar voice and gestures.",
+            "createdAt": "2026-04-28T14:37:49.343Z",
+            "playedAt": "2026-04-28T14:37:55.796Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during watched 5-minute session window"
+          }
+        },
+        {
+          "id": "a0634fde-2156-412f-aeb4-878d096a0e2e",
+          "source": "voice",
+          "transcript": "can you do some gesture I want to see some",
+          "createdAt": "2026-04-28T14:38:05.872Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:38:06.133Z"
+          },
+          "agentReply": {
+            "id": "ccf76706-a204-4d2b-99c7-c5677dd5fb26",
+            "text": "Right now the avatar uses preset gestures and expressions. This spike does not have live hand tracking yet.",
+            "createdAt": "2026-04-28T14:38:06.140Z",
+            "playedAt": "2026-04-28T14:38:13.924Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "point",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during watched 5-minute session window"
+          }
+        },
+        {
+          "id": "15ead864-f14e-409a-bf44-982670f5220f",
+          "source": "voice",
+          "transcript": "that's great can you tell me a joke",
+          "createdAt": "2026-04-28T14:38:18.895Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:38:19.257Z"
+          },
+          "agentReply": {
+            "id": "930c8987-6e35-40d5-a64e-baa601df3fd6",
+            "text": "I heard you say: that's great can you tell me a joke. Keep going.",
+            "createdAt": "2026-04-28T14:38:19.261Z",
+            "playedAt": "2026-04-28T14:38:23.547Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during watched 5-minute session window"
+          }
+        },
+        {
+          "id": "d23a851d-bb89-47d1-a8ee-5d93a1d39d85",
+          "source": "voice",
+          "transcript": "no I want a joke",
+          "createdAt": "2026-04-28T14:38:26.827Z",
+          "status": "replied",
+          "human": {
+            "identity": "human-t45yb8",
+            "name": "Human Caller"
+          },
+          "agentClaim": {
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "claimedAt": "2026-04-28T14:38:27.137Z"
+          },
+          "agentReply": {
+            "id": "0929d015-4c34-4a9e-b4bb-1ad621d1c7b1",
+            "text": "I heard you say: no I want a joke. Keep going.",
+            "createdAt": "2026-04-28T14:38:27.140Z",
+            "playedAt": "2026-04-28T14:38:31.899Z",
+            "agentId": "codex-openai",
+            "agentLabel": "Codex OpenAI",
+            "emoteId": "warm",
+            "gestureId": "explain",
+            "stageId": "",
+            "voiceMode": "speak",
+            "notes": "Auto-response during watched 5-minute session window"
           }
         }
       ]
