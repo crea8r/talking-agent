@@ -10,6 +10,10 @@ import {
 } from '../../packages/room-layer/server.mjs';
 import { createAgentRoomBridgeStore } from '../../packages/agent-room-bridge/index.mjs';
 import {
+  buildAvatarCatalogUri,
+  buildAvatarCatalogVersion,
+} from '../../packages/agent-room-bridge/resources.mjs';
+import {
   BUNDLED_MODELS,
   DEFAULT_MODEL,
   EMOTES,
@@ -24,6 +28,7 @@ const __dirname = path.dirname(__filename);
 const HOST = '127.0.0.1';
 const PORT = Number.parseInt(process.env.PORT || '4384', 10);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
+const CODEX_PROJECT_NAME = path.basename(REPO_ROOT);
 const SRC_DIR = path.join(__dirname, 'src');
 const NODE_MODULES_DIR = path.join(REPO_ROOT, 'node_modules');
 const PACKAGES_DIR = path.join(REPO_ROOT, 'packages');
@@ -175,6 +180,22 @@ function sendText(res, statusCode, text) {
   res.end(text);
 }
 
+async function sendBridgeSessionPayload(res, session, statusCode = 200) {
+  const pendingActions = await bridgeStore.listPendingActions({
+    sessionId: session.id,
+  });
+  const inspector = await bridgeStore.getInspectorSnapshot({
+    sessionId: session.id,
+  });
+
+  sendJson(res, statusCode, {
+    ok: true,
+    session,
+    pendingActions: pendingActions.actions,
+    inspector,
+  });
+}
+
 async function serveStatic(res, filePath) {
   try {
     const body = await readFile(filePath);
@@ -257,10 +278,7 @@ function serializeGesture(gesture) {
     file: gesture.file || `${gesture.id}.vrma`,
     description: gesture.description || gesture.note,
     bestFor: gesture.bestFor || [],
-    avoidFor: gesture.avoidFor || [],
-    cameraFit: gesture.cameraFit || 'either',
     intent: gesture.intent,
-    aliases: gesture.aliases || [],
   };
 }
 
@@ -305,7 +323,10 @@ const server = createServer(async (req, res) => {
         appMode: 'app4-mcp-codex-bridge-spike',
         port: PORT,
       }),
+      codexProjectName: CODEX_PROJECT_NAME,
+      codexProjectPath: REPO_ROOT,
       avatar: {
+        defaultModelId: DEFAULT_MODEL.id,
         defaultModel: path.basename(DEFAULT_MODEL.path),
         bundledModels: BUNDLED_MODELS.map((model) => model.id),
         stageIds: STAGES.map((stage) => stage.id),
@@ -324,13 +345,21 @@ const server = createServer(async (req, res) => {
         mcpServerPath: MCP_SERVER_PATH,
         mcpServerCommand: renderMcpBootstrapCommand(),
         tools: [
-          'bridge_status',
-          'list_sessions',
-          'get_session',
-          'heartbeat_agent',
-          'claim_next_turn',
-          'submit_agent_reply',
+          'join_call',
+          'wait_for_events',
+          'publish_actions',
+          'leave_call',
+          'get_recent_turns',
         ],
+        avatarCatalogByModel: Object.fromEntries(
+          BUNDLED_MODELS.map((model) => [
+            model.id,
+            {
+              uri: buildAvatarCatalogUri(model.id),
+              version: buildAvatarCatalogVersion(model.id),
+            },
+          ]),
+        ),
         demoReplyAvailable: true,
       },
     });
@@ -400,10 +429,7 @@ const server = createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const session = await bridgeStore.createSession(body);
-      sendJson(res, 200, {
-        ok: true,
-        session,
-      });
+      await sendBridgeSessionPayload(res, session);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
@@ -419,14 +445,115 @@ const server = createServer(async (req, res) => {
       const session = await bridgeStore.getSession(decodeURIComponent(sessionMatch[1]), {
         touch: true,
       });
-      sendJson(res, 200, {
-        ok: true,
-        session,
-      });
+      await sendBridgeSessionPayload(res, session);
     } catch (error) {
       sendJson(res, 404, {
         ok: false,
         error: error instanceof Error ? error.message : 'Unknown session.',
+      });
+    }
+    return;
+  }
+
+  const avatarCatalogMatch = url.pathname.match(/^\/api\/bridge\/sessions\/([^/]+)\/avatar-catalog$/);
+  if (req.method === 'POST' && avatarCatalogMatch) {
+    try {
+      const body = await readJsonBody(req);
+      const session = await bridgeStore.syncAvatarCatalog({
+        sessionId: decodeURIComponent(avatarCatalogMatch[1]),
+        activeModelId: body.activeModelId,
+        catalogUri: body.avatarCatalogUri,
+        catalogVersion: body.avatarCatalogVersion,
+      });
+      await sendBridgeSessionPayload(res, session);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to sync avatar catalog.',
+      });
+    }
+    return;
+  }
+
+  const sessionStateMatch = url.pathname.match(/^\/api\/bridge\/sessions\/([^/]+)\/state$/);
+  if (req.method === 'POST' && sessionStateMatch) {
+    try {
+      const body = await readJsonBody(req);
+      const session = await bridgeStore.setCallState({
+        sessionId: decodeURIComponent(sessionStateMatch[1]),
+        state: body.state,
+        reason: body.reason,
+      });
+      await sendBridgeSessionPayload(res, session);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to update call state.',
+      });
+    }
+    return;
+  }
+
+  const utteranceStartMatch = url.pathname.match(
+    /^\/api\/bridge\/sessions\/([^/]+)\/utterances\/start$/,
+  );
+  if (req.method === 'POST' && utteranceStartMatch) {
+    try {
+      const body = await readJsonBody(req);
+      const session = await bridgeStore.appendUserUtteranceStart({
+        sessionId: decodeURIComponent(utteranceStartMatch[1]),
+        utteranceId: body.utteranceId,
+      });
+      await sendBridgeSessionPayload(res, session);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to start utterance.',
+      });
+    }
+    return;
+  }
+
+  const utterancePartialMatch = url.pathname.match(
+    /^\/api\/bridge\/sessions\/([^/]+)\/utterances\/partial$/,
+  );
+  if (req.method === 'POST' && utterancePartialMatch) {
+    try {
+      const body = await readJsonBody(req);
+      const session = await bridgeStore.appendUserUtterancePartial({
+        sessionId: decodeURIComponent(utterancePartialMatch[1]),
+        utteranceId: body.utteranceId,
+        delta: body.delta,
+      });
+      await sendBridgeSessionPayload(res, session);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to append utterance partial.',
+      });
+    }
+    return;
+  }
+
+  const utteranceFinalMatch = url.pathname.match(
+    /^\/api\/bridge\/sessions\/([^/]+)\/utterances\/final$/,
+  );
+  if (req.method === 'POST' && utteranceFinalMatch) {
+    try {
+      const body = await readJsonBody(req);
+      const session = await bridgeStore.appendUserUtteranceFinal({
+        sessionId: decodeURIComponent(utteranceFinalMatch[1]),
+        utteranceId: body.utteranceId,
+        text: body.text,
+        source: body.source,
+        humanIdentity: body.humanIdentity,
+        humanName: body.humanName,
+      });
+      await sendBridgeSessionPayload(res, session);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to finalize utterance.',
       });
     }
     return;
@@ -440,10 +567,7 @@ const server = createServer(async (req, res) => {
         sessionId: decodeURIComponent(humanTurnMatch[1]),
         ...body,
       });
-      sendJson(res, 200, {
-        ok: true,
-        session,
-      });
+      await sendBridgeSessionPayload(res, session);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
@@ -462,14 +586,68 @@ const server = createServer(async (req, res) => {
         sessionId: decodeURIComponent(playedReplyMatch[1]),
         replyId: decodeURIComponent(playedReplyMatch[2]),
       });
-      sendJson(res, 200, {
-        ok: true,
-        session,
-      });
+      await sendBridgeSessionPayload(res, session);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
         error: error instanceof Error ? error.message : 'Unable to mark reply played.',
+      });
+    }
+    return;
+  }
+
+  const actionStartedMatch = url.pathname.match(
+    /^\/api\/bridge\/sessions\/([^/]+)\/actions\/([^/]+)\/started$/,
+  );
+  if (req.method === 'POST' && actionStartedMatch) {
+    try {
+      const session = await bridgeStore.markActionPlaybackStarted({
+        sessionId: decodeURIComponent(actionStartedMatch[1]),
+        actionId: decodeURIComponent(actionStartedMatch[2]),
+      });
+      await sendBridgeSessionPayload(res, session);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to mark action started.',
+      });
+    }
+    return;
+  }
+
+  const actionFinishedMatch = url.pathname.match(
+    /^\/api\/bridge\/sessions\/([^/]+)\/actions\/([^/]+)\/finished$/,
+  );
+  if (req.method === 'POST' && actionFinishedMatch) {
+    try {
+      const session = await bridgeStore.markActionPlaybackFinished({
+        sessionId: decodeURIComponent(actionFinishedMatch[1]),
+        actionId: decodeURIComponent(actionFinishedMatch[2]),
+      });
+      await sendBridgeSessionPayload(res, session);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to mark action finished.',
+      });
+    }
+    return;
+  }
+
+  const actionCompletedMatch = url.pathname.match(
+    /^\/api\/bridge\/sessions\/([^/]+)\/actions\/([^/]+)\/completed$/,
+  );
+  if (req.method === 'POST' && actionCompletedMatch) {
+    try {
+      const session = await bridgeStore.markActionCompleted({
+        sessionId: decodeURIComponent(actionCompletedMatch[1]),
+        actionId: decodeURIComponent(actionCompletedMatch[2]),
+      });
+      await sendBridgeSessionPayload(res, session);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to mark action completed.',
       });
     }
     return;
@@ -486,11 +664,15 @@ const server = createServer(async (req, res) => {
       });
 
       if (!claim.turn) {
-        sendJson(res, 200, {
-          ok: true,
-          session: claim.session,
-          message: 'No pending turns.',
-        });
+        if (claim.session) {
+          await sendBridgeSessionPayload(res, claim.session);
+        } else {
+          sendJson(res, 200, {
+            ok: true,
+            session: null,
+            message: 'No pending turns.',
+          });
+        }
         return;
       }
 
@@ -510,10 +692,7 @@ const server = createServer(async (req, res) => {
         notes: 'Injected by the local fallback route for spike verification.',
       });
 
-      sendJson(res, 200, {
-        ok: true,
-        session,
-      });
+      await sendBridgeSessionPayload(res, session);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,

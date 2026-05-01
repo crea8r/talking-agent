@@ -1,4 +1,10 @@
 import { createAgentRoomBridgeStore, resolveDefaultBridgeStatePath } from './index.mjs';
+import {
+  getBridgePrompt,
+  listBridgePrompts,
+  listBridgeResources,
+  readBridgeResource,
+} from './resources.mjs';
 
 const store = createAgentRoomBridgeStore({
   stateFilePath: resolveDefaultBridgeStatePath(),
@@ -6,88 +12,100 @@ const store = createAgentRoomBridgeStore({
 
 const TOOL_DEFINITIONS = [
   {
-    name: 'bridge_status',
-    description: 'Return the current bridge state file path, session count, and pending turn count.',
+    name: 'join_call',
+    description: 'Attach the agent to the single active one-to-one call and receive the current event cursor plus avatar catalog metadata.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {},
-    },
-  },
-  {
-    name: 'list_sessions',
-    description: 'List every active one-to-one agent room session waiting for an agent runtime.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {},
-    },
-  },
-  {
-    name: 'get_session',
-    description: 'Load one active session with its turns and latest reply state.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['sessionId'],
+      required: ['agentId'],
       properties: {
-        sessionId: {
-          type: 'string',
-          description: 'Session id from list_sessions.',
+        agentId: { type: 'string' },
+        agentLabel: { type: 'string' },
+        resumeFromCursor: { type: 'string' },
+      },
+    },
+  },
+  {
+    name: 'wait_for_events',
+    description: 'Block until new bridge events are available after the provided cursor, or until the timeout expires.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['callId', 'cursor'],
+      properties: {
+        callId: { type: 'string' },
+        cursor: { type: 'string' },
+        waitMs: { type: 'integer', minimum: 0 },
+        maxEvents: { type: 'integer', minimum: 1 },
+      },
+    },
+  },
+  {
+    name: 'publish_actions',
+    description: 'Publish one or more agent-selected actions such as animation, speech, or hangup for the active call.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['callId', 'actions'],
+      properties: {
+        callId: { type: 'string' },
+        inReplyToEventId: { type: 'string' },
+        actions: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['actionId', 'type'],
+            properties: {
+              actionId: { type: 'string' },
+              type: {
+                type: 'string',
+                enum: ['anim', 'speech', 'hangup'],
+              },
+              text: { type: 'string' },
+              gestureId: { type: 'string' },
+              emoteId: { type: 'string' },
+              stageId: { type: 'string' },
+              characterId: { type: 'string' },
+              mood: { type: 'string' },
+              voiceMode: {
+                type: 'string',
+                enum: ['speak', 'silent'],
+              },
+              reason: { type: 'string' },
+              notes: { type: 'string' },
+            },
+          },
         },
       },
     },
   },
   {
-    name: 'heartbeat_agent',
-    description: 'Mark the agent runtime as alive for one session before or during turn handling.',
+    name: 'leave_call',
+    description: 'Detach the current agent from the active call, optionally ending the call.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      required: ['sessionId', 'agentId'],
+      required: ['callId', 'agentId'],
       properties: {
-        sessionId: { type: 'string' },
+        callId: { type: 'string' },
         agentId: { type: 'string' },
-        agentLabel: { type: 'string' },
+        reason: { type: 'string' },
+        endCall: { type: 'boolean' },
       },
     },
   },
   {
-    name: 'claim_next_turn',
-    description:
-      'Claim the next pending human turn. If the same agent already claimed a turn, that turn is returned again.',
+    name: 'get_recent_turns',
+    description: 'Return the most recent finalized turns for recovery or debugging.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
+      required: ['callId'],
       properties: {
-        sessionId: { type: 'string' },
-        agentId: { type: 'string' },
-        agentLabel: { type: 'string' },
-      },
-    },
-  },
-  {
-    name: 'submit_agent_reply',
-    description:
-      'Submit the agent reply text plus simple avatar direction so the browser can animate and speak it. Use gesture ids from the app runtime gesture catalog when possible.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['sessionId', 'turnId', 'reply'],
-      properties: {
-        sessionId: { type: 'string' },
-        turnId: { type: 'string' },
-        reply: { type: 'string' },
-        agentId: { type: 'string' },
-        agentLabel: { type: 'string' },
-        emoteId: { type: 'string' },
-        gestureId: { type: 'string' },
-        stageId: { type: 'string' },
-        voiceMode: {
-          type: 'string',
-          enum: ['speak', 'silent'],
-        },
-        notes: { type: 'string' },
+        callId: { type: 'string' },
+        limit: { type: 'integer', minimum: 1 },
       },
     },
   },
@@ -107,13 +125,14 @@ function sendResult(id, result) {
   });
 }
 
-function sendError(id, code, message) {
+function sendError(id, code, message, data = undefined) {
   sendMessage({
     jsonrpc: '2.0',
     id,
     error: {
       code,
       message,
+      ...(data ? { data } : {}),
     },
   });
 }
@@ -132,26 +151,16 @@ function toolResult(payload) {
 
 async function handleToolCall(name, args = {}) {
   switch (name) {
-    case 'bridge_status':
-      return store.getBridgeStatus();
-    case 'list_sessions':
-      return {
-        sessions: await store.listSessions(),
-      };
-    case 'get_session':
-      return {
-        session: await store.getSession(args.sessionId),
-      };
-    case 'heartbeat_agent':
-      return {
-        session: await store.heartbeatAgent(args),
-      };
-    case 'claim_next_turn':
-      return store.claimNextTurn(args);
-    case 'submit_agent_reply':
-      return {
-        session: await store.submitAgentReply(args),
-      };
+    case 'join_call':
+      return store.joinCall(args);
+    case 'wait_for_events':
+      return store.waitForEvents(args);
+    case 'publish_actions':
+      return store.publishActions(args);
+    case 'leave_call':
+      return store.leaveCall(args);
+    case 'get_recent_turns':
+      return store.getRecentTurns(args);
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -164,10 +173,12 @@ async function handleRequest(message) {
         protocolVersion: '2024-11-05',
         capabilities: {
           tools: {},
+          resources: {},
+          prompts: {},
         },
         serverInfo: {
           name: 'talking-agent-room-bridge',
-          version: '0.1.0',
+          version: '0.2.0',
         },
       });
       return;
@@ -183,8 +194,21 @@ async function handleRequest(message) {
       return;
     case 'resources/list':
       sendResult(message.id, {
-        resources: [],
+        resources: listBridgeResources(),
       });
+      return;
+    case 'resources/read':
+      sendResult(message.id, {
+        contents: [readBridgeResource(message.params?.uri || '')],
+      });
+      return;
+    case 'prompts/list':
+      sendResult(message.id, {
+        prompts: listBridgePrompts(),
+      });
+      return;
+    case 'prompts/get':
+      sendResult(message.id, getBridgePrompt(message.params?.name || ''));
       return;
     case 'tools/call': {
       const payload = await handleToolCall(message.params?.name, message.params?.arguments || {});
@@ -232,7 +256,13 @@ function processFrames() {
     }
 
     handleRequest(message).catch((error) => {
-      sendError(message.id ?? null, -32603, error instanceof Error ? error.message : 'Internal error');
+      const bridgeCode = error?.code && typeof error.code === 'string' ? error.code : null;
+      sendError(
+        message.id ?? null,
+        -32603,
+        error instanceof Error ? error.message : 'Internal error',
+        bridgeCode ? { bridgeCode } : undefined,
+      );
     });
   }
 }

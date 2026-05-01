@@ -5,9 +5,9 @@ Monorepo for small discovery apps that lead toward a live talking avatar agent.
 The current integration spike is `apps/one-to-one-agent-room`, where:
 
 - a human joins a LiveKit room in the browser
-- spoken or typed turns are persisted into a reusable bridge store
+- spoken or typed turns are persisted into a reusable bridge event log
 - a Codex or OpenAI runtime connects through an MCP server
-- the agent claims turns, submits replies, and drives avatar speech and gestures
+- the agent joins the active call, waits for transcript events, and drives avatar speech and gestures through published actions
 
 The working plan for the repo lives in [docs/6-app-plan.md](docs/6-app-plan.md).
 The first product draft for this repo lives in [docs/prd-local-call-command.md](docs/prd-local-call-command.md).
@@ -70,12 +70,17 @@ node "$PWD/packages/agent-room-bridge/mcp-server.mjs"
 
 This MCP server exposes these tools:
 
-- `bridge_status`
-- `list_sessions`
-- `get_session`
-- `heartbeat_agent`
-- `claim_next_turn`
-- `submit_agent_reply`
+- `join_call`
+- `wait_for_events`
+- `publish_actions`
+- `leave_call`
+- `get_recent_turns`
+
+It also exposes:
+
+- resource: `bridge://capabilities`
+- resources: `avatar://catalog` and `avatar://catalog/<modelId>`
+- prompt: `call_agent_bootstrap`
 
 Use that command in any MCP-capable runtime. In the app UI, the same bootstrap command is shown in `Codex MCP Bootstrap`, and `Copy MCP Command` copies it.
 
@@ -91,7 +96,7 @@ Use this flow when you want to verify the full human-to-agent loop quickly.
 6. Allow browser mic and camera access if you want live media.
 7. Click `Start Listening`.
 8. Say a short sentence such as `hello can you hear me`.
-9. Have your MCP agent claim the turn and submit a reply with `voiceMode: "speak"`.
+9. Have your MCP agent join the call, wait for finalized transcript events, and publish a speech action.
 10. The avatar should speak the reply and animate its mouth and gesture state.
 
 Useful follow-up prompts for a short smoke test:
@@ -118,8 +123,8 @@ This isolates the front end from the external agent runtime.
 That path uses the local fallback route in the app server instead of Codex. It proves:
 
 - the room session is created
-- the bridge can hold pending turns
-- the browser can poll replies
+- the bridge can hold transcript events and pending actions
+- the browser can poll the action queue
 - the avatar can speak and animate a response
 
 ### 2. Full MCP Agent Loop
@@ -129,22 +134,28 @@ This is the real integration path for app 4.
 1. Start the MCP server with the command above.
 2. Attach a Codex or OpenAI runtime to that MCP server.
 3. Create a room session in the browser.
-4. In the MCP runtime, call `list_sessions` to find the active session.
-5. Call `heartbeat_agent` for that session.
-6. Call `claim_next_turn` to take the next pending human turn.
-7. Call `submit_agent_reply` with:
+4. In the MCP runtime, call `join_call`.
+5. Read `avatar://catalog` or the model-specific URI returned by `join_call`.
+6. Call `wait_for_events` with the returned `callId` and `cursor`.
+7. Call `publish_actions` with:
 
 ```json
 {
-  "sessionId": "<session-id>",
-  "turnId": "<turn-id>",
-  "agentId": "codex-openai",
-  "agentLabel": "Codex OpenAI",
-  "reply": "Hello. I can hear you clearly.",
-  "emoteId": "warm",
-  "gestureId": "explain",
-  "voiceMode": "speak",
-  "notes": "Manual smoke test"
+  "callId": "<call-id>",
+  "actions": [
+    {
+      "actionId": "reply-1-anim",
+      "type": "anim",
+      "emoteId": "warm",
+      "gestureId": "Pose"
+    },
+    {
+      "actionId": "reply-1-speech",
+      "type": "speech",
+      "text": "Hello. I can hear you clearly.",
+      "voiceMode": "speak"
+    }
+  ]
 }
 ```
 
@@ -161,14 +172,24 @@ node "$PWD/packages/agent-room-bridge/mcp-server.mjs"
 
 Then give it a task like:
 
-> Watch the newest one-to-one-agent-room session, claim pending turns, and answer them briefly with `voiceMode: "speak"`.
+> Join the active one-to-one-agent-room call, wait for transcript events, and answer them briefly with `publish_actions`.
 
 For a short call, keep the agent behavior tight:
 
 - short replies
-- one turn claimed at a time
-- always send `voiceMode: "speak"`
-- set simple direction such as `emoteId: "warm"` and `gestureId: "explain"`
+- keep one `wait_for_events` loop open
+- always send a speech action with `voiceMode: "speak"`
+- send a simple animation action alongside the speech when the emotional intent matters
+
+## MCP Inspector
+
+Open the `Diagnostics` tab in `one-to-one-agent-room` to inspect:
+
+- active call metadata
+- current event cursor
+- recent bridge events
+- pending agent actions
+- active avatar model and catalog version
 
 ## Troubleshooting
 
@@ -177,7 +198,7 @@ For a short call, keep the agent behavior tight:
 - The session exists but the agent never replies:
   Confirm the MCP server is running against the same `AGENT_ROOM_BRIDGE_STATE_PATH` the app uses.
 - The MCP agent submits replies but the avatar stays silent:
-  Confirm `voiceMode` is `speak`.
+  Confirm the `speech` action uses `voiceMode: "speak"`.
 - The avatar still does not respond:
   Use `Run Local Fallback Reply` first. If that works, the failure is in the external MCP runtime loop, not the browser playback path.
 

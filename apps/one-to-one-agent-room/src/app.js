@@ -17,6 +17,7 @@ import {
   STAGES,
   createAvatarLayer,
   getGesturePresets,
+  pickVoiceForModel,
   resolveGesturePreset,
 } from '/vendor/avatar-layer-browser.js';
 import { clampNumber, formatError } from './lib/format.js';
@@ -79,6 +80,9 @@ const avatarController = createAvatarController({
   formatError,
   addLog: logger.addLog,
   refreshActionButtons: () => presenter?.refreshActionButtons?.(),
+  onBundledModelChange(modelId) {
+    syncRecommendedVoiceForModel(modelId, { force: true });
+  },
 });
 
 const agentVoiceLayer = createVoiceLayer({
@@ -164,8 +168,11 @@ humanVoiceLayer.setHandlers({
     presenter.refreshActionButtons();
     presenter.renderDebugSnapshot();
   },
-  onTranscript({ text }) {
+  onTranscript({ text, isFinal }) {
     state.transcriptPreview = text || 'none';
+    if (!isFinal) {
+      void sessionController.syncInterimTranscript(text);
+    }
     presenter.renderHumanStatus();
   },
   onLog(entry) {
@@ -181,6 +188,11 @@ agentVoiceLayer.setHandlers({
   },
   onVoices(voices) {
     state.voiceOptions = voices;
+    syncRecommendedVoiceForModel(state.preferences.bundledModelId, {
+      force:
+        !state.preferences.voiceName ||
+        !voices.some((voice) => voice.name === state.preferences.voiceName),
+    });
     presenter.renderVoiceOptions();
   },
   onLog(entry) {
@@ -209,6 +221,7 @@ function initialize() {
   presenter.renderTranscriptList();
   presenter.renderHumanStatus();
   presenter.renderAgentStatus();
+  presenter.renderCallSnapshot();
   bindAppEvents({
     dom,
     state,
@@ -234,11 +247,14 @@ async function boot() {
   try {
     state.runtimeConfig = await fetchRuntimeConfig();
     store.ensureDefaults(dom);
-    presenter.updateRoomStatus('ready', 'Ready', 'Start the room when you are ready.');
     store.persistState(dom);
-    await avatarController.loadModel();
+    await Promise.all([
+      avatarController.loadModel(),
+      sessionController.prepareLobbySession({ force: true }),
+    ]);
     presenter.renderRoomSnapshot();
     presenter.renderBridgeSnapshot();
+    presenter.renderCallSnapshot();
     presenter.refreshActionButtons();
     presenter.renderDebugSnapshot();
     logger.addLog('info', 'Runtime ready.', {
@@ -256,13 +272,56 @@ async function boot() {
 }
 
 function syncAgentVoiceConfig() {
+  const voiceCharacters = Object.fromEntries(
+    BUNDLED_MODELS.map((model) => [
+      model.id,
+      {
+        voiceName: pickVoiceForModel(model.id, state.voiceOptions) || state.preferences.voiceName,
+        baseRate: state.preferences.speechRate,
+        basePitch: state.preferences.speechPitch,
+      },
+    ]),
+  );
+
   agentVoiceLayer.updateConfig({
     locale: 'en-US',
     autoRestart: false,
     preferredVoiceName: state.preferences.voiceName,
     speechRate: state.preferences.speechRate,
     speechPitch: state.preferences.speechPitch,
+    defaultCharacterId: 'default',
+    voiceCharacters: {
+      default: {
+        voiceName: state.preferences.voiceName,
+        baseRate: state.preferences.speechRate,
+        basePitch: state.preferences.speechPitch,
+      },
+      ...voiceCharacters,
+    },
     speakReplies: true,
     getReply: async (transcript) => transcript,
   });
+}
+
+function syncRecommendedVoiceForModel(modelId, { force = false } = {}) {
+  const recommendedVoice = pickVoiceForModel(modelId, state.voiceOptions);
+  if (!recommendedVoice) {
+    return;
+  }
+
+  const voiceStillAvailable = state.voiceOptions.some(
+    (voice) => voice.name === state.preferences.voiceName,
+  );
+  if (!force && state.preferences.voiceName && voiceStillAvailable) {
+    return;
+  }
+
+  if (state.preferences.voiceName === recommendedVoice) {
+    return;
+  }
+
+  state.preferences.voiceName = recommendedVoice;
+  syncAgentVoiceConfig();
+  presenter?.renderVoiceOptions?.();
+  store.persistState(dom);
 }
