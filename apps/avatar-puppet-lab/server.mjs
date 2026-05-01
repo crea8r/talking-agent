@@ -2,6 +2,12 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  BUNDLED_MODELS,
+  DEFAULT_MODEL,
+  GESTURES,
+  getGesturePresets,
+} from '../../packages/avatar-layer-browser/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,10 +16,11 @@ const HOST = '127.0.0.1';
 const PORT = Number.parseInt(process.env.PORT || '4383', 10);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SRC_DIR = path.join(__dirname, 'src');
-const MODELS_DIR = path.join(SRC_DIR, 'models');
 const NODE_MODULES_DIR = path.join(REPO_ROOT, 'node_modules');
 const PACKAGES_DIR = path.join(REPO_ROOT, 'packages');
 const AVATAR_LAYER_DIR = path.join(PACKAGES_DIR, 'avatar-layer-browser');
+const MODELS_DIR = path.join(AVATAR_LAYER_DIR, 'models');
+const ANIMATIONS_DIR = path.join(AVATAR_LAYER_DIR, 'animations');
 const VOICE_LAYER_DIR = path.join(PACKAGES_DIR, 'voice-layer-browser');
 
 const MIME_TYPES = new Map([
@@ -24,6 +31,7 @@ const MIME_TYPES = new Map([
   ['.mjs', 'text/javascript; charset=utf-8'],
   ['.png', 'image/png'],
   ['.svg', 'image/svg+xml'],
+  ['.vrma', 'model/gltf-binary'],
   ['.vrm', 'model/gltf-binary'],
 ]);
 
@@ -32,6 +40,7 @@ const STATIC_ROUTES = new Map([
   ['/app.js', path.join(SRC_DIR, 'app.js')],
   ['/styles.css', path.join(SRC_DIR, 'styles.css')],
   ['/vendor/avatar-layer-browser.js', path.join(AVATAR_LAYER_DIR, 'index.js')],
+  ['/vendor/animation-manifest.js', path.join(AVATAR_LAYER_DIR, 'animation-manifest.js')],
   ['/vendor/voice-layer-browser.js', path.join(VOICE_LAYER_DIR, 'index.js')],
 ]);
 
@@ -39,6 +48,10 @@ const PREFIX_ROUTES = [
   {
     prefix: '/models/',
     rootDir: MODELS_DIR,
+  },
+  {
+    prefix: '/animations/',
+    rootDir: ANIMATIONS_DIR,
   },
   {
     prefix: '/vendor/three/',
@@ -68,6 +81,19 @@ function sendText(res, statusCode, text) {
     'content-type': 'text/plain; charset=utf-8',
   });
   res.end(text);
+}
+
+function serializeGesture(gesture) {
+  return {
+    id: gesture.id,
+    file: gesture.file || `${gesture.id}.vrma`,
+    description: gesture.description || gesture.note,
+    bestFor: gesture.bestFor || [],
+    avoidFor: gesture.avoidFor || [],
+    cameraFit: gesture.cameraFit || 'either',
+    intent: gesture.intent,
+    aliases: gesture.aliases || [],
+  };
 }
 
 async function serveStatic(res, filePath) {
@@ -141,10 +167,18 @@ const server = createServer(async (req, res) => {
       appName: 'avatar-puppet-lab',
       appMode: 'vrm-bust-up-probe',
       renderer: 'webgl-vrm-1.0',
-      defaultModel: 'AvatarSample_C.vrm',
+      defaultModel: path.basename(DEFAULT_MODEL.path),
+      bundledModels: BUNDLED_MODELS.map((model) => model.id),
       supportedFormats: ['vrm-1.0', 'vrm-0.x'],
       mouthPresets: ['rest', 'aa', 'ih', 'ou', 'ee', 'oh'],
-      gesturePresets: ['idle', 'listen', 'explain', 'greet', 'thinking'],
+      gestureIds: GESTURES.map((gesture) => gesture.id),
+      gestureCatalog: GESTURES.map(serializeGesture),
+      gestureIdsByModel: Object.fromEntries(
+        BUNDLED_MODELS.map((model) => [model.id, getGesturePresets(model.id).map((gesture) => gesture.id)]),
+      ),
+      gestureCatalogByModel: Object.fromEntries(
+        BUNDLED_MODELS.map((model) => [model.id, getGesturePresets(model.id).map(serializeGesture)]),
+      ),
       stagePresets: ['neon-loft', 'sunset-studio', 'midnight-hangar'],
       port: PORT,
     });

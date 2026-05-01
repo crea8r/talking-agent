@@ -69,7 +69,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'submit_agent_reply',
     description:
-      'Submit the agent reply text plus simple avatar direction so the browser can animate and speak it.',
+      'Submit the agent reply text plus simple avatar direction so the browser can animate and speak it. Use gesture ids from the app runtime gesture catalog when possible.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

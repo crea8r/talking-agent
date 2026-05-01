@@ -13,9 +13,14 @@
     "dev:avatar-puppet-lab": "PORT=4383 npm run dev -w @talking-agent/avatar-puppet-lab",
     "start:avatar-puppet-lab": "PORT=4383 npm run start -w @talking-agent/avatar-puppet-lab",
     "dev:one-to-one-agent-room": "PORT=4384 npm run dev -w @talking-agent/one-to-one-agent-room",
-    "start:one-to-one-agent-room": "PORT=4384 npm run start -w @talking-agent/one-to-one-agent-room"
+    "start:one-to-one-agent-room": "PORT=4384 npm run start -w @talking-agent/one-to-one-agent-room",
+    "check:package-boundaries": "node scripts/check-package-boundaries.mjs",
+    "prepare": "husky"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
   }
 }

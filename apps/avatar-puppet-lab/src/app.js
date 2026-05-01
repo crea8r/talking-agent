@@ -1,10 +1,13 @@
 import { createVoiceLayer } from '/vendor/voice-layer-browser.js';
 import {
+  BUNDLED_MODELS,
   DEFAULT_MODEL,
   EMOTES,
   GESTURES,
   STAGES,
   createAvatarLayer,
+  getGesturePresets,
+  resolveGesturePreset,
 } from '/vendor/avatar-layer-browser.js';
 
 const STORAGE_KEY = 'avatar-puppet-lab.state';
@@ -59,6 +62,7 @@ const dom = {
   recenterLook: document.querySelector('#recenter-look'),
   loadLocalModel: document.querySelector('#load-local-model'),
   useBundledModel: document.querySelector('#use-bundled-model'),
+  bundledModelOptions: document.querySelector('#bundled-model-options'),
   localModelInput: document.querySelector('#local-model-input'),
   modelNote: document.querySelector('#model-note'),
   voiceStatePanel: document.querySelector('#voice-state-panel'),
@@ -78,10 +82,15 @@ const dom = {
 const scriptPresetMap = new Map(SCRIPT_PRESETS.map((preset) => [preset.id, preset]));
 const stageMap = new Map(STAGES.map((stage) => [stage.id, stage]));
 const emoteMap = new Map(EMOTES.map((emote) => [emote.id, emote]));
-const gestureMap = new Map(GESTURES.map((gesture) => [gesture.id, gesture]));
+const bundledModelMap = new Map(BUNDLED_MODELS.map((model) => [model.id, model]));
 
 const storedState = readStoredState();
 const defaultScriptPreset = scriptPresetMap.get(storedState.scriptPresetId) ?? SCRIPT_PRESETS[0];
+const defaultBundledModel = bundledModelMap.get(storedState.bundledModelId) ?? DEFAULT_MODEL;
+const defaultGestureId =
+  resolveGesturePreset(defaultBundledModel.id, storedState.gestureId)?.id ||
+  getGesturePresets(defaultBundledModel.id)[0]?.id ||
+  GESTURES[0].id;
 
 const state = {
   runtimeConfig: null,
@@ -90,11 +99,12 @@ const state = {
   voiceSnapshot: null,
   voiceOptions: [],
   preferences: {
+    bundledModelId: defaultBundledModel.id,
     scriptPresetId: defaultScriptPreset.id,
     scriptText: storedState.scriptText || defaultScriptPreset.text,
     stageId: stageMap.has(storedState.stageId) ? storedState.stageId : STAGES[0].id,
     emoteId: emoteMap.has(storedState.emoteId) ? storedState.emoteId : EMOTES[0].id,
-    gestureId: gestureMap.has(storedState.gestureId) ? storedState.gestureId : GESTURES[0].id,
+    gestureId: defaultGestureId,
     voiceName: storedState.voiceName || '',
     speechRate: clampNumber(storedState.speechRate, 0.7, 1.35, 1),
     speechPitch: clampNumber(storedState.speechPitch, 0.75, 1.4, 1),
@@ -177,9 +187,15 @@ function initialize() {
 
   updateRangeLabels();
   renderScriptPresetButtons();
+  renderChoiceButtons(
+    dom.bundledModelOptions,
+    BUNDLED_MODELS,
+    state.preferences.bundledModelId,
+    queueBundledModelSelection,
+  );
   renderChoiceButtons(dom.stageOptions, STAGES, state.preferences.stageId, selectStage);
   renderChoiceButtons(dom.emoteOptions, EMOTES, state.preferences.emoteId, selectEmote);
-  renderChoiceButtons(dom.gestureOptions, GESTURES, state.preferences.gestureId, selectGesture);
+  syncGestureButtons(state.preferences.bundledModelId, state.preferences.gestureId);
   bindEvents();
   syncAvatarSnapshot();
   renderVoiceOptions();
@@ -192,7 +208,7 @@ function initialize() {
 
   syncVoiceLayerConfig();
   void fetchRuntimeConfig();
-  void loadModel(DEFAULT_MODEL.path, DEFAULT_MODEL.label, DEFAULT_MODEL.note);
+  void loadBundledModel();
 }
 
 function readStoredState() {
@@ -211,6 +227,7 @@ function readStoredState() {
 
 function persistState() {
   const payload = {
+    bundledModelId: state.preferences.bundledModelId,
     scriptPresetId: state.preferences.scriptPresetId,
     scriptText: state.preferences.scriptText,
     stageId: state.preferences.stageId,
@@ -281,12 +298,13 @@ function bindEvents() {
   });
 
   dom.randomizeScene.addEventListener('click', () => {
+    const gesturePresets = getGesturePresets(avatarLayer.getSnapshot().modelId || state.preferences.bundledModelId);
     state.preferences.scriptPresetId = SCRIPT_PRESETS[Math.floor(Math.random() * SCRIPT_PRESETS.length)].id;
     state.preferences.scriptText = scriptPresetMap.get(state.preferences.scriptPresetId).text;
     dom.scriptInput.value = state.preferences.scriptText;
     selectStage(STAGES[Math.floor(Math.random() * STAGES.length)].id);
     selectEmote(EMOTES[Math.floor(Math.random() * EMOTES.length)].id);
-    selectGesture(GESTURES[Math.floor(Math.random() * GESTURES.length)].id);
+    selectGesture(gesturePresets[Math.floor(Math.random() * gesturePresets.length)].id);
     syncScriptPresetButtons();
     updateDurationEstimate();
     persistState();
@@ -319,7 +337,7 @@ function bindEvents() {
   });
 
   dom.useBundledModel.addEventListener('click', async () => {
-    await loadModel(DEFAULT_MODEL.path, DEFAULT_MODEL.label, DEFAULT_MODEL.note);
+    await loadBundledModel();
   });
 
   window.addEventListener('beforeunload', () => {
@@ -353,13 +371,16 @@ async function fetchRuntimeConfig() {
   }
 }
 
-async function loadModel(url, label, successNote) {
+async function loadModel(url, label, successNote, modelId = null) {
   setModelNote('loading', `Loading ${label}…`);
   state.modelLoading = true;
   refreshActionButtons();
 
   try {
-    await avatarLayer.loadModel(url, { label });
+    await avatarLayer.loadModel(url, { label, modelId: modelId || undefined });
+    const snapshot = avatarLayer.getSnapshot();
+    state.preferences.gestureId = snapshot.gestureId;
+    syncGestureButtons(snapshot.modelId || state.preferences.bundledModelId, snapshot.gestureId);
     syncAvatarSnapshot();
     setModelNote('ready', successNote);
     addLog('info', `Model ready: ${label}.`);
@@ -371,6 +392,39 @@ async function loadModel(url, label, successNote) {
     state.modelLoading = false;
     refreshActionButtons();
   }
+}
+
+function getSelectedBundledModel() {
+  return bundledModelMap.get(state.preferences.bundledModelId) || DEFAULT_MODEL;
+}
+
+function queueBundledModelSelection(modelId) {
+  void selectBundledModel(modelId);
+}
+
+async function selectBundledModel(modelId, { persist = true } = {}) {
+  const model = bundledModelMap.get(modelId) || DEFAULT_MODEL;
+  state.preferences.bundledModelId = model.id;
+  state.preferences.gestureId =
+    resolveGesturePreset(model.id, state.preferences.gestureId)?.id ||
+    getGesturePresets(model.id)[0]?.id ||
+    state.preferences.gestureId;
+  syncChoiceButtons(dom.bundledModelOptions, model.id);
+  syncGestureButtons(model.id, state.preferences.gestureId);
+
+  if (persist) {
+    persistState();
+  }
+
+  if (state.modelLoading) {
+    return;
+  }
+
+  await loadBundledModel(model);
+}
+
+async function loadBundledModel(model = getSelectedBundledModel()) {
+  await loadModel(model.path, model.label, model.note, model.id);
 }
 
 async function startPlayback({ withVoice }) {
@@ -521,9 +575,12 @@ function tickPlayback() {
 
 function syncAvatarSnapshot() {
   const snapshot = avatarLayer.getSnapshot();
+  const gesture =
+    resolveGesturePreset(snapshot.modelId || state.preferences.bundledModelId, snapshot.gestureId) ||
+    null;
   dom.activeAvatar.textContent = snapshot.modelLabel;
   dom.activeEmote.textContent = emoteMap.get(snapshot.emoteId)?.label || 'Neutral';
-  dom.activeGesture.textContent = gestureMap.get(snapshot.gestureId)?.label || 'Idle';
+  dom.activeGesture.textContent = gesture?.label || 'None';
   dom.lookTarget.textContent = state.scene.currentLookLabel;
 }
 
@@ -717,19 +774,41 @@ function selectEmote(emoteId) {
 }
 
 function selectGesture(gestureId) {
-  state.preferences.gestureId = gestureId;
-  avatarLayer.setGesture(gestureId);
-  syncChoiceButtons(dom.gestureOptions, gestureId);
+  const modelId = avatarLayer.getSnapshot().modelId || state.preferences.bundledModelId;
+  const gesture = resolveGesturePreset(modelId, gestureId, {
+    fallbackToFirst: false,
+  });
+
+  if (!gesture) {
+    return null;
+  }
+
+  state.preferences.gestureId = gesture.id;
+  avatarLayer.setGesture(gesture.id);
+  syncGestureButtons(modelId, gesture.id);
   syncAvatarSnapshot();
   refreshSceneNote();
   persistState();
+
+  return gesture;
 }
 
 function refreshSceneNote() {
   const stage = stageMap.get(state.preferences.stageId);
   const emote = emoteMap.get(state.preferences.emoteId);
-  const gesture = gestureMap.get(state.preferences.gestureId);
+  const modelId = avatarLayer.getSnapshot().modelId || state.preferences.bundledModelId;
+  const gesture =
+    resolveGesturePreset(modelId, state.preferences.gestureId) || null;
   dom.sceneNote.textContent = `${stage?.note || ''} ${emote?.note || ''} ${gesture?.note || ''}`.trim();
+}
+
+function syncGestureButtons(modelId, activeGestureId) {
+  renderChoiceButtons(
+    dom.gestureOptions,
+    getGesturePresets(modelId),
+    activeGestureId,
+    selectGesture,
+  );
 }
 
 function updateRangeLabels() {

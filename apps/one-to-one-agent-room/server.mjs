@@ -9,7 +9,14 @@ import {
   validateRoomLayerTokenRequest,
 } from '../../packages/room-layer/server.mjs';
 import { createAgentRoomBridgeStore } from '../../packages/agent-room-bridge/index.mjs';
-import { EMOTES, GESTURES, STAGES } from '../../packages/avatar-layer-browser/index.js';
+import {
+  BUNDLED_MODELS,
+  DEFAULT_MODEL,
+  EMOTES,
+  GESTURES,
+  getGesturePresets,
+  STAGES,
+} from '../../packages/avatar-layer-browser/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +28,7 @@ const SRC_DIR = path.join(__dirname, 'src');
 const NODE_MODULES_DIR = path.join(REPO_ROOT, 'node_modules');
 const PACKAGES_DIR = path.join(REPO_ROOT, 'packages');
 const MODELS_DIR = path.join(PACKAGES_DIR, 'avatar-layer-browser', 'models');
+const ANIMATIONS_DIR = path.join(PACKAGES_DIR, 'avatar-layer-browser', 'animations');
 const ROOM_LAYER_DIR = path.join(PACKAGES_DIR, 'room-layer');
 const VOICE_LAYER_DIR = path.join(PACKAGES_DIR, 'voice-layer-browser');
 const AVATAR_LAYER_DIR = path.join(PACKAGES_DIR, 'avatar-layer-browser');
@@ -52,6 +60,7 @@ const MIME_TYPES = new Map([
   ['.map', 'application/json; charset=utf-8'],
   ['.mjs', 'text/javascript; charset=utf-8'],
   ['.svg', 'image/svg+xml'],
+  ['.vrma', 'model/gltf-binary'],
   ['.vrm', 'model/gltf-binary'],
 ]);
 
@@ -62,6 +71,7 @@ const STATIC_ROUTES = new Map([
   ['/vendor/room-layer-client.mjs', path.join(ROOM_LAYER_DIR, 'client.mjs')],
   ['/vendor/voice-layer-browser.js', path.join(VOICE_LAYER_DIR, 'index.js')],
   ['/vendor/avatar-layer-browser.js', path.join(AVATAR_LAYER_DIR, 'index.js')],
+  ['/vendor/animation-manifest.js', path.join(AVATAR_LAYER_DIR, 'animation-manifest.js')],
   ['/vendor/avatar-speech-browser.js', path.join(AVATAR_SPEECH_DIR, 'index.js')],
   ['/vendor/livekit-client.mjs', LIVEKIT_CLIENT_DIST],
   ['/vendor/livekit-client.mjs.map', LIVEKIT_CLIENT_MAP],
@@ -69,8 +79,20 @@ const STATIC_ROUTES = new Map([
 
 const PREFIX_ROUTES = [
   {
+    prefix: '/ui/',
+    rootDir: path.join(SRC_DIR, 'ui'),
+  },
+  {
+    prefix: '/lib/',
+    rootDir: path.join(SRC_DIR, 'lib'),
+  },
+  {
     prefix: '/models/',
     rootDir: MODELS_DIR,
+  },
+  {
+    prefix: '/animations/',
+    rootDir: ANIMATIONS_DIR,
   },
   {
     prefix: '/vendor/three/',
@@ -79,6 +101,10 @@ const PREFIX_ROUTES = [
   {
     prefix: '/vendor/@pixiv/three-vrm/',
     rootDir: path.join(NODE_MODULES_DIR, '@pixiv', 'three-vrm', 'lib'),
+  },
+  {
+    prefix: '/vendor/@pixiv/three-vrm-animation/',
+    rootDir: path.join(NODE_MODULES_DIR, '@pixiv', 'three-vrm-animation', 'lib'),
   },
 ];
 
@@ -225,6 +251,19 @@ function createDemoReplyText(transcript) {
   return `I heard: ${cleaned}. The bridge has the turn, the avatar package can speak the response, and the app shell stays thin around those reusable pieces.`;
 }
 
+function serializeGesture(gesture) {
+  return {
+    id: gesture.id,
+    file: gesture.file || `${gesture.id}.vrma`,
+    description: gesture.description || gesture.note,
+    bestFor: gesture.bestFor || [],
+    avoidFor: gesture.avoidFor || [],
+    cameraFit: gesture.cameraFit || 'either',
+    intent: gesture.intent,
+    aliases: gesture.aliases || [],
+  };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${HOST}:${PORT}`);
 
@@ -267,10 +306,18 @@ const server = createServer(async (req, res) => {
         port: PORT,
       }),
       avatar: {
-        defaultModel: 'AvatarSample_C.vrm',
+        defaultModel: path.basename(DEFAULT_MODEL.path),
+        bundledModels: BUNDLED_MODELS.map((model) => model.id),
         stageIds: STAGES.map((stage) => stage.id),
         emoteIds: EMOTES.map((emote) => emote.id),
         gestureIds: GESTURES.map((gesture) => gesture.id),
+        gestureCatalog: GESTURES.map(serializeGesture),
+        gestureIdsByModel: Object.fromEntries(
+          BUNDLED_MODELS.map((model) => [model.id, getGesturePresets(model.id).map((gesture) => gesture.id)]),
+        ),
+        gestureCatalogByModel: Object.fromEntries(
+          BUNDLED_MODELS.map((model) => [model.id, getGesturePresets(model.id).map(serializeGesture)]),
+        ),
       },
       bridge: {
         stateFilePath: BRIDGE_STATE_PATH,

@@ -6,13 +6,51 @@ import {
   VRMLoaderPlugin,
   VRMUtils,
 } from '@pixiv/three-vrm';
+import {
+  VRMAnimationLoaderPlugin,
+  createVRMAnimationHumanoidTracks,
+} from '@pixiv/three-vrm-animation';
+import { ANIMATION_MANIFEST } from './animation-manifest.js';
 
-export const DEFAULT_MODEL = {
-  id: 'bundled-sample',
-  label: 'Bundled Sample',
-  path: '/models/AvatarSample_C.vrm',
-  note: 'Bundled VRoid sample model running locally through the browser VRM stack.',
-};
+export { ANIMATION_MANIFEST } from './animation-manifest.js';
+
+export const BUNDLED_MODELS = [
+  {
+    id: 'bhf-1-2',
+    label: 'Bhf 1.2',
+    path: '/models/Bhf_1_2.vrm',
+    note: 'Optimized VRM 1.0 default with a softer read and six custom expressions.',
+  },
+  {
+    id: 'fbf-1-0',
+    label: 'Fbf 1.0',
+    path: '/models/Fbf_1_0.vrm',
+    note: 'Heavier VRM 1.0 fashion variant with extra face detail and a sharper silhouette.',
+  },
+  {
+    id: 'smg-1-0',
+    label: 'Smg 1.0',
+    path: '/models/Smg_1_0.vrm',
+    note: 'Lean VRM 1.0 update with a cleaner rig and a more assertive stage read.',
+  },
+];
+
+export const DEFAULT_MODEL = BUNDLED_MODELS[0];
+
+function createBundledAnimation(definition) {
+  return {
+    id: definition.id,
+    label: definition.id,
+    path: `/animations/${definition.file}`,
+    note: definition.description,
+    description: definition.description,
+    bestFor: definition.bestFor,
+    avoidFor: definition.avoidFor,
+    cameraFit: definition.cameraFit,
+  };
+}
+
+export const BUNDLED_ANIMATIONS = ANIMATION_MANIFEST.map(createBundledAnimation);
 
 export const STAGES = [
   {
@@ -164,93 +202,109 @@ export const EMOTES = [
   },
 ];
 
-export const GESTURES = [
-  {
-    id: 'idle',
-    label: 'Idle',
-    note: 'A calm chest up stance with both forearms lightly visible.',
-    pose: {
-      [B.Spine]: [1, 0, 0],
-      [B.UpperChest]: [1.25, 0, 0],
-      [B.LeftShoulder]: [0, 0, 6],
-      [B.RightShoulder]: [0, 0, -6],
-      [B.LeftUpperArm]: [8, 12, 18],
-      [B.RightUpperArm]: [8, -12, -18],
-      [B.LeftLowerArm]: [-18, 7, -8],
-      [B.RightLowerArm]: [-18, -7, 8],
-      [B.LeftHand]: [0, 0, 6],
-      [B.RightHand]: [0, 0, -6],
-    },
-  },
-  {
-    id: 'listen',
-    label: 'Listen',
-    note: 'Shoulders relaxed with one hand slightly tucked inward.',
-    pose: {
-      [B.Spine]: [1.5, 0, 0],
-      [B.UpperChest]: [2, 0, 0],
-      [B.LeftUpperArm]: [10, 9, 14],
-      [B.RightUpperArm]: [6, -8, -10],
-      [B.LeftLowerArm]: [-16, 8, -10],
-      [B.RightLowerArm]: [-12, -4, 5],
-      [B.LeftHand]: [3, 0, 10],
-      [B.RightHand]: [0, 0, -2],
-    },
-  },
-  {
-    id: 'explain',
-    label: 'Explain',
-    note: 'Both hands are more present, ready for light speech emphasis.',
-    pose: {
-      [B.Spine]: [1, 0, 0],
-      [B.UpperChest]: [2.25, 0, 0],
-      [B.LeftShoulder]: [0, 0, 8],
-      [B.RightShoulder]: [0, 0, -8],
-      [B.LeftUpperArm]: [16, 14, 24],
-      [B.RightUpperArm]: [16, -14, -24],
-      [B.LeftLowerArm]: [-28, 10, -14],
-      [B.RightLowerArm]: [-28, -10, 14],
-      [B.LeftHand]: [4, 0, 12],
-      [B.RightHand]: [4, 0, -12],
-    },
-  },
-  {
-    id: 'greet',
-    label: 'Greet',
-    note: 'A safe one hand wave kept out of the face area.',
-    pose: {
-      [B.Spine]: [0.5, 0, 0],
-      [B.UpperChest]: [1.5, 0, 0],
-      [B.LeftUpperArm]: [8, 10, 12],
-      [B.LeftLowerArm]: [-18, 6, -8],
-      [B.LeftHand]: [2, 0, 6],
-      [B.RightUpperArm]: [30, -18, -46],
-      [B.RightLowerArm]: [-42, -10, 12],
-      [B.RightHand]: [10, -4, -20],
-    },
-  },
-  {
-    id: 'thinking',
-    label: 'Thinking',
-    note: 'A reflective pose with one hand closer to the upper torso.',
-    pose: {
-      [B.Spine]: [2.5, 0, 0],
-      [B.UpperChest]: [2, 0, 0],
-      [B.LeftUpperArm]: [10, 8, 14],
-      [B.LeftLowerArm]: [-18, 8, -8],
-      [B.RightUpperArm]: [18, -10, -24],
-      [B.RightLowerArm]: [-26, -10, 16],
-      [B.RightHand]: [12, 6, -10],
-      [B.Head]: [1, 0, 0],
-    },
-  },
-];
+function createVrmaGesture(definition) {
+  const motionOptions = definition.fadeIn == null ? {} : { fadeIn: definition.fadeIn };
+
+  return {
+    id: definition.id,
+    intent: definition.intent || definition.id,
+    label: definition.id,
+    note: definition.description,
+    description: definition.description,
+    bestFor: definition.bestFor,
+    avoidFor: definition.avoidFor,
+    cameraFit: definition.cameraFit,
+    file: definition.file,
+    aliases: definition.aliases || [],
+    pose: {},
+    motion: createVrmaMotion(definition.id, motionOptions),
+  };
+}
+
+export const GESTURES = ANIMATION_MANIFEST.map(createVrmaGesture);
+
+const DEFAULT_GESTURE_MODEL_ID = 'default';
+const BUNDLED_ANIMATION_MAP = new Map(BUNDLED_ANIMATIONS.map((animation) => [animation.id, animation]));
+const BUNDLED_ANIMATION_SOURCE_CACHE = new Map();
+
+function createVrmaMotion(clipId, { fadeIn = 0.28, loop = 'repeat' } = {}) {
+  return {
+    type: 'vrma',
+    clipId,
+    fadeIn,
+    loop,
+  };
+}
+
+export const MODEL_GESTURES = {
+  [DEFAULT_GESTURE_MODEL_ID]: GESTURES,
+  'bhf-1-2': GESTURES,
+  'fbf-1-0': GESTURES,
+  'smg-1-0': GESTURES,
+};
+
+const ALL_GESTURE_CATALOGS = [GESTURES];
+
+export function getGesturePresets(modelId = DEFAULT_GESTURE_MODEL_ID) {
+  return MODEL_GESTURES[modelId] || MODEL_GESTURES[DEFAULT_GESTURE_MODEL_ID];
+}
+
+function findGestureByIdAcrossCatalogs(gestureId) {
+  if (!gestureId) {
+    return null;
+  }
+
+  for (const catalog of ALL_GESTURE_CATALOGS) {
+    const match = catalog.find(
+      (gesture) => gesture.id === gestureId || gesture.aliases?.includes(gestureId),
+    );
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+export function resolveGesturePreset(
+  modelId,
+  requestedGestureId,
+  { fallbackToFirst = true } = {},
+) {
+  const gestures = getGesturePresets(modelId);
+  if (!gestures.length) {
+    return null;
+  }
+
+  if (requestedGestureId) {
+    const exactMatch = gestures.find(
+      (gesture) => gesture.id === requestedGestureId || gesture.aliases?.includes(requestedGestureId),
+    );
+    if (exactMatch) {
+      return exactMatch;
+    }
+
+    const semanticMatch = gestures.find((gesture) => gesture.intent === requestedGestureId);
+    if (semanticMatch) {
+      return semanticMatch;
+    }
+
+    const sourceGesture = findGestureByIdAcrossCatalogs(requestedGestureId);
+    if (sourceGesture?.intent) {
+      const mappedGesture = gestures.find((gesture) => gesture.intent === sourceGesture.intent);
+      if (mappedGesture) {
+        return mappedGesture;
+      }
+    }
+  }
+
+  return fallbackToFirst ? gestures[0] : null;
+}
 
 export const MOUTH_CUES = ['rest', 'aa', 'ih', 'ou', 'ee', 'oh'];
 
 const STAGE_MAP = new Map(STAGES.map((stage) => [stage.id, stage]));
 const EMOTE_MAP = new Map(EMOTES.map((emote) => [emote.id, emote]));
-const GESTURE_MAP = new Map(GESTURES.map((gesture) => [gesture.id, gesture]));
 
 const MOUTH_TO_EXPRESSION = {
   rest: null,
@@ -287,7 +341,10 @@ export function createAvatarLayer({
   const state = {
     currentStageId: STAGE_MAP.has(initialStageId) ? initialStageId : STAGES[0].id,
     currentEmoteId: EMOTE_MAP.has(initialEmoteId) ? initialEmoteId : EMOTES[0].id,
-    currentGestureId: GESTURE_MAP.has(initialGestureId) ? initialGestureId : GESTURES[0].id,
+    currentModelId: DEFAULT_GESTURE_MODEL_ID,
+    currentGestureId:
+      resolveGesturePreset(DEFAULT_GESTURE_MODEL_ID, initialGestureId)?.id || GESTURES[0].id,
+    currentGestureStartedAt: getNowMs(),
     currentModelLabel: 'No model',
     currentMouthCue: 'rest',
     speaking: false,
@@ -311,7 +368,7 @@ export function createAvatarLayer({
   applyStage(state.currentStageId);
   applyEnergy(state.energy);
 
-  async function loadModel(url, { label = 'Model' } = {}) {
+  async function loadModel(url, { label = 'Model', modelId = DEFAULT_GESTURE_MODEL_ID } = {}) {
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
 
@@ -319,6 +376,7 @@ export function createAvatarLayer({
     emitLog(onLog, 'info', `Loading model ${label}.`);
 
     try {
+      const resolvedModelId = MODEL_GESTURES[modelId] ? modelId : DEFAULT_GESTURE_MODEL_ID;
       const gltf = await loader.loadAsync(url);
       const vrm = gltf.userData.vrm;
 
@@ -332,7 +390,13 @@ export function createAvatarLayer({
         VRMUtils.rotateVRM0(vrm);
       }
 
-      runtime.setVRM(vrm);
+      state.currentModelId = resolvedModelId;
+      state.currentGestureId =
+        resolveGesturePreset(state.currentModelId, state.currentGestureId)?.id ||
+        getGesturePresets(state.currentModelId)[0]?.id ||
+        GESTURES[0].id;
+      state.currentGestureStartedAt = getNowMs();
+      await runtime.setVRM(vrm);
       state.currentModelLabel = label;
       emitLog(onLog, 'info', `Model ready: ${label}.`);
       return getSnapshot();
@@ -369,7 +433,15 @@ export function createAvatarLayer({
   }
 
   function setGesture(gestureId) {
-    state.currentGestureId = GESTURE_MAP.has(gestureId) ? gestureId : GESTURES[0].id;
+    const nextGestureId =
+      resolveGesturePreset(state.currentModelId, gestureId)?.id ||
+      getGesturePresets(state.currentModelId)[0]?.id ||
+      GESTURES[0].id;
+    if (nextGestureId !== state.currentGestureId) {
+      state.currentGestureStartedAt = getNowMs();
+    }
+    state.currentGestureId = nextGestureId;
+    runtime.syncGestureMotion();
     return getSnapshot();
   }
 
@@ -392,10 +464,22 @@ export function createAvatarLayer({
     return {
       ready: Boolean(runtime.currentVRM),
       loading: state.isLoadingModel,
+      modelId: state.currentModelId,
       modelLabel: state.currentModelLabel,
       stageId: state.currentStageId,
       emoteId: state.currentEmoteId,
       gestureId: state.currentGestureId,
+      availableGestures: getGesturePresets(state.currentModelId).map((gesture) => ({
+        id: gesture.id,
+        intent: gesture.intent,
+        label: gesture.label,
+        file: gesture.file,
+        note: gesture.note,
+        description: gesture.description,
+        bestFor: gesture.bestFor,
+        avoidFor: gesture.avoidFor,
+        cameraFit: gesture.cameraFit,
+      })),
       mouthCue: state.currentMouthCue,
       speaking: state.speaking,
       energy: state.energy,
@@ -460,6 +544,13 @@ function createRendererRuntime({ canvas, stageShell, state, onLog, onLookTargetC
     camera,
     currentVRM: null,
     rig: null,
+    animation: {
+      activeAction: null,
+      activeClipId: null,
+      actions: new Map(),
+      clips: new Map(),
+      mixer: null,
+    },
     look: {
       pointerActive: false,
       pointerTarget: new THREE.Vector2(0, 0),
@@ -477,6 +568,7 @@ function createRendererRuntime({ canvas, stageShell, state, onLog, onLookTargetC
     start,
     dispose,
     setVRM,
+    syncGestureMotion,
     applyStageLighting,
   };
 
@@ -494,11 +586,7 @@ function createRendererRuntime({ canvas, stageShell, state, onLog, onLookTargetC
     stageShell?.removeEventListener('pointermove', handlePointerMove);
     stageShell?.removeEventListener('pointerleave', handlePointerLeave);
 
-    if (runtime.currentVRM) {
-      modelPivot.remove(runtime.currentVRM.scene);
-      VRMUtils.deepDispose(runtime.currentVRM.scene);
-      runtime.currentVRM = null;
-    }
+    clearCurrentVRM();
 
     renderer.dispose();
   }
@@ -529,6 +617,7 @@ function createRendererRuntime({ canvas, stageShell, state, onLog, onLookTargetC
     const now = performance.now();
     resize();
     updateBlink(now);
+    runtime.animation.mixer?.update(delta);
     updatePose(delta, now);
     updateLookTarget(delta, now);
 
@@ -540,22 +629,160 @@ function createRendererRuntime({ canvas, stageShell, state, onLog, onLookTargetC
     renderer.render(scene, camera);
   }
 
-  function setVRM(vrm) {
-    if (runtime.currentVRM) {
-      modelPivot.remove(runtime.currentVRM.scene);
-      VRMUtils.deepDispose(runtime.currentVRM.scene);
-    }
+  async function setVRM(vrm) {
+    clearCurrentVRM();
 
     runtime.currentVRM = vrm;
     modelPivot.add(vrm.scene);
     prepareModel(vrm);
     runtime.rig = bindRig(vrm);
+    runtime.animation.mixer = new THREE.AnimationMixer(vrm.scene);
+    await hydrateAnimationClipsForCurrentModel();
     alignCameraToRig();
     runtime.look.pointerActive = false;
     runtime.look.pointerTarget.set(0, 0);
     runtime.blink.active = false;
     runtime.blink.weight = 0;
     runtime.blink.nextAt = performance.now() + 1200;
+    syncGestureMotion();
+  }
+
+  function clearCurrentVRM() {
+    runtime.animation.activeAction?.stop();
+    runtime.animation.activeAction = null;
+    runtime.animation.activeClipId = null;
+    runtime.animation.actions.clear();
+    runtime.animation.clips.clear();
+    runtime.animation.mixer?.stopAllAction();
+    runtime.animation.mixer = null;
+
+    if (runtime.currentVRM) {
+      modelPivot.remove(runtime.currentVRM.scene);
+      VRMUtils.deepDispose(runtime.currentVRM.scene);
+      runtime.currentVRM = null;
+    }
+  }
+
+  async function hydrateAnimationClipsForCurrentModel() {
+    runtime.animation.actions.clear();
+    runtime.animation.clips.clear();
+
+    if (!runtime.currentVRM || !runtime.animation.mixer) {
+      return;
+    }
+
+    const clipIds = new Set(
+      getGesturePresets(state.currentModelId)
+        .map((gesture) => gesture.motion?.clipId)
+        .filter(Boolean),
+    );
+
+    const clips = await Promise.all(
+      [...clipIds].map(async (clipId) => {
+        try {
+          const definition = BUNDLED_ANIMATION_MAP.get(clipId);
+          if (!definition) {
+            return null;
+          }
+
+          const vrmAnimation = await loadBundledVrmAnimation(definition.path);
+          if (!vrmAnimation) {
+            return null;
+          }
+
+          return [
+            clipId,
+            createHumanoidOnlyAnimationClip(vrmAnimation, runtime.currentVRM, definition.label),
+          ];
+        } catch (error) {
+          emitLog(onLog, 'warn', `Failed to load VRMA clip for ${clipId}.`, error);
+          return null;
+        }
+      }),
+    );
+
+    clips.filter(Boolean).forEach(([clipId, clip]) => {
+      runtime.animation.clips.set(clipId, clip);
+    });
+  }
+
+  function syncGestureMotion() {
+    const gesture =
+      resolveGesturePreset(state.currentModelId, state.currentGestureId, { fallbackToFirst: false }) ||
+      null;
+    const motion = gesture?.motion;
+
+    if (motion?.type !== 'vrma' || !runtime.animation.mixer) {
+      stopGestureMotion();
+      return;
+    }
+
+    const clip = runtime.animation.clips.get(motion.clipId);
+    if (!clip) {
+      stopGestureMotion();
+      return;
+    }
+
+    playGestureMotion(motion.clipId, motion);
+  }
+
+  function getOrCreateAction(clipId) {
+    if (!runtime.animation.mixer) {
+      return null;
+    }
+
+    if (!runtime.animation.actions.has(clipId)) {
+      const clip = runtime.animation.clips.get(clipId);
+      if (!clip) {
+        return null;
+      }
+      runtime.animation.actions.set(clipId, runtime.animation.mixer.clipAction(clip));
+    }
+
+    return runtime.animation.actions.get(clipId) || null;
+  }
+
+  function playGestureMotion(clipId, { fadeIn = 0.24, loop = 'repeat' } = {}) {
+    const nextAction = getOrCreateAction(clipId);
+    if (!nextAction) {
+      stopGestureMotion();
+      return;
+    }
+
+    if (runtime.animation.activeAction === nextAction && runtime.animation.activeClipId === clipId) {
+      return;
+    }
+
+    const previousAction = runtime.animation.activeAction;
+
+    nextAction.enabled = true;
+    nextAction.reset();
+    nextAction.setEffectiveTimeScale(1);
+    nextAction.setEffectiveWeight(1);
+    nextAction.setLoop(loop === 'once' ? THREE.LoopOnce : THREE.LoopRepeat, loop === 'once' ? 1 : Infinity);
+    nextAction.clampWhenFinished = loop === 'once';
+    nextAction.play();
+
+    if (previousAction && previousAction !== nextAction) {
+      previousAction.fadeOut(fadeIn);
+      nextAction.fadeIn(fadeIn);
+    } else {
+      nextAction.fadeIn(fadeIn);
+    }
+
+    runtime.animation.activeAction = nextAction;
+    runtime.animation.activeClipId = clipId;
+  }
+
+  function stopGestureMotion() {
+    if (!runtime.animation.activeAction) {
+      runtime.animation.activeClipId = null;
+      return;
+    }
+
+    runtime.animation.activeAction.stop();
+    runtime.animation.activeAction = null;
+    runtime.animation.activeClipId = null;
   }
 
   function applyStageLighting(stage) {
@@ -698,8 +925,14 @@ function createRendererRuntime({ canvas, stageShell, state, onLog, onLookTargetC
       return;
     }
 
+    if (runtime.animation.activeClipId) {
+      modelPivot.position.y = 0;
+      return;
+    }
+
     const emote = EMOTE_MAP.get(state.currentEmoteId) || EMOTES[0];
-    const gesture = GESTURE_MAP.get(state.currentGestureId) || GESTURES[0];
+    const gesture =
+      resolveGesturePreset(state.currentModelId, state.currentGestureId) || GESTURES[0];
     const targetPose = new Map();
     const time = now / 1000;
     const speechStrength = state.speaking ? 1 : 0.28;
@@ -719,7 +952,71 @@ function createRendererRuntime({ canvas, stageShell, state, onLog, onLookTargetC
       addPose(targetPose, B.UpperChest, [Math.sin(time * 2.3) * 1.1 * state.energy, 0, 0]);
     }
 
-    switch (gesture.id) {
+    const proceduralMode =
+      gesture.motion?.type === 'vrma' && !runtime.animation.activeClipId
+        ? gesture.intent || gesture.id
+        : gesture.motion?.type || gesture.intent || gesture.id;
+
+    switch (proceduralMode) {
+      case 'bhf-hand-wave': {
+        const torsoSway = Math.sin(time * 1.05 + 0.25);
+        const gestureElapsed = Math.max(0, now - state.currentGestureStartedAt);
+        const raiseProgress = easeInOutSine(clamp01((gestureElapsed - 80) / 720));
+        const waveBlend = easeInOutSine(clamp01((gestureElapsed - 620) / 320));
+        const wavePrimary = Math.sin(Math.max(0, gestureElapsed - 760) / 1000 * Math.PI * 2 * 1.7) * waveBlend;
+        const waveSecondary =
+          Math.sin(Math.max(0, gestureElapsed - 760) / 1000 * Math.PI * 2 * 3.4 + 0.45) *
+          waveBlend;
+        const elbowFollow =
+          Math.sin(Math.max(0, gestureElapsed - 760) / 1000 * Math.PI * 2 * 1.7 + 0.35) *
+          waveBlend;
+
+        // Relaxed base pose, then raise the forearm and sweep it laterally while the inner palm stays presented.
+        addPose(targetPose, B.Spine, [0.18 * raiseProgress + torsoSway * 0.18, -0.08 * raiseProgress, -0.1 * raiseProgress]);
+        addPose(
+          targetPose,
+          B.UpperChest,
+          [0.45 * raiseProgress + torsoSway * 0.28, -0.18 * raiseProgress, -0.36 * raiseProgress + torsoSway * 0.12],
+        );
+        addPose(
+          targetPose,
+          B.Head,
+          [0.12 * raiseProgress + torsoSway * 0.14, -0.32 * raiseProgress + wavePrimary * 0.08, -0.18 * raiseProgress],
+        );
+        addPose(
+          targetPose,
+          B.RightShoulder,
+          [1.4 * raiseProgress, 0, (-1.2 + torsoSway * 0.12) * raiseProgress],
+        );
+        addPose(
+          targetPose,
+          B.RightUpperArm,
+          [
+            28 * raiseProgress + torsoSway * 0.16 * raiseProgress + elbowFollow * 0.08,
+            -4 * raiseProgress,
+            -20 * raiseProgress + wavePrimary * -0.12,
+          ],
+        );
+        addPose(
+          targetPose,
+          B.RightLowerArm,
+          [
+            -94 * raiseProgress + elbowFollow * -1.6,
+            7 * raiseProgress + wavePrimary * 5.2 + waveSecondary * 1.2,
+            1 * raiseProgress + waveSecondary * 0.6,
+          ],
+        );
+        addPose(
+          targetPose,
+          B.RightHand,
+          [
+            5 * raiseProgress + waveSecondary * 0.4,
+            -66 * raiseProgress + wavePrimary * 0.2,
+            1 * raiseProgress + waveSecondary * 0.5,
+          ],
+        );
+        break;
+      }
       case 'explain': {
         const phrase = Math.sin(time * (1.7 + state.energy * 0.45));
         addPose(targetPose, B.LeftUpperArm, [phrase * 3.5, 0, phrase * 5.5]);
@@ -747,9 +1044,12 @@ function createRendererRuntime({ canvas, stageShell, state, onLog, onLookTargetC
         break;
       }
       default: {
-        const idleShift = Math.sin(time * 0.8) * 1.2;
-        addPose(targetPose, B.LeftHand, [0, 0, idleShift * 0.7]);
-        addPose(targetPose, B.RightHand, [0, 0, idleShift * -0.7]);
+        const breath = Math.sin(time * 0.52 + runtime.look.seed * 0.3);
+        addPose(targetPose, B.Spine, [breath * 0.18, 0, 0]);
+        addPose(targetPose, B.UpperChest, [0.28 + breath * 0.6, 0, breath * 0.12]);
+        addPose(targetPose, B.LeftShoulder, [breath * 0.18, 0, breath * 0.18]);
+        addPose(targetPose, B.RightShoulder, [breath * 0.18, 0, breath * -0.18]);
+        addPose(targetPose, B.Head, [breath * 0.14, 0, breath * 0.06]);
         break;
       }
     }
@@ -864,12 +1164,56 @@ function applyPoseToBones(rig, targetPose, delta) {
   });
 }
 
+async function loadBundledVrmAnimation(url) {
+  if (!BUNDLED_ANIMATION_SOURCE_CACHE.has(url)) {
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+
+    const pendingAnimation = loader
+      .loadAsync(url)
+      .then((gltf) => gltf.userData.vrmAnimations?.[0] || null)
+      .catch((error) => {
+        BUNDLED_ANIMATION_SOURCE_CACHE.delete(url);
+        throw error;
+      });
+
+    BUNDLED_ANIMATION_SOURCE_CACHE.set(url, pendingAnimation);
+  }
+
+  return BUNDLED_ANIMATION_SOURCE_CACHE.get(url);
+}
+
+function createHumanoidOnlyAnimationClip(vrmAnimation, vrm, clipName) {
+  const { rotation } = createVRMAnimationHumanoidTracks(
+    vrmAnimation,
+    vrm.humanoid,
+    vrm.meta?.metaVersion === '0' ? '0' : '1',
+  );
+
+  return new THREE.AnimationClip(clipName, vrmAnimation.duration, [...rotation.values()]);
+}
+
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) {
     return min;
   }
 
   return Math.min(max, Math.max(min, value));
+}
+
+function clamp01(value) {
+  return clamp(value, 0, 1);
+}
+
+function easeInOutSine(value) {
+  const t = clamp01(value);
+  return -(Math.cos(Math.PI * t) - 1) * 0.5;
+}
+
+function getNowMs() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 }
 
 function emitLog(handler, level, message, details = null) {

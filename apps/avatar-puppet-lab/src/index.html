@@ -10,7 +10,8 @@
         "imports": {
           "three": "/vendor/three/build/three.module.js",
           "three/addons/": "/vendor/three/examples/jsm/",
-          "@pixiv/three-vrm": "/vendor/@pixiv/three-vrm/three-vrm.module.js"
+          "@pixiv/three-vrm": "/vendor/@pixiv/three-vrm/three-vrm.module.js",
+          "@pixiv/three-vrm-animation": "/vendor/@pixiv/three-vrm-animation/three-vrm-animation.module.js"
         }
       }
     </script>
@@ -35,7 +36,7 @@
           </div>
           <div class="status-tile">
             <span class="status-label">Default Model</span>
-            <strong>Bundled VRoid sample</strong>
+            <strong>Bhf 1.2</strong>
           </div>
           <div class="status-tile">
             <span class="status-label">Control Layer</span>
@@ -78,17 +79,23 @@
             <div class="field-header">
               <span class="legend">Avatar</span>
               <p class="field-note">
-                The bundled default is a permissive VRoid sample. You can swap in your own `.vrm`
-                file locally without changing the app code.
+                Three bundled VRMs are wired in now. You can still swap in your own `.vrm` file
+                locally without changing the app code.
               </p>
             </div>
+            <div
+              id="bundled-model-options"
+              class="chip-row"
+              role="toolbar"
+              aria-label="Bundled avatar models"
+            ></div>
             <div class="chip-row" role="group" aria-label="Avatar source actions">
               <button id="load-local-model" type="button">Use Local VRM…</button>
-              <button id="use-bundled-model" type="button">Use Bundled Model</button>
+              <button id="use-bundled-model" type="button">Reload Selected Model</button>
             </div>
             <input id="local-model-input" type="file" accept=".vrm" hidden />
             <div class="callout" id="model-note" data-state="loading">
-              Loading the bundled avatar.
+              Loading the selected bundled avatar.
             </div>
           </div>
 
@@ -211,8 +218,8 @@
 
             <div class="badge-row">
               <span class="badge">
-                <span class="badge-label">Avatar</span>
-                <strong id="active-avatar">Bundled Sample</strong>
+              <span class="badge-label">Avatar</span>
+                <strong id="active-avatar">Bhf 1.2</strong>
               </span>
               <span class="badge">
                 <span class="badge-label">Emote</span>
@@ -220,7 +227,7 @@
               </span>
               <span class="badge">
                 <span class="badge-label">Gesture</span>
-                <strong id="active-gesture">Idle</strong>
+                <strong id="active-gesture">Pose</strong>
               </span>
             </div>
           </div>
@@ -259,7 +266,7 @@
             </div>
           </div>
 
-          <div id="scene-note" class="scene-note">Idle. Pick a script and run the avatar.</div>
+          <div id="scene-note" class="scene-note">Pick a script and run the avatar.</div>
         </article>
       </section>
 

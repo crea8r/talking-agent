@@ -10,6 +10,7 @@ The current integration spike is `apps/one-to-one-agent-room`, where:
 - the agent claims turns, submits replies, and drives avatar speech and gestures
 
 The working plan for the repo lives in [docs/6-app-plan.md](docs/6-app-plan.md).
+The first product draft for this repo lives in [docs/prd-local-call-command.md](docs/prd-local-call-command.md).
 
 ## Repo Layout
 
