@@ -71,8 +71,8 @@ The bridge should move from session snapshots to an append-only event log with c
 
 The core interaction becomes:
 
-1. The agent lists or is given an available call.
-2. The agent joins the call and receives a cursor plus static capability references.
+1. The agent joins the currently active call.
+2. The agent receives a cursor plus static capability references.
 3. The agent blocks on `wait_for_events`.
 4. The app emits compact call and transcript events.
 5. The agent responds with `publish_actions`, batching speech and animation together.
@@ -92,48 +92,32 @@ The resources and prompts should be static or slow-changing. The hot path should
 
 ## Tools
 
-### `list_calls`
-
-Purpose:
-- discover attachable calls with minimal metadata
-
-Input:
-- optional filter such as `state`
-
-Output:
-- `calls[]` with:
-  - `callId`
-  - `title`
-  - `state`
-  - `createdAt`
-  - `updatedAt`
-
-Notes:
-- no turn history
-- no transcript body
-- intended for discovery and recovery only
-
 ### `join_call`
 
 Purpose:
-- attach an agent to a call and establish the event cursor
+- attach an agent to the current active call and establish the event cursor
 
 Input:
-- `callId`
 - `agentId`
 - `agentLabel`
 - optional `resumeFromCursor`
 
 Output:
 - `callId`
+- `title`
+- `state`
 - `cursor`
 - `leaseMs`
 - `capabilitiesVersion`
+- `activeModelId`
+- `avatarCatalogUri`
+- `avatarCatalogVersion`
 - optional `recentFinalTurns[]` for restart recovery
 
 Notes:
 - this replaces the separate heartbeat bootstrap
 - joining marks the agent as present in the call
+- if no call is currently active, the tool should fail with a typed `no_active_call` error
 
 ### `wait_for_events`
 
@@ -210,14 +194,6 @@ Notes:
 - return finalized turns only
 - not intended for the hot path
 
-### `bridge_status`
-
-Purpose:
-- operator and debugging visibility
-
-Notes:
-- this can remain, but it should not be part of the normal model loop
-
 ## Resources
 
 Resources should exist for static capability discovery, not for live call traffic.
@@ -246,6 +222,7 @@ Contains:
 - supported `emoteId` values
 - short descriptions
 - optional tags like `greeting`, `listening`, `explaining`, `thinking`, `celebrating`, `apology`
+- the catalog `version`
 
 Why:
 - the agent owns animation choice, so it needs a static symbolic catalog
@@ -259,6 +236,20 @@ Contains:
 
 Why:
 - keeps the base catalog stable while allowing per-model compatibility
+
+### Catalog Loading Rule
+
+The app should not send the full animation catalog on every turn.
+
+Instead:
+
+- `join_call` returns `activeModelId`, `avatarCatalogUri`, and `avatarCatalogVersion`
+- the agent reads that resource once after join if it does not already have that version cached
+- on normal turn traffic, the app sends only compact events and the agent replies with symbolic ids such as `gestureId` and `emoteId`
+- if the active avatar model or available animation set changes mid-call, the app emits `avatar.catalog.changed` with the new `activeModelId`, `avatarCatalogUri`, and `avatarCatalogVersion`
+- the agent then re-reads the resource once and continues
+
+This keeps the app thin while avoiding repeated token-heavy catalog transfer.
 
 ## Prompts
 
@@ -301,6 +292,7 @@ The minimum event set for v1 is:
 - `call.ready`
 - `call.ending`
 - `call.ended`
+- `avatar.catalog.changed`
 - `utt.start`
 - `utt.partial`
 - `utt.final`
@@ -443,13 +435,9 @@ Replace:
 - `claim_next_turn` with append-only transcript events
 - `submit_agent_reply` with `publish_actions`
 
-Keep:
-
-- a small `bridge_status` debug tool
-- local persistence and recovery semantics
-
 Deprecate:
 
+- `bridge_status`
 - large session snapshots in the normal model loop
 
 ## Error Handling
