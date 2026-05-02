@@ -14,6 +14,10 @@
     "start:avatar-puppet-lab": "PORT=4383 npm run start -w @talking-agent/avatar-puppet-lab",
     "dev:one-to-one-agent-room": "PORT=4384 npm run dev -w @talking-agent/one-to-one-agent-room",
     "start:one-to-one-agent-room": "PORT=4384 npm run start -w @talking-agent/one-to-one-agent-room",
+    "dev:call-landing": "PORT=4385 npm run dev -w @talking-agent/call-landing",
+    "start:call-landing": "PORT=4385 npm run start -w @talking-agent/call-landing",
+    "dev:agent-room-mcp-tester": "PORT=4386 npm run dev -w @talking-agent/agent-room-mcp-tester",
+    "start:agent-room-mcp-tester": "PORT=4386 npm run start -w @talking-agent/agent-room-mcp-tester",
     "check:package-boundaries": "node scripts/check-package-boundaries.mjs",
     "prepare": "husky"
   },

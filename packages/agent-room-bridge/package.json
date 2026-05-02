@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./index.mjs",
-    "./mcp-server": "./mcp-server.mjs"
+    "./mcp-server": "./mcp-server.mjs",
+    "./mcp-harness": "./mcp-harness.mjs"
   }
 }

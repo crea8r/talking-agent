@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Talking Agent · MCP Tester</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell stack-lg">
+      <header class="topbar panel">
+        <div>
+          <span class="eyebrow">Debug App</span>
+          <h1>Agent Room MCP Tester</h1>
+        </div>
+        <div class="status-row">
+          <article class="status-card">
+            <span class="status-label">Call</span>
+            <strong id="call-state">idle</strong>
+            <p id="call-detail" class="status-detail">No active session.</p>
+          </article>
+          <article class="status-card">
+            <span class="status-label">MCP</span>
+            <strong id="mcp-state">disconnected</strong>
+            <p id="mcp-detail" class="status-detail">Harness offline.</p>
+          </article>
+        </div>
+      </header>
+
+      <section class="grid">
+        <article class="panel stack-lg">
+          <div class="section-head">
+            <h2>Human Simulator</h2>
+            <span id="speech-support" class="pill">checking speech…</span>
+          </div>
+
+          <div class="field">
+            <label for="call-title">Call Title</label>
+            <input id="call-title" type="text" />
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="human-identity">Human Identity</label>
+              <input id="human-identity" type="text" />
+            </div>
+            <div class="field">
+              <label for="human-name">Human Name</label>
+              <input id="human-name" type="text" />
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="create-call" class="primary" type="button">Create Call</button>
+            <button id="mark-live" type="button">Mark Live</button>
+            <button id="end-call" type="button">End Call</button>
+          </div>
+
+          <div class="field">
+            <label for="typed-input">Typed Turn</label>
+            <textarea id="typed-input" rows="4" placeholder="Type a turn to send to the bridge."></textarea>
+          </div>
+
+          <div class="actions">
+            <button id="send-typed" class="primary" type="button">Send Final Turn</button>
+            <button id="start-mic" type="button">Start Mic</button>
+            <button id="stop-mic" type="button">Stop Mic</button>
+          </div>
+
+          <div class="field">
+            <span class="legend">Interim Transcript</span>
+            <div id="interim-transcript" class="callout">none</div>
+          </div>
+
+          <div class="field">
+            <span class="legend">Bridge Write Log</span>
+            <pre id="human-log" class="debug-output">[]</pre>
+          </div>
+        </article>
+
+        <article class="panel stack-lg">
+          <div class="section-head">
+            <h2>MCP Console</h2>
+            <div class="actions actions--tight">
+              <button id="connect-mcp" class="primary" type="button">Connect MCP</button>
+              <button id="reset-mcp" type="button">Reset</button>
+            </div>
+          </div>
+
+          <div class="actions wrap">
+            <button id="mcp-initialize" type="button">Initialize</button>
+            <button id="mcp-tools" type="button">List Tools</button>
+            <button id="mcp-resources" type="button">List Resources</button>
+            <button id="mcp-prompts" type="button">List Prompts</button>
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="agent-id">Agent Id</label>
+              <input id="agent-id" type="text" value="mcp-tester-agent" />
+            </div>
+            <div class="field">
+              <label for="agent-label">Agent Label</label>
+              <input id="agent-label" type="text" value="MCP Tester Agent" />
+            </div>
+          </div>
+
+          <div class="actions wrap">
+            <button id="mcp-join-call" type="button">Join Call</button>
+            <button id="mcp-wait-events" type="button">Wait For Events</button>
+            <button id="mcp-recent-turns" type="button">Recent Turns</button>
+            <button id="mcp-leave-call" type="button">Leave Call</button>
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="wait-cursor">Cursor</label>
+              <input id="wait-cursor" type="text" value="0" />
+            </div>
+            <div class="field">
+              <label for="wait-ms">Wait Ms</label>
+              <input id="wait-ms" type="number" value="2000" />
+            </div>
+            <div class="field">
+              <label for="wait-max-events">Max Events</label>
+              <input id="wait-max-events" type="number" value="20" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="publish-text">Publish Text</label>
+            <textarea id="publish-text" rows="3" placeholder="Optional speech action text."></textarea>
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="publish-gesture">Gesture Id</label>
+              <input id="publish-gesture" type="text" placeholder="Thinking" />
+            </div>
+            <div class="field">
+              <label for="publish-emote">Emote Id</label>
+              <input id="publish-emote" type="text" placeholder="focused" />
+            </div>
+            <div class="field">
+              <label for="publish-stage">Stage Id</label>
+              <input id="publish-stage" type="text" placeholder="neon-loft" />
+            </div>
+          </div>
+
+          <div class="field-grid">
+            <div class="field">
+              <label for="publish-mood">Mood</label>
+              <input id="publish-mood" type="text" placeholder="focused" />
+            </div>
+            <div class="field field--wide">
+              <label for="publish-notes">Notes</label>
+              <input id="publish-notes" type="text" placeholder="debug note" />
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="mcp-publish-actions" class="primary" type="button">Publish Actions</button>
+          </div>
+
+          <div class="field">
+            <label for="raw-mcp-request">Raw MCP Request</label>
+            <textarea id="raw-mcp-request" rows="8"></textarea>
+          </div>
+
+          <div class="actions">
+            <button id="send-raw-mcp" type="button">Send Raw Request</button>
+          </div>
+
+          <div class="field">
+            <span class="legend">Last MCP Response</span>
+            <pre id="mcp-last-response" class="debug-output">null</pre>
+          </div>
+
+          <div class="field">
+            <span class="legend">MCP Transcript</span>
+            <pre id="mcp-transcript" class="debug-output">[]</pre>
+          </div>
+        </article>
+
+        <article class="panel stack-lg">
+          <div class="section-head">
+            <h2>Bridge Inspector</h2>
+            <div class="actions actions--tight">
+              <label class="toggle-inline">
+                <input id="auto-ack" type="checkbox" checked />
+                <span>Auto Ack</span>
+              </label>
+              <button id="refresh-bridge" type="button">Refresh</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="legend">Session Summary</span>
+            <pre id="bridge-summary" class="debug-output">null</pre>
+          </div>
+
+          <div class="field">
+            <span class="legend">Recent Events</span>
+            <pre id="bridge-events" class="debug-output">[]</pre>
+          </div>
+
+          <div class="field">
+            <span class="legend">Pending Actions</span>
+            <div id="pending-action-controls" class="stack-md"></div>
+            <pre id="pending-actions-json" class="debug-output">[]</pre>
+          </div>
+
+          <div class="field">
+            <span class="legend">Recent Turns</span>
+            <pre id="recent-turns" class="debug-output">[]</pre>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

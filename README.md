@@ -9,6 +9,13 @@ The current integration spike is `apps/one-to-one-agent-room`, where:
 - a Codex or OpenAI runtime connects through an MCP server
 - the agent joins the active call, waits for transcript events, and drives avatar speech and gestures through published actions
 
+The dedicated MCP debugger is `apps/agent-room-mcp-tester`, where:
+
+- the browser simulates the human side with typed input and optional speech recognition
+- the app server hosts a local MCP harness that talks to the real stdio MCP server
+- the UI shows raw JSON-RPC requests/responses, bridge events, pending actions, and recent turns
+- no LiveKit room, 3D avatar, or TTS playback is required
+
 The working plan for the repo lives in [docs/6-app-plan.md](docs/6-app-plan.md).
 The first product draft for this repo lives in [docs/prd-local-call-command.md](docs/prd-local-call-command.md).
 
@@ -26,6 +33,7 @@ Current reusable packages are listed in [packages/README.md](packages/README.md)
 - `apps/voice-loop-lab`: prove browser voice turn-taking
 - `apps/avatar-puppet-lab`: prove avatar rendering and playback
 - `apps/one-to-one-agent-room`: integrate room + voice + avatar + MCP bridge
+- `apps/agent-room-mcp-tester`: debug the bridge and MCP loop without room/media rendering
 
 ## Prerequisites
 
@@ -56,6 +64,23 @@ npm run start:one-to-one-agent-room
 Open [http://127.0.0.1:4384](http://127.0.0.1:4384).
 
 If `Create Call` fails immediately, the usual cause is that no LiveKit server is reachable at `LIVEKIT_URL`.
+
+## Run The MCP Tester
+
+From the repo root:
+
+```bash
+npm install
+npm run start:agent-room-mcp-tester
+```
+
+Open [http://127.0.0.1:4386](http://127.0.0.1:4386).
+
+Use this app when you want to debug the MCP loop without LiveKit, avatar rendering, or speech playback. It gives you:
+
+- a human simulator pane
+- a direct MCP request console backed by the real stdio server
+- a bridge inspector with auto/manual action acknowledgement
 
 ## Run The MCP Bridge Server
 
