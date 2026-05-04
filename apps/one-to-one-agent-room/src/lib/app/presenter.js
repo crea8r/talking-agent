@@ -26,6 +26,20 @@ export function createPresenter({
   avatarSpeech,
   avatarLayer,
 }) {
+  function syncCallSurface(roomActive) {
+    if (dom.shell) {
+      dom.shell.dataset.roomState = roomActive ? 'live' : 'lobby';
+    }
+
+    if (dom.callLobby) {
+      dom.callLobby.hidden = roomActive;
+    }
+
+    if (dom.callLive) {
+      dom.callLive.hidden = !roomActive;
+    }
+  }
+
   function updateRoomStatus(cardState, title, detail) {
     updateStatusCard(dom.roomStatus, dom.roomDetail, cardState, title, detail);
   }
@@ -100,29 +114,29 @@ export function createPresenter({
 
     if (room) {
       dom.callSubtitle.textContent = heartbeat.ready
-        ? `${heartbeat.label} is on the bridge. ${room.name || title} is live.`
-        : `${room.name || title} is live. Waiting for the agent bridge to refresh.`;
+        ? `${heartbeat.label} is in the room. ${room.name || title} is live.`
+        : `${room.name || title} is live. Waiting for ${heartbeat.label} to refresh.`;
       return;
     }
 
     if (state.sessionPreparing) {
-      dom.callSubtitle.textContent = 'Preparing a bridge session for the agent.';
+      dom.callSubtitle.textContent = 'Preparing the room for the agent.';
       return;
     }
 
     if (heartbeat.status === 'ready') {
-      dom.callSubtitle.textContent = `${heartbeat.label} checked in ${formatHeartbeatAge(heartbeat.ageMs)}. Start the room when you are ready.`;
+      dom.callSubtitle.textContent = `${heartbeat.label} is ready. Start the room when you are ready.`;
       return;
     }
 
     if (heartbeat.status === 'stale') {
-      dom.callSubtitle.textContent = `${heartbeat.label} was last seen ${formatHeartbeatAge(heartbeat.ageMs)}. Wait for a fresh heartbeat before starting the room.`;
+      dom.callSubtitle.textContent = `${heartbeat.label} needs a fresh check-in before you start the room.`;
       return;
     }
 
     dom.callSubtitle.textContent = state.session?.id
-      ? 'Waiting for the agent to heartbeat into this call session.'
-      : 'Preparing the call session.';
+      ? 'Connect the agent and wait for a fresh heartbeat.'
+      : 'Set up the room and connect the agent.';
   }
 
   function renderRoomSnapshot() {
@@ -130,29 +144,30 @@ export function createPresenter({
     const localParticipant = room?.localParticipant || null;
     const form = collectFormState();
     const heartbeat = getAgentHeartbeatState(state.session);
+    syncCallSurface(Boolean(room));
     dom.localIdentity.textContent = localParticipant?.identity || form.identity || 'none';
     dom.remoteCount.textContent = room ? String(room.remoteParticipants.size) : '0';
 
     if (!room) {
       if (state.sessionPreparing) {
-        updateRoomStatus('loading', 'Preparing call', 'Creating a bridge session for the agent.');
+        updateRoomStatus('loading', 'Preparing call', 'Setting up the room for the agent.');
       } else if (heartbeat.status === 'ready') {
         updateRoomStatus(
           'ready',
           'Agent ready',
-          `${heartbeat.label} is connected to the bridge. Start the room when you are ready.`,
+          `${heartbeat.label} is ready. Start the room when you are ready.`,
         );
       } else if (heartbeat.status === 'stale') {
         updateRoomStatus(
           'warn',
           'Agent reconnecting',
-          `${heartbeat.label} was last seen ${formatHeartbeatAge(heartbeat.ageMs)}. Wait for a fresh heartbeat.`,
+          `${heartbeat.label} needs to reconnect before you start the room.`,
         );
       } else {
         updateRoomStatus(
           'loading',
           'Waiting for agent',
-          'Open the prompt dialog, paste it into the agent chat, then wait for a fresh heartbeat.',
+          'Open the agent prompt, connect the runtime, then wait for a fresh heartbeat.',
         );
       }
       if (dom.disconnectCallLive) {
@@ -224,7 +239,7 @@ export function createPresenter({
       updateBridgeStatus(
         'loading',
         'Waiting for agent',
-        'Open the prompt dialog, share it with the agent, and wait for a heartbeat.',
+        'Open the agent prompt only if you need it. Otherwise wait for the runtime heartbeat.',
       );
     }
 

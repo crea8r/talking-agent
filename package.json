@@ -18,6 +18,10 @@
     "start:call-landing": "PORT=4385 npm run start -w @talking-agent/call-landing",
     "dev:agent-room-mcp-tester": "PORT=4386 npm run dev -w @talking-agent/agent-room-mcp-tester",
     "start:agent-room-mcp-tester": "PORT=4386 npm run start -w @talking-agent/agent-room-mcp-tester",
+    "dev:pose-studio": "PORT=4387 npm run dev -w @talking-agent/pose-studio",
+    "start:pose-studio": "PORT=4387 npm run start -w @talking-agent/pose-studio",
+    "dev:voice-cast": "PORT=4388 npm run dev -w @talking-agent/voice-cast",
+    "start:voice-cast": "PORT=4388 npm run start -w @talking-agent/voice-cast",
     "check:package-boundaries": "node scripts/check-package-boundaries.mjs",
     "prepare": "husky"
   },

@@ -75,11 +75,17 @@ export function createSessionController({
         gestureId: turn.agentReply.gestureId,
         emoteId: turn.agentReply.emoteId,
         stageId: turn.agentReply.stageId,
-        characterId: turn.agentReply.characterId,
         mood: turn.agentReply.mood,
-        voiceMode: turn.agentReply.voiceMode,
         legacyReplyId: turn.agentReply.id,
       }));
+  }
+
+  function resolveActiveCharacterId() {
+    return (
+      `${state.session?.avatar?.activeModelId || ''}`.trim() ||
+      `${collectFormState().bundledModelId || ''}`.trim() ||
+      `${state.preferences?.bundledModelId || ''}`.trim()
+    );
   }
 
   async function syncAvatarCatalogForSession() {
@@ -330,7 +336,7 @@ export function createSessionController({
         state: 'live',
       }).catch(() => {});
       updateRoomStatus('ready', 'Connected', 'Room and bridge are ready.');
-      screenNavigator.show('session');
+      screenNavigator.show('setup');
       addLog('info', 'Call created.', {
         room: room.name,
         identity: room.localParticipant.identity,
@@ -418,8 +424,8 @@ export function createSessionController({
       renderTranscriptList();
     }
     renderLocalStage();
+    renderRoomSnapshot();
     if (!preserveRoomStatus) {
-      renderRoomSnapshot();
       screenNavigator.show('setup');
     } else {
       dom.localIdentity.textContent = collectFormState().identity || 'none';
@@ -615,8 +621,7 @@ export function createSessionController({
           renderDebugSnapshot();
         }
 
-        const withVoice =
-          action.voiceMode !== 'silent' && agentVoiceLayer.getSnapshot().speechSynthesisSupported;
+        const withVoice = agentVoiceLayer.getSnapshot().speechSynthesisSupported;
         await avatarSpeech.speakText(action.text, {
           withVoice,
           source: `bridge-action:${action.actionId}`,
@@ -624,7 +629,7 @@ export function createSessionController({
           preferredVoiceName: state.preferences.voiceName,
           speechRate: state.preferences.speechRate,
           speechPitch: state.preferences.speechPitch,
-          characterId: action.characterId,
+          characterId: resolveActiveCharacterId(),
           mood: action.mood,
           onPlaybackStart: applySpeechScene,
         });

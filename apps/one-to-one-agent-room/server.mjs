@@ -75,6 +75,7 @@ const STATIC_ROUTES = new Map([
   ['/styles.css', path.join(SRC_DIR, 'styles.css')],
   ['/vendor/room-layer-client.mjs', path.join(ROOM_LAYER_DIR, 'client.mjs')],
   ['/vendor/voice-layer-browser.js', path.join(VOICE_LAYER_DIR, 'index.js')],
+  ['/vendor/render-profiles.js', path.join(VOICE_LAYER_DIR, 'render-profiles.js')],
   ['/vendor/avatar-layer-browser.js', path.join(AVATAR_LAYER_DIR, 'index.js')],
   ['/vendor/animation-manifest.js', path.join(AVATAR_LAYER_DIR, 'animation-manifest.js')],
   ['/vendor/avatar-speech-browser.js', path.join(AVATAR_SPEECH_DIR, 'index.js')],
@@ -688,7 +689,6 @@ const server = createServer(async (req, res) => {
           claim.turn.transcript.toLowerCase().includes('hi')
             ? 'greet'
             : 'explain',
-        voiceMode: 'speak',
         notes: 'Injected by the local fallback route for spike verification.',
       });
 

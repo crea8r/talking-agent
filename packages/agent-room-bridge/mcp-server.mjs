@@ -1,4 +1,5 @@
 import { createAgentRoomBridgeStore, resolveDefaultBridgeStatePath } from './index.mjs';
+import { BUNDLED_MODELS, getGesturePresets } from '../avatar-layer-browser/index.js';
 import {
   getBridgePrompt,
   listBridgePrompts,
@@ -9,6 +10,34 @@ import {
 const store = createAgentRoomBridgeStore({
   stateFilePath: resolveDefaultBridgeStatePath(),
 });
+
+function buildGestureCatalogDescription() {
+  const defaultModelId = BUNDLED_MODELS[0]?.id || '';
+  const seen = new Set();
+  const gestures = getGesturePresets(defaultModelId).filter((gesture) => {
+    if (!gesture?.id || seen.has(gesture.id)) {
+      return false;
+    }
+
+    seen.add(gesture.id);
+    return true;
+  });
+
+  return gestures
+    .map((gesture) => {
+      const bestFor = Array.isArray(gesture.bestFor) ? gesture.bestFor.join(', ') : '';
+      return `- gestureId: ${gesture.id} | name: ${gesture.label || gesture.id} | description: ${gesture.description || ''} | bestFor: ${bestFor}`;
+    })
+    .join('\n');
+}
+
+const PUBLISH_ACTIONS_DESCRIPTION = [
+  'Publish one or more agent-selected actions for the active call.',
+  'Speech is inferred from `text`.',
+  'Animation is inferred from `gestureId` only.',
+  'Use only one of the following gesture choices when you want to animate:',
+  buildGestureCatalogDescription(),
+].join('\n');
 
 const TOOL_DEFINITIONS = [
   {
@@ -42,7 +71,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'publish_actions',
-    description: 'Publish one or more agent-selected actions such as animation, speech, or hangup for the active call.',
+    description: PUBLISH_ACTIONS_DESCRIPTION,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -56,23 +85,11 @@ const TOOL_DEFINITIONS = [
           items: {
             type: 'object',
             additionalProperties: false,
-            required: ['actionId', 'type'],
+            required: [],
             properties: {
-              actionId: { type: 'string' },
-              type: {
-                type: 'string',
-                enum: ['anim', 'speech', 'hangup'],
-              },
               text: { type: 'string' },
               gestureId: { type: 'string' },
-              emoteId: { type: 'string' },
-              stageId: { type: 'string' },
-              characterId: { type: 'string' },
               mood: { type: 'string' },
-              voiceMode: {
-                type: 'string',
-                enum: ['speak', 'silent'],
-              },
               reason: { type: 'string' },
               notes: { type: 'string' },
             },

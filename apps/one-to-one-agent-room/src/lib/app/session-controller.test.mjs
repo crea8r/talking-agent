@@ -322,6 +322,337 @@ test('handlePrimaryCallAction stays safe before runtime config finishes loading'
   });
 });
 
+test('handlePrimaryCallAction keeps the live room on the Call screen after connect', async () => {
+  const shownScreens = [];
+
+  globalThis.window = {
+    setTimeout,
+    clearTimeout,
+    setInterval() {
+      return 1;
+    },
+    clearInterval() {},
+    requestAnimationFrame(callback) {
+      callback();
+    },
+  };
+
+  const state = {
+    runtimeConfig: {
+      codexProjectName: 'talking-agent',
+    },
+    room: null,
+    session: {
+      id: 'session-1',
+      title: 'talking-agent',
+      agent: {
+        id: 'codex-openai',
+        label: 'Codex OpenAI',
+        lastSeenAt: new Date().toISOString(),
+      },
+      metrics: {
+        pendingTurns: 0,
+        unplayedReplies: 0,
+      },
+      turns: [],
+    },
+    sessionPollId: 0,
+    sessionKey: 'session-key',
+    sessionPreparing: false,
+    modelLoading: false,
+    processingReplies: false,
+    preferences: {
+      voiceName: '',
+      speechRate: 1,
+      speechPitch: 1,
+    },
+  };
+
+  class FakeRoom {
+    constructor() {
+      this.state = 'connected';
+      this.name = 'talking-agent-call';
+      this.remoteParticipants = new Map();
+      this.localParticipant = {
+        identity: 'human-room-host',
+        name: 'Human Caller',
+      };
+    }
+  }
+
+  const controller = createSessionController({
+    state,
+    roomLayer: {
+      installSdkLogging() {},
+      attachRoomListeners() {},
+      async disconnectRoom() {},
+      async mintToken() {
+        return { token: 'token' };
+      },
+      async connectRoom() {},
+    },
+    roomClass: FakeRoom,
+    videoPresets: {
+      h720: {
+        resolution: {},
+      },
+    },
+    logLevel: 'info',
+    screenNavigator: {
+      show(screenId) {
+        shownScreens.push(screenId);
+      },
+    },
+    humanVoiceLayer: {
+      stopListening() {},
+      destroy() {},
+    },
+    agentVoiceLayer: {
+      destroy() {},
+      getSnapshot() {
+        return { speechSynthesisSupported: true };
+      },
+    },
+    avatarSpeech: {
+      stop() {},
+      getSnapshot() {
+        return { active: false };
+      },
+      async speakText() {},
+    },
+    avatarLayer: {
+      destroy() {},
+      getSnapshot() {
+        return {};
+      },
+    },
+    dom: {
+      connectPromptDialog: {
+        open: false,
+        showModal() {},
+      },
+      connectPromptBody: {
+        focus() {},
+        select() {},
+      },
+      localIdentity: { textContent: '' },
+      remoteCount: { textContent: '' },
+      lastAgentReply: { textContent: '' },
+    },
+    stageMap: new Map(),
+    emoteMap: new Map(),
+    selectStage() {},
+    selectEmote() {},
+    selectGesture() {},
+    collectFormState() {
+      return {
+        livekitUrl: 'ws://127.0.0.1:7880',
+        roomName: 'talking-agent-call',
+        identity: 'human-room-host',
+        participantName: 'Human Caller',
+        enableCamera: true,
+        enableMicrophone: true,
+      };
+    },
+    fetchJson: async (url) => {
+      if (url.startsWith('/api/probe-livekit')) {
+        return {
+          reachable: true,
+          probeUrl: 'http://127.0.0.1:7880',
+          status: 200,
+          statusText: 'OK',
+        };
+      }
+
+      return { session: state.session };
+    },
+    postJson: async () => ({ ok: true }),
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+    renderLocalStage() {},
+    renderRoomSnapshot() {},
+    renderBridgeSnapshot() {},
+    renderTranscriptList() {},
+    renderDebugSnapshot() {},
+    renderAgentStatus() {},
+    refreshActionButtons() {},
+    updateRoomStatus() {},
+  });
+
+  await controller.handlePrimaryCallAction();
+
+  assert.deepEqual(shownScreens, ['setup']);
+});
+
+test('handlePrimaryCallAction restores the Call lobby when room connect fails', async () => {
+  const roomSnapshots = [];
+
+  globalThis.window = {
+    setTimeout,
+    clearTimeout,
+    setInterval() {
+      return 1;
+    },
+    clearInterval() {},
+    requestAnimationFrame(callback) {
+      callback();
+    },
+  };
+
+  const state = {
+    runtimeConfig: {
+      codexProjectName: 'talking-agent',
+    },
+    room: null,
+    session: {
+      id: 'session-1',
+      title: 'talking-agent',
+      agent: {
+        id: 'codex-openai',
+        label: 'Codex OpenAI',
+        lastSeenAt: new Date().toISOString(),
+      },
+      metrics: {
+        pendingTurns: 0,
+        unplayedReplies: 0,
+      },
+      turns: [],
+    },
+    sessionPollId: 0,
+    sessionKey: 'session-key',
+    sessionPreparing: false,
+    modelLoading: false,
+    processingReplies: false,
+    preferences: {
+      voiceName: '',
+      speechRate: 1,
+      speechPitch: 1,
+    },
+  };
+
+  class FakeRoom {
+    constructor() {
+      this.state = 'connecting';
+      this.name = 'talking-agent-call';
+      this.remoteParticipants = new Map();
+      this.localParticipant = {
+        identity: 'human-room-host',
+        name: 'Human Caller',
+      };
+    }
+  }
+
+  const controller = createSessionController({
+    state,
+    roomLayer: {
+      installSdkLogging() {},
+      attachRoomListeners() {},
+      async disconnectRoom() {},
+      async mintToken() {
+        return { token: 'token' };
+      },
+      async connectRoom() {
+        throw new Error('connect failed');
+      },
+    },
+    roomClass: FakeRoom,
+    videoPresets: {
+      h720: {
+        resolution: {},
+      },
+    },
+    logLevel: 'info',
+    screenNavigator: {
+      show() {},
+    },
+    humanVoiceLayer: {
+      stopListening() {},
+      destroy() {},
+    },
+    agentVoiceLayer: {
+      destroy() {},
+      getSnapshot() {
+        return { speechSynthesisSupported: true };
+      },
+    },
+    avatarSpeech: {
+      stop() {},
+      getSnapshot() {
+        return { active: false };
+      },
+      async speakText() {},
+    },
+    avatarLayer: {
+      destroy() {},
+      getSnapshot() {
+        return {};
+      },
+    },
+    dom: {
+      connectPromptDialog: {
+        open: false,
+        showModal() {},
+      },
+      connectPromptBody: {
+        focus() {},
+        select() {},
+      },
+      localIdentity: { textContent: '' },
+      remoteCount: { textContent: '' },
+      lastAgentReply: { textContent: '' },
+    },
+    stageMap: new Map(),
+    emoteMap: new Map(),
+    selectStage() {},
+    selectEmote() {},
+    selectGesture() {},
+    collectFormState() {
+      return {
+        livekitUrl: 'ws://127.0.0.1:7880',
+        roomName: 'talking-agent-call',
+        identity: 'human-room-host',
+        participantName: 'Human Caller',
+        enableCamera: true,
+        enableMicrophone: true,
+      };
+    },
+    fetchJson: async (url) => {
+      if (url.startsWith('/api/probe-livekit')) {
+        return {
+          reachable: true,
+          probeUrl: 'http://127.0.0.1:7880',
+          status: 200,
+          statusText: 'OK',
+        };
+      }
+
+      return { session: state.session };
+    },
+    postJson: async () => ({ ok: true }),
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+    renderLocalStage() {},
+    renderRoomSnapshot() {
+      roomSnapshots.push(Boolean(state.room));
+    },
+    renderBridgeSnapshot() {},
+    renderTranscriptList() {},
+    renderDebugSnapshot() {},
+    renderAgentStatus() {},
+    refreshActionButtons() {},
+    updateRoomStatus() {},
+  });
+
+  await assert.rejects(() => controller.handlePrimaryCallAction(), /connect failed/);
+
+  assert.equal(state.room, null);
+  assert.equal(roomSnapshots.at(-1), false);
+});
+
 test('prepareLobbySession starts a local freshness ticker alongside bridge polling', async () => {
   const intervalCallbacks = [];
   let roomRenderCount = 0;
@@ -499,6 +830,9 @@ test('agent reply scene changes wait for playback start before switching the ava
         label: 'Codex OpenAI',
         lastSeenAt: '2026-05-01T00:00:00.000Z',
       },
+      avatar: {
+        activeModelId: 'bhf-1-2',
+      },
       metrics: {
         pendingTurns: 0,
         unplayedReplies: 1,
@@ -524,9 +858,7 @@ test('agent reply scene changes wait for playback start before switching the ava
             emoteId: 'warm',
             gestureId: 'explain',
             stageId: 'studio',
-            characterId: 'ava',
             mood: 'happy',
-            voiceMode: 'speak',
           },
         },
       ],
@@ -563,6 +895,7 @@ test('agent reply scene changes wait for playback start before switching the ava
       voiceName: '',
       speechRate: 1,
       speechPitch: 1,
+      bundledModelId: 'bhf-1-2',
     },
   };
 
@@ -702,7 +1035,7 @@ test('agent reply scene changes wait for playback start before switching the ava
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(typeof speechOptions?.onPlaybackStart, 'function');
-  assert.equal(speechOptions?.characterId, 'ava');
+  assert.equal(speechOptions?.characterId, 'bhf-1-2');
   assert.equal(speechOptions?.mood, 'happy');
   assert.deepEqual(avatarSelections, []);
 
@@ -995,9 +1328,7 @@ test('pollSession consumes pending actions through the new action endpoints', as
           actionId: 'a2',
           type: 'speech',
           text: 'Working on it.',
-          characterId: 'ava',
           mood: 'focused',
-          voiceMode: 'speak',
         },
       ],
     }),
@@ -1022,7 +1353,7 @@ test('pollSession consumes pending actions through the new action endpoints', as
   await controller.pollSession();
 
   assert.deepEqual(avatarSelections, ['stage:studio', 'emote:focused', 'gesture:Thinking']);
-  assert.equal(spoken[0].options.characterId, 'ava');
+  assert.equal(spoken[0].options.characterId, 'bhf-1-2');
   assert.equal(spoken[0].options.mood, 'focused');
   assert.equal(posts[0], '/api/bridge/sessions/session-1/actions/a1/completed');
   assert.equal(posts[1], '/api/bridge/sessions/session-1/actions/a2/started');

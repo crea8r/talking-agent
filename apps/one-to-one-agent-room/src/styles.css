@@ -260,7 +260,7 @@ dt {
 }
 
 .status-strip {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .status-card,
@@ -317,13 +317,13 @@ dt {
   font-size: 1rem;
 }
 
-.screen-grid--setup {
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+.screen-grid--call {
+  grid-template-columns: 1fr;
   align-items: start;
 }
 
-.screen-grid--session {
-  grid-template-columns: minmax(0, 1.28fr) minmax(320px, 0.82fr);
+.screen-grid--agent-setup {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   align-items: start;
 }
 
@@ -332,13 +332,72 @@ dt {
   align-items: start;
 }
 
-.session-side {
+.call-surface {
+  gap: 1.25rem;
+}
+
+.call-lobby,
+.call-grid,
+.call-dock-grid {
   display: grid;
   gap: 1rem;
 }
 
-.session-turns {
-  grid-column: 1 / -1;
+.call-lobby {
+  grid-template-columns: minmax(0, 720px);
+}
+
+.call-lobby-form,
+.call-tile,
+.call-dock {
+  display: grid;
+  gap: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: rgba(16, 24, 35, 0.76);
+  padding: 1rem;
+}
+
+.call-live {
+  gap: 1rem;
+}
+
+.call-grid {
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+  align-items: stretch;
+}
+
+.call-tile {
+  align-content: start;
+}
+
+.call-dock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.call-dock-grid {
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  align-items: start;
+}
+
+.backstage-status-card {
+  max-width: 360px;
+}
+
+#disconnect-call-live[disabled] {
+  display: none;
+}
+
+.shell[data-room-state='live'] .status-strip {
+  display: none;
+}
+
+.shell[data-room-state='live'] .topbar {
+  gap: 0.5rem;
 }
 
 .field,
@@ -422,6 +481,10 @@ dt {
     linear-gradient(180deg, rgba(10, 15, 24, 0.98), rgba(7, 11, 18, 0.98));
   min-height: 270px;
   overflow: hidden;
+}
+
+.participant-stage-frame--call {
+  min-height: 540px;
 }
 
 .participant-card {
@@ -589,8 +652,11 @@ dt {
 }
 
 @media (max-width: 1180px) {
-  .screen-grid--setup,
-  .screen-grid--session,
+  .call-lobby,
+  .call-grid,
+  .call-dock-grid,
+  .screen-grid--call,
+  .screen-grid--agent-setup,
   .screen-grid--diagnostics {
     grid-template-columns: 1fr;
   }

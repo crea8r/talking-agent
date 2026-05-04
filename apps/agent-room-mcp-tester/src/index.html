@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Talking Agent · MCP Tester</title>
+    <title>Talking Agent · Minimal MCP Tester</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -11,7 +11,10 @@
       <header class="topbar panel">
         <div>
           <span class="eyebrow">Debug App</span>
-          <h1>Agent Room MCP Tester</h1>
+          <h1>Minimal MCP Tester</h1>
+          <p class="section-copy">
+            Use the local preview client to inspect the exact MCP traffic, then connect Codex to the same server command if you want to compare a real agent session.
+          </p>
         </div>
         <div class="status-row">
           <article class="status-card">
@@ -20,202 +23,154 @@
             <p id="call-detail" class="status-detail">No active session.</p>
           </article>
           <article class="status-card">
-            <span class="status-label">MCP</span>
-            <strong id="mcp-state">disconnected</strong>
-            <p id="mcp-detail" class="status-detail">Harness offline.</p>
+            <span class="status-label">Preview MCP</span>
+            <strong id="mcp-state">offline</strong>
+            <p id="mcp-detail" class="status-detail">Start Session to run the local preview client.</p>
           </article>
         </div>
       </header>
 
-      <section class="grid">
-        <article class="panel stack-lg">
-          <div class="section-head">
-            <h2>Human Simulator</h2>
-            <span id="speech-support" class="pill">checking speech…</span>
-          </div>
+      <div id="notice" class="notice panel" hidden></div>
 
-          <div class="field">
-            <label for="call-title">Call Title</label>
-            <input id="call-title" type="text" />
-          </div>
-
-          <div class="field-grid">
-            <div class="field">
-              <label for="human-identity">Human Identity</label>
-              <input id="human-identity" type="text" />
-            </div>
-            <div class="field">
-              <label for="human-name">Human Name</label>
-              <input id="human-name" type="text" />
-            </div>
-          </div>
-
+      <article class="panel stack-md">
+        <div class="section-head">
+          <h2>1. Start Session</h2>
           <div class="actions">
-            <button id="create-call" class="primary" type="button">Create Call</button>
-            <button id="mark-live" type="button">Mark Live</button>
-            <button id="end-call" type="button">End Call</button>
+            <button id="start-session" class="primary" type="button">Start Session</button>
+            <button id="copy-mcp-command" type="button">Copy MCP Command</button>
           </div>
+        </div>
+        <p class="section-copy">
+          This runs a local MCP preview client through `initialize`, `tools/list`, and `join_call`. The response below is what a Codex-like client is exposed to before it starts calling tools.
+        </p>
 
+        <div class="field">
+          <span class="legend">Connect Codex With This Command</span>
+          <pre id="mcp-command" class="debug-output debug-output--short">Loading MCP command...</pre>
+        </div>
+
+        <div class="split">
           <div class="field">
-            <label for="typed-input">Typed Turn</label>
-            <textarea id="typed-input" rows="4" placeholder="Type a turn to send to the bridge."></textarea>
+            <span class="legend">What The Preview Agent Sent</span>
+            <pre id="start-session-request" class="debug-output">[]</pre>
           </div>
-
-          <div class="actions">
-            <button id="send-typed" class="primary" type="button">Send Final Turn</button>
-            <button id="start-mic" type="button">Start Mic</button>
-            <button id="stop-mic" type="button">Stop Mic</button>
-          </div>
-
           <div class="field">
-            <span class="legend">Interim Transcript</span>
-            <div id="interim-transcript" class="callout">none</div>
+            <span class="legend">What The Preview Agent Received</span>
+            <pre id="start-session-response" class="debug-output">{}</pre>
           </div>
+        </div>
+      </article>
 
+      <article class="panel stack-md">
+        <div class="section-head">
+          <h2>2. Send Turn</h2>
+          <button id="send-turn" class="primary" type="button">Send</button>
+        </div>
+        <p class="section-copy">
+          Type one human turn. The preview client immediately runs `wait_for_events`, and the response shown below is the exact event payload the agent receives.
+        </p>
+
+        <div class="field">
+          <label for="turn-input">User Text</label>
+          <textarea id="turn-input" rows="4" placeholder="Type what the human says."></textarea>
+        </div>
+
+        <div class="split">
           <div class="field">
-            <span class="legend">Bridge Write Log</span>
-            <pre id="human-log" class="debug-output">[]</pre>
+            <span class="legend">Exact `wait_for_events` Request</span>
+            <pre id="last-event-request" class="debug-output">null</pre>
           </div>
-        </article>
-
-        <article class="panel stack-lg">
-          <div class="section-head">
-            <h2>MCP Console</h2>
-            <div class="actions actions--tight">
-              <button id="connect-mcp" class="primary" type="button">Connect MCP</button>
-              <button id="reset-mcp" type="button">Reset</button>
-            </div>
-          </div>
-
-          <div class="actions wrap">
-            <button id="mcp-initialize" type="button">Initialize</button>
-            <button id="mcp-tools" type="button">List Tools</button>
-            <button id="mcp-resources" type="button">List Resources</button>
-            <button id="mcp-prompts" type="button">List Prompts</button>
-          </div>
-
-          <div class="field-grid">
-            <div class="field">
-              <label for="agent-id">Agent Id</label>
-              <input id="agent-id" type="text" value="mcp-tester-agent" />
-            </div>
-            <div class="field">
-              <label for="agent-label">Agent Label</label>
-              <input id="agent-label" type="text" value="MCP Tester Agent" />
-            </div>
-          </div>
-
-          <div class="actions wrap">
-            <button id="mcp-join-call" type="button">Join Call</button>
-            <button id="mcp-wait-events" type="button">Wait For Events</button>
-            <button id="mcp-recent-turns" type="button">Recent Turns</button>
-            <button id="mcp-leave-call" type="button">Leave Call</button>
-          </div>
-
-          <div class="field-grid">
-            <div class="field">
-              <label for="wait-cursor">Cursor</label>
-              <input id="wait-cursor" type="text" value="0" />
-            </div>
-            <div class="field">
-              <label for="wait-ms">Wait Ms</label>
-              <input id="wait-ms" type="number" value="2000" />
-            </div>
-            <div class="field">
-              <label for="wait-max-events">Max Events</label>
-              <input id="wait-max-events" type="number" value="20" />
-            </div>
-          </div>
-
           <div class="field">
-            <label for="publish-text">Publish Text</label>
-            <textarea id="publish-text" rows="3" placeholder="Optional speech action text."></textarea>
+            <span class="legend">Exact `wait_for_events` Response</span>
+            <pre id="last-event-response" class="debug-output">null</pre>
           </div>
+        </div>
+      </article>
 
-          <div class="field-grid">
-            <div class="field">
-              <label for="publish-gesture">Gesture Id</label>
-              <input id="publish-gesture" type="text" placeholder="Thinking" />
-            </div>
-            <div class="field">
-              <label for="publish-emote">Emote Id</label>
-              <input id="publish-emote" type="text" placeholder="focused" />
-            </div>
-            <div class="field">
-              <label for="publish-stage">Stage Id</label>
-              <input id="publish-stage" type="text" placeholder="neon-loft" />
-            </div>
-          </div>
+      <article class="panel stack-md">
+        <div class="section-head">
+          <h2>3. Reply</h2>
+          <button id="publish-reply" class="primary" type="button">Publish Reply</button>
+        </div>
+        <p class="section-copy">
+          Publish a local preview reply, or let external Codex reply through the same MCP server. The latest stored reply below shows what the bridge currently has.
+        </p>
 
-          <div class="field-grid">
-            <div class="field">
-              <label for="publish-mood">Mood</label>
-              <input id="publish-mood" type="text" placeholder="focused" />
-            </div>
-            <div class="field field--wide">
-              <label for="publish-notes">Notes</label>
-              <input id="publish-notes" type="text" placeholder="debug note" />
-            </div>
-          </div>
+        <div class="field">
+          <label for="reply-text">Reply Text</label>
+          <textarea id="reply-text" rows="3" placeholder="Type the agent reply."></textarea>
+        </div>
 
-          <div class="actions">
-            <button id="mcp-publish-actions" class="primary" type="button">Publish Actions</button>
-          </div>
-
+        <div class="field-grid">
           <div class="field">
-            <label for="raw-mcp-request">Raw MCP Request</label>
-            <textarea id="raw-mcp-request" rows="8"></textarea>
+            <label for="reply-gesture">Gesture Id</label>
+            <input id="reply-gesture" type="text" placeholder="Pose" />
           </div>
-
-          <div class="actions">
-            <button id="send-raw-mcp" type="button">Send Raw Request</button>
-          </div>
-
           <div class="field">
-            <span class="legend">Last MCP Response</span>
-            <pre id="mcp-last-response" class="debug-output">null</pre>
+            <label for="reply-mood">Mood</label>
+            <input id="reply-mood" type="text" placeholder="warm" />
           </div>
+        </div>
 
+        <div class="field">
+          <label for="reply-notes">Notes</label>
+          <input id="reply-notes" type="text" placeholder="Optional debug notes." />
+        </div>
+
+        <div class="split">
           <div class="field">
-            <span class="legend">MCP Transcript</span>
-            <pre id="mcp-transcript" class="debug-output">[]</pre>
+            <span class="legend">Exact `publish_actions` Request</span>
+            <pre id="last-publish-request" class="debug-output">null</pre>
           </div>
-        </article>
-
-        <article class="panel stack-lg">
-          <div class="section-head">
-            <h2>Bridge Inspector</h2>
-            <div class="actions actions--tight">
-              <label class="toggle-inline">
-                <input id="auto-ack" type="checkbox" checked />
-                <span>Auto Ack</span>
-              </label>
-              <button id="refresh-bridge" type="button">Refresh</button>
-            </div>
-          </div>
-
           <div class="field">
-            <span class="legend">Session Summary</span>
-            <pre id="bridge-summary" class="debug-output">null</pre>
+            <span class="legend">Latest Agent Reply On The Bridge</span>
+            <pre id="latest-agent-reply" class="debug-output">null</pre>
           </div>
+        </div>
+      </article>
 
-          <div class="field">
-            <span class="legend">Recent Events</span>
-            <pre id="bridge-events" class="debug-output">[]</pre>
-          </div>
+      <details class="panel stack-md">
+        <summary>Advanced Debug</summary>
+        <p class="section-copy">
+          Use this when you need the full transcript or want to inspect pending actions while Codex is attached directly to the same MCP command.
+        </p>
 
+        <div class="actions actions--tight">
+          <button id="refresh-debug" type="button">Refresh</button>
+          <label class="toggle-inline">
+            <input id="auto-ack" type="checkbox" checked />
+            <span>Auto Ack</span>
+          </label>
+        </div>
+
+        <div class="split">
           <div class="field">
             <span class="legend">Pending Actions</span>
             <div id="pending-action-controls" class="stack-md"></div>
             <pre id="pending-actions-json" class="debug-output">[]</pre>
           </div>
+          <div class="field">
+            <span class="legend">Recent Events</span>
+            <pre id="recent-events" class="debug-output">[]</pre>
+          </div>
+        </div>
 
+        <div class="split">
           <div class="field">
             <span class="legend">Recent Turns</span>
             <pre id="recent-turns" class="debug-output">[]</pre>
           </div>
-        </article>
-      </section>
+          <div class="field">
+            <span class="legend">Full MCP Transcript</span>
+            <pre id="full-transcript" class="debug-output">[]</pre>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="legend">Operator Log</span>
+          <pre id="human-log" class="debug-output debug-output--short">[]</pre>
+        </div>
+      </details>
     </main>
 
     <script type="module" src="/app.js"></script>

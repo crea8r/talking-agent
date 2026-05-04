@@ -139,6 +139,19 @@ test('tools/list exposes the singleton-call protocol', async () => {
       result.tools.map((tool) => tool.name),
       ['join_call', 'wait_for_events', 'publish_actions', 'leave_call', 'get_recent_turns'],
     );
+
+    const publishActions = result.tools.find((tool) => tool.name === 'publish_actions');
+    const actionItem = publishActions.inputSchema.properties.actions.items;
+    assert.deepEqual(actionItem.required, []);
+    assert.equal(Object.hasOwn(actionItem.properties, 'actionId'), false);
+    assert.equal(Object.hasOwn(actionItem.properties, 'characterId'), false);
+    assert.equal(Object.hasOwn(actionItem.properties, 'type'), false);
+    assert.equal(Object.hasOwn(actionItem.properties, 'voiceMode'), false);
+    assert.equal(Object.hasOwn(actionItem.properties, 'emoteId'), false);
+    assert.equal(Object.hasOwn(actionItem.properties, 'stageId'), false);
+    assert.match(publishActions.description, /Animation is inferred from `gestureId` only\./);
+    assert.match(publishActions.description, /gestureId: Pose \| name: Pose/);
+    assert.match(publishActions.description, /gestureId: Thinking \| name: Thinking/);
   });
 });
 

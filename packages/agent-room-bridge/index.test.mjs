@@ -140,6 +140,13 @@ test('joinCall returns the active call cursor and avatar catalog metadata', asyn
     catalogUri: 'avatar://catalog/bhf-1-2',
   });
 
+  await store.syncAvatarCatalog({
+    sessionId: call.id,
+    activeModelId: 'bhf-1-2',
+    catalogVersion: 'avatar-v1',
+    catalogUri: 'avatar://catalog/bhf-1-2',
+  });
+
   const joined = await store.joinCall({
     agentId: 'codex-openai',
     agentLabel: 'Codex OpenAI',
@@ -234,16 +241,11 @@ test('publishActions is idempotent by actionId and exposes pending browser actio
     callId: call.id,
     actions: [
       {
-        actionId: 'a1',
-        type: 'anim',
         gestureId: 'Thinking',
         emoteId: 'focused',
       },
       {
-        actionId: 'a2',
-        type: 'speech',
         text: 'Let me think about that.',
-        characterId: 'ava',
         mood: 'focused',
       },
     ],
@@ -253,16 +255,11 @@ test('publishActions is idempotent by actionId and exposes pending browser actio
     callId: call.id,
     actions: [
       {
-        actionId: 'a1',
-        type: 'anim',
         gestureId: 'Thinking',
         emoteId: 'focused',
       },
       {
-        actionId: 'a2',
-        type: 'speech',
         text: 'Let me think about that.',
-        characterId: 'ava',
         mood: 'focused',
       },
     ],
@@ -273,17 +270,16 @@ test('publishActions is idempotent by actionId and exposes pending browser actio
   });
 
   assert.equal(pending.actions.length, 2);
-  assert.deepEqual(
-    pending.actions.map((action) => action.actionId),
-    ['a1', 'a2'],
-  );
+  assert.ok(pending.actions[0].actionId);
+  assert.ok(pending.actions[1].actionId);
+  assert.equal(pending.actions[0].type, 'anim');
+  assert.equal(pending.actions[1].type, 'speech');
 
   const session = await store.getSession(call.id);
   assert.equal(session.turns[0].agentReply.text, 'Let me think about that.');
   assert.equal(session.turns[0].agentReply.gestureId, 'Thinking');
   assert.equal(session.turns[0].agentReply.emoteId, 'focused');
-  assert.equal(pending.actions[1].characterId, 'ava');
   assert.equal(pending.actions[1].mood, 'focused');
-  assert.equal(session.turns[0].agentReply.characterId, 'ava');
   assert.equal(session.turns[0].agentReply.mood, 'focused');
+  assert.equal(session.turns[0].agentReply.voiceMode, undefined);
 });

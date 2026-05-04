@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open as openFile, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -106,10 +106,7 @@ function normalizeTurn(turn = {}) {
           gestureId:
             typeof turn.agentReply.gestureId === 'string' ? turn.agentReply.gestureId : 'Pose',
           stageId: typeof turn.agentReply.stageId === 'string' ? turn.agentReply.stageId : '',
-          characterId:
-            typeof turn.agentReply.characterId === 'string' ? turn.agentReply.characterId : '',
           mood: typeof turn.agentReply.mood === 'string' ? turn.agentReply.mood : 'neutral',
-          voiceMode: turn.agentReply.voiceMode === 'silent' ? 'silent' : 'speak',
           notes: typeof turn.agentReply.notes === 'string' ? turn.agentReply.notes : '',
         }
       : null,
@@ -139,10 +136,51 @@ function normalizeEvent(event = {}) {
   return normalized;
 }
 
-function normalizeAction(action = {}) {
+function inferActionType(action = {}) {
+  if (typeof action.type === 'string' && action.type.trim()) {
+    return action.type.trim();
+  }
+
+  if (`${action.text || ''}`.trim()) {
+    return 'speech';
+  }
+
+  if (`${action.gestureId || ''}`.trim() || `${action.emoteId || ''}`.trim() || `${action.stageId || ''}`.trim()) {
+    return 'anim';
+  }
+
+  if (`${action.reason || ''}`.trim()) {
+    return 'hangup';
+  }
+
+  throw new Error('Action must include speech text or avatar direction.');
+}
+
+function buildDerivedActionId(action = {}, { inReplyToEventId = null, batchIndex = 0 } = {}) {
+  const fingerprint = JSON.stringify({
+    type: inferActionType(action),
+    inReplyToEventId: `${inReplyToEventId || ''}`.trim(),
+    batchIndex,
+    text: `${action.text || ''}`.trim(),
+    gestureId: `${action.gestureId || ''}`.trim(),
+    emoteId: `${action.emoteId || ''}`.trim(),
+    stageId: `${action.stageId || ''}`.trim(),
+    mood: `${action.mood || ''}`.trim(),
+    reason: `${action.reason || ''}`.trim(),
+    notes: `${action.notes || ''}`.trim(),
+  });
+
+  return createHash('sha1').update(fingerprint).digest('hex').slice(0, 16);
+}
+
+function normalizeAction(action = {}, { inReplyToEventId = null, batchIndex = 0, activeModelId = '' } = {}) {
+  const inferredType = inferActionType(action);
   return {
-    actionId: typeof action.actionId === 'string' && action.actionId.trim() ? action.actionId.trim() : randomUUID(),
-    type: typeof action.type === 'string' ? action.type : 'speech',
+    actionId:
+      typeof action.actionId === 'string' && action.actionId.trim()
+        ? action.actionId.trim()
+        : buildDerivedActionId(action, { inReplyToEventId, batchIndex }),
+    type: inferredType,
     createdAt: typeof action.createdAt === 'string' ? action.createdAt : new Date().toISOString(),
     startedAt: typeof action.startedAt === 'string' ? action.startedAt : null,
     completedAt: typeof action.completedAt === 'string' ? action.completedAt : null,
@@ -155,9 +193,8 @@ function normalizeAction(action = {}) {
     gestureId: typeof action.gestureId === 'string' ? action.gestureId : '',
     emoteId: typeof action.emoteId === 'string' ? action.emoteId : '',
     stageId: typeof action.stageId === 'string' ? action.stageId : '',
-    characterId: typeof action.characterId === 'string' ? action.characterId : '',
     mood: typeof action.mood === 'string' ? action.mood : 'neutral',
-    voiceMode: action.voiceMode === 'silent' ? 'silent' : 'speak',
+    characterId: `${action.characterId || activeModelId || ''}`.trim(),
     reason: typeof action.reason === 'string' ? action.reason : '',
     notes: typeof action.notes === 'string' ? action.notes : '',
     replyId: typeof action.replyId === 'string' ? action.replyId : '',
@@ -997,11 +1034,15 @@ export function createAgentRoomBridgeStore({
       let batchDirection = null;
       let lastReply = null;
 
-      for (const rawAction of actions) {
+      for (const [batchIndex, rawAction] of actions.entries()) {
         const action = normalizeAction({
           ...rawAction,
           inReplyToEventId,
           createdAt: now,
+        }, {
+          inReplyToEventId,
+          batchIndex,
+          activeModelId: session.avatar?.activeModelId || '',
         });
         const existing = session.actions.find((entry) => entry.actionId === action.actionId);
         if (existing) {
@@ -1047,9 +1088,7 @@ export function createAgentRoomBridgeStore({
               emoteId: storedAction.emoteId || batchDirection?.emoteId || 'warm',
               gestureId: storedAction.gestureId || batchDirection?.gestureId || 'Pose',
               stageId: storedAction.stageId || batchDirection?.stageId || '',
-              characterId: storedAction.characterId,
               mood: storedAction.mood,
-              voiceMode: storedAction.voiceMode,
               notes: storedAction.notes,
             };
             storedAction.replyId = turn.agentReply.id;
@@ -1272,9 +1311,7 @@ export function createAgentRoomBridgeStore({
     emoteId = 'warm',
     gestureId = 'Pose',
     stageId = '',
-    characterId = '',
     mood = 'neutral',
-    voiceMode = 'speak',
     notes = '',
   }) {
     const cleanedReply = `${reply || ''}`.trim();
@@ -1298,20 +1335,14 @@ export function createAgentRoomBridgeStore({
       callId: sessionId,
       actions: [
         {
-          actionId: `${turnId}:anim`,
-          type: 'anim',
           gestureId,
           emoteId,
           stageId,
           notes,
         },
         {
-          actionId: `${turnId}:speech`,
-          type: 'speech',
           text: cleanedReply,
-          characterId,
           mood,
-          voiceMode,
           notes,
         },
       ],

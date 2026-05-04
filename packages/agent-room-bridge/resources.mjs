@@ -58,18 +58,17 @@ export function createBridgeCapabilitiesPayload() {
       'idle.timeout',
       'error',
     ],
-    actionTypes: ['anim', 'speech', 'hangup'],
+    actionTypes: ['anim', 'speech'],
     waitForEvents: {
       defaultMaxEvents: 20,
       maxWaitMs: 30000,
       cursor: 'opaque increasing integer string',
     },
     voiceRendering: {
-      speechActionFields: ['characterId', 'mood', 'voiceMode'],
-      supportedCharacterIds: BUNDLED_MODELS.map((model) => model.id),
+      speechActionFields: ['mood'],
       supportedMoods: VOICE_MOOD_IDS,
       notes:
-        'In the current room app, characterId maps to bundled model ids. mood applies fixed rate and pitch presets on top of that base voice.',
+        'Speech actions only need text plus an optional mood. The renderer derives the active character from the current avatar model and applies fixed mood presets to rate and pitch.',
     },
   };
 }
@@ -182,7 +181,7 @@ export function getBridgePrompt(name) {
             'Use `join_call` to attach to the active call.',
             'Read `avatar://catalog` or the model-specific catalog returned by `join_call` once, then cache it by version.',
             'Keep the receive loop on `wait_for_events`.',
-            'Send gesture, emote, and speech output with `publish_actions`. For speech actions, optionally include `characterId` and `mood`.',
+            'Send gesture and speech output with `publish_actions`. For animation, use `gestureId` only. For speech actions, send text and optionally mood.',
             'Use `leave_call` when you are done or when the call should end.',
           ].join('\n'),
         },

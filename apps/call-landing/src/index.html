@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>call</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/",
+          "@pixiv/three-vrm": "/vendor/@pixiv/three-vrm/three-vrm.module.js",
+          "@pixiv/three-vrm-animation": "/vendor/@pixiv/three-vrm-animation/three-vrm-animation.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="landing">
+      <section id="top" class="hero-frame">
+        <div class="hero-copy">
+          <span class="eyebrow">video call any agent</span>
+          <h1 class="hero-title">
+            <span class="hero-title-main">call your</span>
+            <span class="agent-rotator" id="agent-rotator" aria-live="polite">
+              <span id="rotating-agent-name">chatgpt</span>
+            </span>
+          </h1>
+          <p class="hero-lede">Runs on your machine. Trigger from chat.</p>
+        </div>
+
+        <div class="hero-visual" aria-label="call launch visual">
+          <section
+            class="hero-avatar-shell"
+            id="hero-stage-shell"
+            data-avatar-state="loading"
+            data-has-live-model="false"
+          >
+            <div
+              class="hero-avatar-field"
+              role="img"
+              aria-label="Main call stage with a live agent avatar"
+            >
+              <div class="hero-orbit hero-orbit--outer" aria-hidden="true"></div>
+              <div class="hero-orbit hero-orbit--inner" aria-hidden="true"></div>
+              <div class="avatar-stage avatar-stage--hero avatar-stage--open">
+                <img
+                  id="avatar-loader-poster-sx"
+                  class="avatar-loader-poster avatar-loader-poster--sx is-visible"
+                  src="/assets/default-loader-sx.jpg"
+                  alt=""
+                  aria-hidden="true"
+                  fetchpriority="high"
+                />
+                <img
+                  class="avatar-loader-poster avatar-loader-poster--full"
+                  data-loader-poster-frame="0"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <img
+                  class="avatar-loader-poster avatar-loader-poster--full"
+                  data-loader-poster-frame="1"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <img
+                  class="avatar-loader-poster avatar-loader-poster--full"
+                  data-loader-poster-frame="2"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <canvas id="hero-avatar" aria-hidden="true"></canvas>
+                <div class="avatar-loading" id="avatar-loading-indicator" aria-live="polite">
+                  <span class="avatar-loading-ring" aria-hidden="true"></span>
+                  <span id="avatar-loading-label">Loading default avatar…</span>
+                </div>
+              </div>
+              <div class="hero-floor" aria-hidden="true"></div>
+            </div>
+
+            <div class="hero-dock">
+              <article class="prompt-card prompt-card--loading">
+                <button class="cta cta--primary cta--loading js-open-install" type="button">
+                  Install
+                </button>
+                <p id="hero-loading-progress" class="loading-progress" aria-live="polite">
+                  Loading default avatar… 0%
+                </p>
+              </article>
+
+              <article class="prompt-card prompt-card--dock">
+                <div class="picker">
+                  <span class="picker-label">Model</span>
+                  <div class="choice-row choice-row--models" role="radiogroup" aria-label="Model picker">
+                    <button class="choice-chip choice-chip--model is-active" type="button" data-model="bhf-1-2">
+                      Red Tinker Bell
+                    </button>
+                    <button class="choice-chip choice-chip--model" type="button" data-model="fbf-1-0">
+                      Green Fairy
+                    </button>
+                    <button class="choice-chip choice-chip--model" type="button" data-model="smg-1-0">
+                      Snowshoe
+                    </button>
+                  </div>
+                </div>
+
+                <div class="dock-audio">
+                  <span class="picker-label">Audio</span>
+                  <button
+                    class="choice-chip choice-chip--icon"
+                    id="voice-mute-toggle"
+                    type="button"
+                    aria-label="Mute voice"
+                    aria-pressed="false"
+                    title="Mute voice"
+                  >
+                    <svg
+                      class="mute-icon mute-icon--sound"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M11 5 6.5 9H3v6h3.5L11 19z" />
+                      <path d="M15 9.5a4 4 0 0 1 0 5" />
+                      <path d="M17.8 7a7.2 7.2 0 0 1 0 10" />
+                    </svg>
+                    <svg
+                      class="mute-icon mute-icon--muted"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M11 5 6.5 9H3v6h3.5L11 19z" />
+                      <path d="m16 9 5 5" />
+                      <path d="m21 9-5 5" />
+                    </svg>
+                  </button>
+                </div>
+
+                <p id="voice-preview-line" class="voice-preview-line" aria-live="polite">
+                  Motion changes can trigger a live line.
+                </p>
+
+                <button class="cta cta--primary cta--dock js-open-install" type="button">
+                  Install
+                </button>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="install-dialog" class="install-dialog">
+      <form class="install-sheet" method="dialog">
+        <div class="install-head">
+          <div>
+            <span class="prompt-kicker">Install</span>
+            <h2>Feed this to your agent.</h2>
+          </div>
+          <button class="install-close" type="button" data-close-install aria-label="Close install dialog">
+            close
+          </button>
+        </div>
+
+        <p class="install-note">
+          Ask your agent to install the app, launch it, and confirm when it is ready.
+        </p>
+        <textarea id="install-instruction" rows="4" readonly></textarea>
+
+        <div class="install-actions">
+          <button id="copy-instruction" class="cta cta--primary" type="button">
+            Copy instruction
+          </button>
+          <button class="cta" type="button" data-close-install>Done</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

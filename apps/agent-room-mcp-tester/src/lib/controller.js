@@ -13,6 +13,36 @@ function extractStructuredContent(response) {
   return response?.result?.structuredContent || null;
 }
 
+function buildInitializeRequest() {
+  return {
+    jsonrpc: '2.0',
+    method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: {
+        name: 'agent-room-mcp-tester',
+        version: '1.0.0',
+      },
+    },
+  };
+}
+
+function buildInitializedNotification() {
+  return {
+    jsonrpc: '2.0',
+    method: 'notifications/initialized',
+  };
+}
+
+function buildToolsListRequest() {
+  return {
+    jsonrpc: '2.0',
+    method: 'tools/list',
+    params: {},
+  };
+}
+
 export function createController({
   store,
   fetchJson,
@@ -67,6 +97,7 @@ export function createController({
   }
 
   async function createCall({ title, humanIdentity, humanName }) {
+    store.setNotice('');
     const payload = await postJson('/api/bridge/sessions', {
       title,
       humanIdentity,
@@ -82,6 +113,7 @@ export function createController({
       throw new Error('Create a call first.');
     }
 
+    store.setNotice('');
     const payload = await postJson(
       `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/state`,
       {
@@ -156,6 +188,7 @@ export function createController({
       throw new Error('Create a call first.');
     }
 
+    store.setNotice('');
     const utteranceId = state.activeUtteranceId || (await beginUtterance());
     const payload = await postJson(
       `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/utterances/final`,
@@ -176,6 +209,7 @@ export function createController({
   }
 
   async function sendMcpRequest(message) {
+    store.setNotice('');
     const payload = await postJson('/api/mcp/request', message);
     store.setMcpSnapshot({
       transcript: payload.transcript,
@@ -197,6 +231,7 @@ export function createController({
   }
 
   async function connectMcp() {
+    store.setNotice('');
     const payload = await postJson('/api/mcp/connect', {});
     store.setMcpSnapshot({
       transcript: payload.transcript,
@@ -206,6 +241,7 @@ export function createController({
   }
 
   async function resetMcp() {
+    store.setNotice('');
     const payload = await postJson('/api/mcp/reset', {});
     store.setMcpSnapshot({
       transcript: payload.transcript,
@@ -213,6 +249,144 @@ export function createController({
       response: null,
     });
     rerender();
+  }
+
+  async function startSession({
+    title,
+    humanIdentity,
+    humanName,
+    agentId = 'mcp-tester-agent',
+    agentLabel = 'MCP Tester Agent',
+  } = {}) {
+    store.setNotice('');
+    await resetMcp();
+    await createCall({ title, humanIdentity, humanName });
+    await updateCallState('live');
+    await connectMcp();
+
+    const initializeRequest = buildInitializeRequest();
+    const initializeResponse = await sendMcpRequest(initializeRequest);
+
+    const initializedNotification = buildInitializedNotification();
+    await sendMcpRequest(initializedNotification);
+
+    const toolsListRequest = buildToolsListRequest();
+    const toolsListResponse = await sendMcpRequest(toolsListRequest);
+
+    const joinCallRequest = buildToolRequest('join_call', {
+      agentId: `${agentId || ''}`.trim() || 'mcp-tester-agent',
+      agentLabel: `${agentLabel || ''}`.trim() || 'MCP Tester Agent',
+    });
+    const joinCallResponse = await sendMcpRequest(joinCallRequest);
+    const cursor = joinCallResponse?.result?.structuredContent?.cursor || '0';
+
+    store.setLocalAgentCursor(cursor);
+    store.setBootstrapDebug({
+      initializeRequest,
+      initializeResponse,
+      initializedNotification,
+      toolsListRequest,
+      toolsListResponse,
+      joinCallRequest,
+      joinCallResponse,
+    });
+    store.setLastEventDebug();
+    store.setLastPublishDebug();
+    rerender();
+  }
+
+  async function sendTurnAndPreview({
+    text,
+    source = 'typed',
+    humanIdentity,
+    humanName,
+    waitMs = 25,
+    maxEvents = 20,
+  } = {}) {
+    const cleanedText = `${text || ''}`.trim();
+    if (!cleanedText) {
+      throw new Error('Enter a user message first.');
+    }
+    if (!state.session?.id) {
+      throw new Error('Start a session first.');
+    }
+    if (!state.mcpState.connected) {
+      throw new Error('Start the preview session first.');
+    }
+
+    await finalizeTranscript(cleanedText, {
+      source,
+      humanIdentity,
+      humanName,
+    });
+
+    const request = buildToolRequest('wait_for_events', {
+      callId: state.session.id,
+      cursor: state.localAgentCursor || '0',
+      waitMs,
+      maxEvents,
+    });
+    const response = await sendMcpRequest(request);
+    const nextCursor = response?.result?.structuredContent?.nextCursor;
+    if (nextCursor) {
+      store.setLocalAgentCursor(nextCursor);
+    }
+    store.setLastEventDebug({
+      request,
+      response,
+    });
+    rerender();
+    return response;
+  }
+
+  async function publishReply({
+    text = '',
+    gestureId = '',
+    mood = '',
+    notes = '',
+    reason = '',
+    inReplyToEventId = null,
+  } = {}) {
+    if (!state.session?.id) {
+      throw new Error('Start a session first.');
+    }
+    if (!state.mcpState.connected) {
+      throw new Error('Start the preview session first.');
+    }
+
+    const actions = [];
+    if (`${gestureId || ''}`.trim()) {
+      actions.push({
+        gestureId: `${gestureId || ''}`.trim(),
+        reason: `${reason || ''}`.trim(),
+      });
+    }
+
+    if (`${text || ''}`.trim()) {
+      actions.push({
+        text: `${text || ''}`.trim(),
+        mood: `${mood || ''}`.trim(),
+        notes: `${notes || ''}`.trim(),
+        gestureId: `${gestureId || ''}`.trim(),
+      });
+    }
+
+    if (!actions.length) {
+      throw new Error('Enter reply text or animation ids first.');
+    }
+
+    const request = buildToolRequest('publish_actions', {
+      callId: state.session.id,
+      ...(inReplyToEventId ? { inReplyToEventId } : {}),
+      actions,
+    });
+    const response = await sendMcpRequest(request);
+    store.setLastPublishDebug({
+      request,
+      response,
+    });
+    rerender();
+    return response;
   }
 
   async function ackAction(actionId, phase) {
@@ -338,6 +512,9 @@ export function createController({
     sendMcpRequest,
     connectMcp,
     resetMcp,
+    startSession,
+    sendTurnAndPreview,
+    publishReply,
     ackAction,
     consumePendingActions,
     startPolling,

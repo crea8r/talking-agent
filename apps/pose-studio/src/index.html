@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>pose-studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/",
+          "@pixiv/three-vrm": "/vendor/@pixiv/three-vrm/three-vrm.module.js",
+          "@pixiv/three-vrm-animation": "/vendor/@pixiv/three-vrm-animation/three-vrm-animation.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body data-capture-mode="false">
+    <main class="studio">
+      <section
+        id="capture-shell"
+        class="capture-shell"
+        data-avatar-state="loading"
+        data-has-live-model="false"
+      >
+        <div class="capture-stage">
+          <div id="capture-frame" class="capture-frame">
+            <img
+              id="avatar-loader-poster"
+              class="avatar-loader-poster"
+              src="/assets/default-loader-sx.jpg"
+              data-full-src="/assets/default-loader.jpg"
+              alt=""
+            />
+            <canvas
+              id="pose-avatar"
+              class="avatar-canvas"
+              aria-label="Pose Studio avatar scene"
+            ></canvas>
+            <div class="capture-orbit capture-orbit--outer" aria-hidden="true"></div>
+            <div class="capture-orbit capture-orbit--inner" aria-hidden="true"></div>
+            <div class="capture-floor" aria-hidden="true"></div>
+            <div class="avatar-loading" aria-live="polite">
+              <span class="avatar-loading-ring" aria-hidden="true"></span>
+              <span id="avatar-loading-label">Loading default pose…</span>
+            </div>
+          </div>
+        </div>
+
+        <aside id="control-panel" class="control-panel">
+          <div id="control-card" class="control-card">
+            <div class="control-body">
+              <div class="field-row field-row--wide">
+                <label class="field">
+                  <span class="field-label">Model</span>
+                  <select id="model-select" autocomplete="off"></select>
+                </label>
+
+                <label class="field">
+                  <span class="field-label">Action</span>
+                  <select id="action-select" autocomplete="off"></select>
+                </label>
+              </div>
+
+              <div class="field-row field-row--single">
+                <label class="field">
+                  <span class="field-label">Screen size</span>
+                  <select id="screen-preset" autocomplete="off"></select>
+                </label>
+              </div>
+            </div>
+
+            <div class="action-row">
+              <div class="action-row-main">
+                <button
+                  id="prepare-capture"
+                  class="capture-button"
+                  type="button"
+                  disabled
+                >
+                  Screenshot
+                </button>
+
+                <div class="transport-shell" role="group" aria-label="Animation transport">
+                  <button
+                    id="transport-play"
+                    class="transport-button"
+                    type="button"
+                    aria-label="Play animation"
+                    title="Play"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M8 6.5v11l9-5.5z" />
+                    </svg>
+                  </button>
+                  <button
+                    id="transport-pause"
+                    class="transport-button"
+                    type="button"
+                    aria-label="Pause animation"
+                    title="Pause"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M7 6h4v12H7zM13 6h4v12h-4z" />
+                    </svg>
+                  </button>
+                  <button
+                    id="transport-restart"
+                    class="transport-button"
+                    type="button"
+                    aria-label="Restart animation"
+                    title="Restart"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 12a8 8 0 1 0 2.35-5.65" />
+                      <path d="M4 4v5h5" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <button
+                id="panel-minimize"
+                class="transport-button transport-button--ghost"
+                type="button"
+                aria-label="Minimize panel"
+                aria-pressed="false"
+                title="Minimize panel"
+              >
+                <svg class="minimize-icon minimize-icon--collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+                <svg class="minimize-icon minimize-icon--expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M6 15l6-6 6 6" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="control-footer">
+              <p id="status-line" class="status-line">Loading default pose…</p>
+              <p class="panel-note">Pause on the frame you want, then click Screenshot. Press Escape to edit again.</p>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

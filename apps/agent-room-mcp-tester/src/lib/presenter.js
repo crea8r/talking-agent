@@ -1,6 +1,10 @@
 import { safeStringify } from './format.js';
 
 function renderPendingActionControls(dom, state) {
+  if (!dom.pendingActionControls) {
+    return;
+  }
+
   const actions = state.pendingActions || [];
   if (!actions.length) {
     dom.pendingActionControls.innerHTML = '<div class="callout">No pending actions.</div>';
@@ -9,9 +13,10 @@ function renderPendingActionControls(dom, state) {
 
   dom.pendingActionControls.innerHTML = actions
     .map((action) => {
-      const summary = action.text
-        ? action.text
-        : [action.gestureId, action.emoteId, action.stageId].filter(Boolean).join(' · ') || 'action';
+      const summary =
+        action.text ||
+        [action.gestureId].filter(Boolean).join(' · ') ||
+        'action';
       const buttons = state.autoAck
         ? ''
         : action.type === 'speech'
@@ -44,36 +49,45 @@ export function render(dom, state) {
     ? `${state.session.title || 'session'} · ${state.session.id}`
     : 'No active session.';
 
-  dom.mcpState.textContent = state.mcpState.connected ? 'connected' : 'disconnected';
+  dom.mcpState.textContent = state.mcpState.connected ? 'preview connected' : 'preview offline';
   dom.mcpDetail.textContent = state.mcpState.connected
-    ? `pid=${state.mcpState.pid || 'unknown'} · transcript=${state.mcpState.transcriptCount}`
-    : state.mcpState.lastError || 'Harness offline.';
+    ? `pid=${state.mcpState.pid || 'unknown'} · cursor=${state.localAgentCursor || '0'}`
+    : state.mcpState.lastError || 'Start a session to run the local MCP preview.';
 
-  dom.speechSupport.textContent = state.speechSupported
-    ? state.speechActive
-      ? 'mic live'
-      : 'speech ready'
-    : 'typed only';
+  dom.notice.hidden = !state.notice;
+  dom.notice.textContent = state.notice || '';
+  dom.mcpCommand.textContent = state.runtimeConfig?.mcp?.command || 'Loading MCP command...';
 
-  dom.interimTranscript.textContent = state.activeUtteranceText || 'none';
-  dom.humanLog.textContent = safeStringify(state.humanLog);
-  dom.mcpLastResponse.textContent = safeStringify(state.lastMcpResponse);
-  dom.mcpTranscript.textContent = safeStringify(state.mcpTranscript);
-  dom.bridgeSummary.textContent = safeStringify(
-    state.session
-      ? {
-          id: state.session.id,
-          title: state.session.title,
-          state: state.session.state,
-          currentCursor: state.session.currentCursor,
-          agent: state.session.agent,
-        }
-      : null,
+  dom.startSessionRequest.textContent = safeStringify(
+    [
+      state.bootstrapDebug.initializeRequest,
+      state.bootstrapDebug.initializedNotification,
+      state.bootstrapDebug.toolsListRequest,
+      state.bootstrapDebug.joinCallRequest,
+    ].filter(Boolean),
   );
-  dom.bridgeEvents.textContent = safeStringify(state.inspector?.recentEvents || []);
-  dom.pendingActionsJson.textContent = safeStringify(state.pendingActions);
-  dom.recentTurns.textContent = safeStringify(state.session?.turns || []);
+
+  dom.startSessionResponse.textContent = safeStringify({
+    initialize: state.bootstrapDebug.initializeResponse,
+    toolsList: state.bootstrapDebug.toolsListResponse,
+    joinCall: state.bootstrapDebug.joinCallResponse,
+  });
+
+  dom.lastEventRequest.textContent = safeStringify(state.lastEventDebug.request);
+  dom.lastEventResponse.textContent = safeStringify(state.lastEventDebug.response);
+  dom.lastPublishRequest.textContent = safeStringify(state.lastPublishDebug.request);
+  dom.latestAgentReply.textContent = safeStringify({
+    activeAgent: state.session?.agent || null,
+    lastAgentReply: state.session?.lastAgentReply || null,
+    pendingActions: state.pendingActions,
+  });
+
   dom.autoAck.checked = state.autoAck;
+  dom.fullTranscript.textContent = safeStringify(state.mcpTranscript);
+  dom.recentEvents.textContent = safeStringify(state.inspector?.recentEvents || []);
+  dom.recentTurns.textContent = safeStringify(state.session?.turns || []);
+  dom.pendingActionsJson.textContent = safeStringify(state.pendingActions);
+  dom.humanLog.textContent = safeStringify(state.humanLog);
 
   renderPendingActionControls(dom, state);
 }

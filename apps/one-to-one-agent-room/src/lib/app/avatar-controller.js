@@ -15,6 +15,7 @@ export function createAvatarController({
   formatError,
   addLog,
   refreshActionButtons,
+  onBundledModelChange = () => {},
 }) {
   const earlyBootIssues = [];
   const avatarLayer = createSafeAvatarLayer();
@@ -139,6 +140,8 @@ export function createAvatarController({
     if (persist) {
       persistState();
     }
+
+    onBundledModelChange(model.id);
 
     if (state.modelLoading) {
       return;

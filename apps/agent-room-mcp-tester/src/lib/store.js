@@ -14,13 +14,32 @@ export function createAppStore() {
       stateFilePath: '',
       lastError: null,
     },
+    bootstrapDebug: {
+      initializeRequest: null,
+      initializeResponse: null,
+      initializedNotification: null,
+      toolsListRequest: null,
+      toolsListResponse: null,
+      joinCallRequest: null,
+      joinCallResponse: null,
+    },
+    lastEventDebug: {
+      request: null,
+      response: null,
+    },
+    lastPublishDebug: {
+      request: null,
+      response: null,
+    },
     lastMcpResponse: null,
+    localAgentCursor: '0',
     activeUtteranceId: null,
     activeUtteranceText: '',
     autoAck: true,
     processingActions: false,
     speechSupported: false,
     speechActive: false,
+    notice: '',
   };
 
   return {
@@ -33,6 +52,9 @@ export function createAppStore() {
     },
     setSpeechActive(value) {
       state.speechActive = Boolean(value);
+    },
+    setNotice(value) {
+      state.notice = `${value || ''}`.trim();
     },
     setAutoAck(value) {
       state.autoAck = Boolean(value);
@@ -51,6 +73,32 @@ export function createAppStore() {
       if (response !== null) {
         state.lastMcpResponse = response;
       }
+    },
+    setBootstrapDebug(payload = {}) {
+      state.bootstrapDebug = {
+        initializeRequest: payload.initializeRequest || null,
+        initializeResponse: payload.initializeResponse || null,
+        initializedNotification: payload.initializedNotification || null,
+        toolsListRequest: payload.toolsListRequest || null,
+        toolsListResponse: payload.toolsListResponse || null,
+        joinCallRequest: payload.joinCallRequest || null,
+        joinCallResponse: payload.joinCallResponse || null,
+      };
+    },
+    setLastEventDebug(payload = {}) {
+      state.lastEventDebug = {
+        request: payload.request || null,
+        response: payload.response || null,
+      };
+    },
+    setLastPublishDebug(payload = {}) {
+      state.lastPublishDebug = {
+        request: payload.request || null,
+        response: payload.response || null,
+      };
+    },
+    setLocalAgentCursor(cursor) {
+      state.localAgentCursor = `${cursor || '0'}`;
     },
   };
 }

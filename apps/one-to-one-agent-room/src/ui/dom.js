@@ -1,6 +1,9 @@
 export const dom = {
+  shell: document.querySelector('.shell'),
   screenTabs: Array.from(document.querySelectorAll('[data-screen-target]')),
   screens: Array.from(document.querySelectorAll('[data-screen]')),
+  callLobby: document.querySelector('#call-lobby'),
+  callLive: document.querySelector('#call-live'),
   livekitUrl: document.querySelector('#livekit-url'),
   roomName: document.querySelector('#room-name'),
   identity: document.querySelector('#identity'),
