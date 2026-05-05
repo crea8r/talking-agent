@@ -6,6 +6,15 @@ import {
   renderVoiceOptions as renderVoiceOptionsView,
   updateStatusCard,
 } from '../../ui/render.js';
+import { safeStringify } from '../format.js';
+import {
+  buildAgentChatPrompt,
+  formatHeartbeatAge,
+  getCallPrimaryAction,
+  getAgentHeartbeatState,
+  getCallTitle,
+  getCodexProjectTitle,
+} from './call-session.js';
 
 export function createPresenter({
   dom,
@@ -17,6 +26,20 @@ export function createPresenter({
   avatarSpeech,
   avatarLayer,
 }) {
+  function syncCallSurface(roomActive) {
+    if (dom.shell) {
+      dom.shell.dataset.roomState = roomActive ? 'live' : 'lobby';
+    }
+
+    if (dom.callLobby) {
+      dom.callLobby.hidden = roomActive;
+    }
+
+    if (dom.callLive) {
+      dom.callLive.hidden = !roomActive;
+    }
+  }
+
   function updateRoomStatus(cardState, title, detail) {
     updateStatusCard(dom.roomStatus, dom.roomDetail, cardState, title, detail);
   }
@@ -46,16 +69,111 @@ export function createPresenter({
     state.localVideoElement = renderLocalStageView(dom.localStage, state.room, trackSource);
   }
 
+  function renderCallSnapshot() {
+    const heartbeat = getAgentHeartbeatState(state.session);
+    const room = state.room;
+    const title = getCallTitle(state.session, state.runtimeConfig);
+    const form = collectFormState();
+    const action = getCallPrimaryAction({
+      session: state.session,
+      room,
+      sessionPreparing: state.sessionPreparing,
+      modelLoading: state.modelLoading,
+      formReady: Boolean(form.livekitUrl && form.roomName && form.identity),
+    });
+
+    dom.callTitle.textContent = title;
+    dom.callAgentName.textContent = heartbeat.label;
+    dom.joinCall.textContent = action.label;
+    dom.joinCall.dataset.mode = action.mode;
+    dom.projectName.textContent = getCodexProjectTitle(state.runtimeConfig);
+    dom.bridgeCallTitle.textContent = title;
+    dom.bridgeAgentLabel.textContent = heartbeat.label;
+    if (dom.connectPromptBody) {
+      dom.connectPromptBody.value = buildAgentChatPrompt({
+        session: state.session,
+        runtimeConfig: state.runtimeConfig,
+      });
+    }
+    dom.callAgentPresence.textContent =
+      heartbeat.status === 'ready'
+        ? 'ready'
+        : heartbeat.status === 'stale'
+          ? 'reconnect'
+          : state.sessionPreparing
+            ? 'preparing'
+            : 'waiting';
+    dom.callAgentPresence.dataset.state =
+      heartbeat.status === 'ready'
+        ? 'ready'
+        : heartbeat.status === 'stale'
+          ? 'warn'
+          : state.sessionPreparing
+            ? 'loading'
+            : 'idle';
+
+    if (room) {
+      dom.callSubtitle.textContent = heartbeat.ready
+        ? `${heartbeat.label} is in the room. ${room.name || title} is live.`
+        : `${room.name || title} is live. Waiting for ${heartbeat.label} to refresh.`;
+      return;
+    }
+
+    if (state.sessionPreparing) {
+      dom.callSubtitle.textContent = 'Preparing the room for the agent.';
+      return;
+    }
+
+    if (heartbeat.status === 'ready') {
+      dom.callSubtitle.textContent = `${heartbeat.label} is ready. Start the room when you are ready.`;
+      return;
+    }
+
+    if (heartbeat.status === 'stale') {
+      dom.callSubtitle.textContent = `${heartbeat.label} needs a fresh check-in before you start the room.`;
+      return;
+    }
+
+    dom.callSubtitle.textContent = state.session?.id
+      ? 'Connect the agent and wait for a fresh heartbeat.'
+      : 'Set up the room and connect the agent.';
+  }
+
   function renderRoomSnapshot() {
     const room = state.room;
     const localParticipant = room?.localParticipant || null;
     const form = collectFormState();
+    const heartbeat = getAgentHeartbeatState(state.session);
+    syncCallSurface(Boolean(room));
     dom.localIdentity.textContent = localParticipant?.identity || form.identity || 'none';
     dom.remoteCount.textContent = room ? String(room.remoteParticipants.size) : '0';
 
     if (!room) {
-      updateRoomStatus('ready', 'Ready', 'Start the room when you are ready.');
-      dom.disconnectCall.disabled = true;
+      if (state.sessionPreparing) {
+        updateRoomStatus('loading', 'Preparing call', 'Setting up the room for the agent.');
+      } else if (heartbeat.status === 'ready') {
+        updateRoomStatus(
+          'ready',
+          'Agent ready',
+          `${heartbeat.label} is ready. Start the room when you are ready.`,
+        );
+      } else if (heartbeat.status === 'stale') {
+        updateRoomStatus(
+          'warn',
+          'Agent reconnecting',
+          `${heartbeat.label} needs to reconnect before you start the room.`,
+        );
+      } else {
+        updateRoomStatus(
+          'loading',
+          'Waiting for agent',
+          'Open the agent prompt, connect the runtime, then wait for a fresh heartbeat.',
+        );
+      }
+      if (dom.disconnectCallLive) {
+        dom.disconnectCallLive.disabled = true;
+      }
+      renderCallSnapshot();
       return;
     }
 
@@ -67,15 +185,28 @@ export function createPresenter({
         ? `Connected as ${localParticipant.name || localParticipant.identity}.`
         : 'Connecting to room.',
     );
+    if (dom.disconnectCallLive) {
+      dom.disconnectCallLive.disabled = false;
+    }
+    renderCallSnapshot();
   }
 
   function renderBridgeSnapshot() {
+    const heartbeat = getAgentHeartbeatState(state.session);
+
     if (!state.session) {
       dom.sessionId.textContent = 'none';
       dom.pendingCount.textContent = '0';
-      updateBridgeStatus('idle', 'No session', 'Start a room before sending turns.');
+      updateBridgeStatus(
+        state.sessionPreparing ? 'loading' : 'idle',
+        state.sessionPreparing ? 'Preparing session' : 'No session',
+        state.sessionPreparing
+          ? 'Creating the bridge session for the call.'
+          : 'The bridge session will appear here.',
+      );
       dom.runDemoReply.disabled = true;
       dom.lastAgentReply.textContent = 'none';
+      renderCallSnapshot();
       refreshActionButtons();
       return;
     }
@@ -92,11 +223,28 @@ export function createPresenter({
       );
     } else if (state.session.metrics.unplayedReplies > 0) {
       updateBridgeStatus('active', 'Reply ready', 'Playback is about to start.');
+    } else if (heartbeat.status === 'ready') {
+      updateBridgeStatus(
+        'ready',
+        'Agent connected',
+        `${heartbeat.label} last checked in ${formatHeartbeatAge(heartbeat.ageMs)}.`,
+      );
+    } else if (heartbeat.status === 'stale') {
+      updateBridgeStatus(
+        'warn',
+        'Agent reconnecting',
+        `${heartbeat.label} was last seen ${formatHeartbeatAge(heartbeat.ageMs)}.`,
+      );
     } else {
-      updateBridgeStatus('ready', 'Bridge synced', 'Waiting for the next turn.');
+      updateBridgeStatus(
+        'loading',
+        'Waiting for agent',
+        'Open the agent prompt only if you need it. Otherwise wait for the runtime heartbeat.',
+      );
     }
 
     dom.runDemoReply.disabled = state.session.metrics.pendingTurns === 0;
+    renderCallSnapshot();
     refreshActionButtons();
   }
 
@@ -109,9 +257,11 @@ export function createPresenter({
   function renderAgentStatus() {
     const playback = state.avatarSpeechSnapshot || avatarSpeech.getSnapshot();
     const agentVoice = state.agentVoiceSnapshot || agentVoiceLayer.getSnapshot();
+    const heartbeat = getAgentHeartbeatState(state.session);
 
     if (state.processingReplies) {
       updateAgentStatus('active', 'Replying', 'Animating the current reply.');
+      renderCallSnapshot();
       return;
     }
 
@@ -121,15 +271,50 @@ export function createPresenter({
         playback.mode === 'voice' ? 'Speaking' : 'Animating',
         playback.currentText || 'Handling the current reply.',
       );
+      renderCallSnapshot();
+      return;
+    }
+
+    if (heartbeat.status === 'ready') {
+      updateAgentStatus(
+        agentVoice.speechSynthesisSupported ? 'ready' : 'warn',
+        agentVoice.speechSynthesisSupported ? 'Connected' : 'Connected · silent',
+        agentVoice.speechSynthesisSupported
+          ? `${heartbeat.label} last checked in ${formatHeartbeatAge(heartbeat.ageMs)}.`
+          : `${heartbeat.label} is connected, but speech synthesis is unavailable in this browser.`,
+      );
+      renderCallSnapshot();
+      return;
+    }
+
+    if (heartbeat.status === 'stale') {
+      updateAgentStatus(
+        'warn',
+        'Reconnecting',
+        `${heartbeat.label} was last seen ${formatHeartbeatAge(heartbeat.ageMs)}.`,
+      );
+      renderCallSnapshot();
+      return;
+    }
+
+    if (state.sessionPreparing) {
+      updateAgentStatus('loading', 'Preparing', 'Creating the bridge session for the call.');
+      renderCallSnapshot();
       return;
     }
 
     if (!agentVoice.speechSynthesisSupported) {
-      updateAgentStatus('warn', 'Silent fallback', 'Speech synthesis is unavailable in this browser.');
+      updateAgentStatus(
+        'warn',
+        'Silent fallback',
+        'Speech synthesis is unavailable in this browser.',
+      );
+      renderCallSnapshot();
       return;
     }
 
-    updateAgentStatus('ready', 'Waiting', 'No reply playing.');
+    updateAgentStatus('loading', 'Waiting', 'No agent heartbeat yet.');
+    renderCallSnapshot();
   }
 
   function renderVoiceOptions() {
@@ -151,16 +336,26 @@ export function createPresenter({
 
   function refreshActionButtons() {
     const humanVoiceSnapshot = state.humanVoiceSnapshot || humanVoiceLayer.getSnapshot();
-    const hasSession = Boolean(state.session?.id);
+    const form = collectFormState();
     const hasTypedText = dom.typedInput.value.trim().length > 0;
     const roomReady = Boolean(state.room);
+    const roomConnected = state.room?.state === 'connected';
+    const action = getCallPrimaryAction({
+      session: state.session,
+      room: state.room,
+      sessionPreparing: state.sessionPreparing,
+      modelLoading: state.modelLoading,
+      formReady: Boolean(form.livekitUrl && form.roomName && form.identity),
+    });
 
-    dom.joinCall.disabled = state.modelLoading || roomReady;
-    dom.disconnectCall.disabled = !roomReady;
+    dom.joinCall.disabled = action.disabled;
+    if (dom.disconnectCallLive) {
+      dom.disconnectCallLive.disabled = !roomReady;
+    }
     dom.startListening.disabled =
-      !hasSession || !humanVoiceSnapshot.recognitionSupported || humanVoiceSnapshot.listening;
+      !roomConnected || !humanVoiceSnapshot.recognitionSupported || humanVoiceSnapshot.listening;
     dom.stopListening.disabled = !humanVoiceSnapshot.listening;
-    dom.sendTyped.disabled = !hasSession || !hasTypedText;
+    dom.sendTyped.disabled = !roomConnected || !hasTypedText;
   }
 
   function renderTranscriptList() {
@@ -168,6 +363,30 @@ export function createPresenter({
   }
 
   function renderDebugSnapshot() {
+    if (dom.inspectorSummary) {
+      const inspector = state.inspectorSnapshot;
+      if (!inspector) {
+        dom.inspectorSummary.textContent = 'Waiting for bridge data…';
+      } else {
+        dom.inspectorSummary.textContent = [
+          `Call ${inspector.callId || 'none'}`,
+          `state=${inspector.state || 'unknown'}`,
+          `cursor=${inspector.currentCursor || '0'}`,
+          `pendingActions=${inspector.pendingActions?.length || 0}`,
+          `model=${inspector.avatar?.activeModelId || 'none'}`,
+          `catalog=${inspector.avatar?.catalogVersion || 'none'}`,
+        ].join(' • ');
+      }
+    }
+
+    if (dom.inspectorEvents) {
+      dom.inspectorEvents.textContent = safeStringify(state.inspectorSnapshot?.recentEvents || []);
+    }
+
+    if (dom.inspectorActions) {
+      dom.inspectorActions.textContent = safeStringify(state.inspectorSnapshot?.pendingActions || []);
+    }
+
     renderDebugSnapshotView(dom.debugSnapshot, {
       runtime: state.runtimeConfig,
       room: state.room
@@ -183,6 +402,7 @@ export function createPresenter({
       agentVoice: state.agentVoiceSnapshot || agentVoiceLayer.getSnapshot(),
       avatarSpeech: state.avatarSpeechSnapshot || avatarSpeech.getSnapshot(),
       avatar: avatarLayer.getSnapshot(),
+      inspector: state.inspectorSnapshot,
       recentLogs: state.logs.slice(0, 8),
     });
   }
@@ -192,6 +412,7 @@ export function createPresenter({
     updateBridgeStatus,
     updateAgentStatus,
     renderLocalStage,
+    renderCallSnapshot,
     renderRoomSnapshot,
     renderBridgeSnapshot,
     renderHumanStatus,

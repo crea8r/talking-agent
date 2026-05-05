@@ -23,17 +23,61 @@ export function bindAppEvents({
     element.addEventListener('input', persistState);
   });
 
+  [dom.livekitUrl, dom.roomName, dom.identity].forEach((element) => {
+    element.addEventListener('change', () => {
+      presenter.refreshActionButtons();
+      sessionController.scheduleLobbySessionPreparation({ force: true, immediate: true });
+    });
+    element.addEventListener('input', () => {
+      presenter.refreshActionButtons();
+      sessionController.scheduleLobbySessionPreparation();
+    });
+  });
+
   dom.joinCall.addEventListener('click', async () => {
     try {
-      await sessionController.joinCall();
+      await sessionController.handlePrimaryCallAction();
     } catch (error) {
-      addLog('error', 'Create call failed.', formatError(error));
+      addLog('error', 'Primary call action failed.', formatError(error));
     }
   });
 
-  dom.disconnectCall.addEventListener('click', async () => {
-    await sessionController.disconnectCall();
-  });
+  if (dom.disconnectCallLive) {
+    dom.disconnectCallLive.addEventListener('click', async () => {
+      await sessionController.disconnectCall();
+    });
+  }
+
+  if (dom.openConnectPrompt) {
+    dom.openConnectPrompt.addEventListener('click', () => {
+      sessionController.openConnectPrompt();
+    });
+  }
+
+  if (dom.copyConnectPrompt) {
+    dom.copyConnectPrompt.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(dom.connectPromptBody.value);
+        addLog('info', 'Copied agent chat prompt.');
+      } catch (error) {
+        addLog('error', 'Copy agent chat prompt failed.', formatError(error));
+      }
+    });
+  }
+
+  if (dom.closeConnectPrompt) {
+    dom.closeConnectPrompt.addEventListener('click', () => {
+      dom.connectPromptDialog?.close?.();
+    });
+  }
+
+  if (dom.connectPromptDialog) {
+    dom.connectPromptDialog.addEventListener('click', (event) => {
+      if (event.target === dom.connectPromptDialog) {
+        dom.connectPromptDialog.close?.();
+      }
+    });
+  }
 
   dom.copyMcpCommand.addEventListener('click', async () => {
     try {
@@ -43,6 +87,16 @@ export function bindAppEvents({
       addLog('error', 'Copy MCP command failed.', formatError(error));
     }
   });
+
+  if (dom.refreshInspector) {
+    dom.refreshInspector.addEventListener('click', async () => {
+      try {
+        await sessionController.pollSession();
+      } catch (error) {
+        addLog('error', 'Inspector refresh failed.', formatError(error));
+      }
+    });
+  }
 
   dom.runDemoReply.addEventListener('click', async () => {
     try {
@@ -99,7 +153,9 @@ export function bindAppEvents({
   });
 
   dom.bundledModelSelect.addEventListener('change', () => {
-    void avatarController.selectBundledModel(dom.bundledModelSelect.value);
+    void avatarController.selectBundledModel(dom.bundledModelSelect.value).then(() => {
+      void sessionController.syncAvatarCatalogForSession();
+    });
   });
 
   dom.stageSelect.addEventListener('change', () => {

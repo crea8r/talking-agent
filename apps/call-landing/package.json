@@ -1,0 +1,10 @@
+{
+  "name": "@talking-agent/call-landing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "capture:loader-poster": "node scripts/capture-loader-poster.mjs",
+    "dev": "node server.mjs",
+    "start": "node server.mjs"
+  }
+}

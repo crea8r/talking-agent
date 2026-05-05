@@ -1,4 +1,4 @@
-const VALID_SCREENS = new Set(['setup', 'session', 'diagnostics']);
+const VALID_SCREENS = new Set(['setup', 'agent-setup', 'diagnostics']);
 const DEFAULT_SCREEN = 'setup';
 
 function normalizeScreenId(value) {

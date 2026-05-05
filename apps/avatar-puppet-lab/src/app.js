@@ -7,6 +7,7 @@ import {
   STAGES,
   createAvatarLayer,
   getGesturePresets,
+  pickVoiceForModel,
   resolveGesturePreset,
 } from '/vendor/avatar-layer-browser.js';
 
@@ -171,6 +172,12 @@ voiceLayer.setHandlers({
       state.preferences.voiceName = selectedVoice;
       persistState();
     }
+
+    syncRecommendedVoiceForCurrentModel({
+      force:
+        !state.preferences.voiceName ||
+        !voices.some((voice) => voice.name === state.preferences.voiceName),
+    });
 
     renderVoiceOptions();
     refreshVoicePanel();
@@ -416,6 +423,8 @@ async function selectBundledModel(modelId, { persist = true } = {}) {
     persistState();
   }
 
+  syncRecommendedVoiceForCurrentModel({ force: true });
+
   if (state.modelLoading) {
     return;
   }
@@ -594,6 +603,30 @@ function syncVoiceLayerConfig() {
     speechPitch: state.preferences.speechPitch,
     getReply: async (transcript) => transcript,
   });
+}
+
+function syncRecommendedVoiceForCurrentModel({ force = false } = {}) {
+  const recommendedVoice = pickVoiceForModel(state.preferences.bundledModelId, state.voiceOptions);
+  if (!recommendedVoice) {
+    return;
+  }
+
+  const voiceStillAvailable = state.voiceOptions.some(
+    (voice) => voice.name === state.preferences.voiceName,
+  );
+  if (!force && state.preferences.voiceName && voiceStillAvailable) {
+    return;
+  }
+
+  if (state.preferences.voiceName === recommendedVoice) {
+    return;
+  }
+
+  state.preferences.voiceName = recommendedVoice;
+  syncVoiceLayerConfig();
+  renderVoiceOptions();
+  refreshVoicePanel();
+  persistState();
 }
 
 function renderVoiceOptions() {

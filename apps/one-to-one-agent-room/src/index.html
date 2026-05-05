@@ -35,18 +35,18 @@
               aria-controls="screen-setup"
               data-screen-target="setup"
             >
-              Setup
+              Call
             </button>
             <button
-              id="screen-tab-session"
+              id="screen-tab-agent-setup"
               class="screen-tab"
               type="button"
               role="tab"
               aria-selected="false"
-              aria-controls="screen-session"
-              data-screen-target="session"
+              aria-controls="screen-agent-setup"
+              data-screen-target="agent-setup"
             >
-              Session
+              Agent Setup
             </button>
             <button
               id="screen-tab-diagnostics"
@@ -70,12 +70,6 @@
           </article>
 
           <article class="status-card status-card--compact" data-state="idle">
-            <span class="status-label">Bridge</span>
-            <strong id="bridge-status">No session</strong>
-            <p id="bridge-detail" class="status-detail">No pending turns.</p>
-          </article>
-
-          <article class="status-card status-card--compact" data-state="idle">
             <span class="status-label">Agent</span>
             <strong id="agent-status">Waiting</strong>
             <p id="agent-detail" class="status-detail">No reply playing.</p>
@@ -85,59 +79,213 @@
 
       <section
         id="screen-setup"
-        class="screen screen-grid screen-grid--setup"
+        class="screen screen-grid screen-grid--call"
         data-screen="setup"
         role="tabpanel"
         aria-labelledby="screen-tab-setup"
       >
-        <article class="panel stack-lg">
-          <div class="section-head">
-            <h2>Room</h2>
+        <article class="panel stack-lg call-surface">
+          <div class="section-head call-surface-head">
+            <div class="stack-sm">
+              <span class="eyebrow">Call</span>
+              <h2 id="call-title">Loading…</h2>
+              <p id="call-subtitle" class="status-detail">Preparing the call session.</p>
+            </div>
+
             <div class="actions actions--tight">
-              <button id="join-call" class="primary" type="button">Start Room</button>
-              <button id="disconnect-call" type="button" disabled>Disconnect</button>
+              <button id="disconnect-call-live" type="button" disabled>End Call</button>
             </div>
           </div>
 
-          <div class="field">
-            <label for="livekit-url">LiveKit WebSocket URL</label>
-            <input id="livekit-url" name="livekit-url" placeholder="ws://127.0.0.1:7880" />
+          <div id="call-lobby" class="call-lobby">
+            <div class="call-lobby-form stack-lg">
+              <div class="stack-sm">
+                <span class="legend">Before the call starts</span>
+                <p class="status-detail">
+                  Set the room details here. The live camera and avatar surfaces only appear after
+                  the room is active.
+                </p>
+              </div>
+
+              <div class="field">
+                <label for="livekit-url">LiveKit WebSocket URL</label>
+                <input id="livekit-url" name="livekit-url" placeholder="ws://127.0.0.1:7880" />
+              </div>
+
+              <div class="field-grid">
+                <div class="field">
+                  <label for="room-name">Room Name</label>
+                  <input id="room-name" name="room-name" placeholder="talking-agent-call" />
+                </div>
+
+                <div class="field">
+                  <label for="identity">Human Identity</label>
+                  <input id="identity" name="identity" placeholder="human-room-host" />
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="participant-name">Display Name</label>
+                <input id="participant-name" name="participant-name" placeholder="Human Caller" />
+              </div>
+
+              <div class="toggle-row" role="group" aria-label="Media publish settings">
+                <label class="toggle">
+                  <input id="enable-camera" type="checkbox" />
+                  <span>Publish camera</span>
+                </label>
+                <label class="toggle">
+                  <input id="enable-microphone" type="checkbox" />
+                  <span>Publish microphone</span>
+                </label>
+              </div>
+
+              <div class="actions actions--tight">
+                <button id="join-call" class="primary" type="button">Connect Agent</button>
+              </div>
+
+              <p class="status-detail">
+                Start Room unlocks after a fresh heartbeat from the agent runtime.
+              </p>
+
+              <div class="badge-row">
+                <span class="badge">
+                  <span class="badge-label">Project</span>
+                  <strong id="project-name">Loading…</strong>
+                </span>
+                <span class="badge">
+                  <span class="badge-label">Call</span>
+                  <strong id="bridge-call-title">Loading…</strong>
+                </span>
+                <span class="badge">
+                  <span class="badge-label">Agent</span>
+                  <strong id="bridge-agent-label">Codex OpenAI</strong>
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div class="field-grid">
-            <div class="field">
-              <label for="room-name">Room Name</label>
-              <input id="room-name" name="room-name" placeholder="app4-one-to-one-room" />
+          <div id="call-live" class="call-live stack-lg" hidden>
+            <div class="badge-row badge-row--call-meta">
+              <span class="badge">
+                <span class="badge-label">You</span>
+                <strong id="local-identity">none</strong>
+              </span>
+              <span class="badge">
+                <span class="badge-label">Remote</span>
+                <strong id="remote-count">0</strong>
+              </span>
             </div>
 
-            <div class="field">
-              <label for="identity">Human Identity</label>
-              <input id="identity" name="identity" placeholder="human-room-01" />
+            <div class="call-grid">
+              <div id="local-stage" class="participant-stage-frame participant-stage-frame--call">
+                <div class="empty-state">Start the room to preview local media.</div>
+              </div>
+
+              <article class="call-tile call-tile--agent">
+                <div class="participant-header">
+                  <div class="stack-sm">
+                    <span class="legend">Agent</span>
+                    <strong id="call-agent-name">Codex OpenAI</strong>
+                  </div>
+                  <div id="call-agent-presence" class="status-pill" data-state="idle">waiting</div>
+                </div>
+
+                <div id="stage-shell" class="stage-shell stage-shell--call">
+                  <canvas id="agent-canvas" aria-label="Agent avatar stage"></canvas>
+                </div>
+
+                <div class="badge-row">
+                  <span class="badge">
+                    <span class="badge-label">Avatar</span>
+                    <strong id="active-avatar">Loading…</strong>
+                  </span>
+                  <span class="badge">
+                    <span class="badge-label">Emote</span>
+                    <strong id="active-emote">Neutral</strong>
+                  </span>
+                  <span class="badge">
+                    <span class="badge-label">Gesture</span>
+                    <strong id="active-gesture">Pose</strong>
+                  </span>
+                  <span class="badge">
+                    <span class="badge-label">Mouth</span>
+                    <strong id="active-mouth">rest</strong>
+                  </span>
+                </div>
+              </article>
             </div>
-          </div>
 
-          <div class="field">
-            <label for="participant-name">Display Name</label>
-            <input id="participant-name" name="participant-name" placeholder="Human Caller" />
-          </div>
+            <div class="call-dock">
+              <div class="call-dock-row">
+                <div class="actions actions--tight">
+                  <button id="start-listening" class="primary" type="button" disabled>
+                    Listen
+                  </button>
+                  <button id="stop-listening" type="button" disabled>Stop</button>
+                </div>
+                <div id="human-status" class="status-pill">idle</div>
+              </div>
 
-          <div class="toggle-row" role="group" aria-label="Media publish settings">
-            <label class="toggle">
-              <input id="enable-camera" type="checkbox" />
-              <span>Publish camera</span>
-            </label>
-            <label class="toggle">
-              <input id="enable-microphone" type="checkbox" />
-              <span>Publish microphone</span>
-            </label>
+              <div class="call-dock-grid">
+                <div class="field">
+                  <label for="typed-input">Typed Turn</label>
+                  <textarea
+                    id="typed-input"
+                    name="typed-input"
+                    rows="4"
+                    placeholder="Type a prompt for the agent."
+                  ></textarea>
+                </div>
+
+                <div class="stack-lg">
+                  <div class="field">
+                    <span class="legend">Transcript</span>
+                    <div id="human-transcript" class="callout status-detail">none</div>
+                  </div>
+
+                  <div class="actions actions--tight">
+                    <button id="send-typed" type="button" disabled>Send Text</button>
+                    <button id="clear-typed" type="button">Clear</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </article>
+      </section>
 
+      <section
+        id="screen-agent-setup"
+        class="screen screen-grid screen-grid--agent-setup"
+        data-screen="agent-setup"
+        role="tabpanel"
+        aria-labelledby="screen-tab-agent-setup"
+        hidden
+      >
         <article class="panel stack-lg">
           <div class="section-head">
-            <h2>Bridge</h2>
-            <button id="copy-mcp-command" type="button">Copy Command</button>
+            <div class="stack-sm">
+              <span class="eyebrow">Agent Setup</span>
+              <h2>Runtime Bootstrap</h2>
+            </div>
+
+            <div class="actions actions--tight">
+              <button id="open-connect-prompt" type="button">Open Prompt</button>
+              <button id="copy-mcp-command" type="button">Copy Command</button>
+            </div>
           </div>
+
+          <p class="status-detail">
+            Use this screen to connect the agent runtime and inspect the bridge session. It stays
+            out of the live call UI.
+          </p>
+
+          <article class="status-card status-card--compact backstage-status-card" data-state="idle">
+            <span class="status-label">Bridge</span>
+            <strong id="bridge-status">No session</strong>
+            <p id="bridge-detail" class="status-detail">No pending turns.</p>
+          </article>
 
           <div class="field">
             <label for="mcp-command">MCP command</label>
@@ -153,14 +301,6 @@
               <dt>Pending</dt>
               <dd id="pending-count">0</dd>
             </div>
-            <div class="metric-card">
-              <dt>Identity</dt>
-              <dd id="local-identity">none</dd>
-            </div>
-            <div class="metric-card">
-              <dt>Remote</dt>
-              <dd id="remote-count">0</dd>
-            </div>
           </div>
 
           <div class="field">
@@ -168,42 +308,35 @@
             <div id="state-file" class="code-block">Loading runtime config…</div>
           </div>
         </article>
-      </section>
 
-      <section
-        id="screen-session"
-        class="screen screen-grid screen-grid--session"
-        data-screen="session"
-        role="tabpanel"
-        aria-labelledby="screen-tab-session"
-        hidden
-      >
-        <article class="panel stack-lg session-stage-panel">
+        <article class="panel stack-lg">
           <div class="section-head">
-            <h2>Avatar</h2>
+            <div class="stack-sm">
+              <span class="eyebrow">Room Tools</span>
+              <h2>Voice, Avatar, And Turns</h2>
+            </div>
 
-            <div class="badge-row">
-              <span class="badge">
-                <span class="badge-label">Avatar</span>
-                <strong id="active-avatar">Loading…</strong>
-              </span>
-              <span class="badge">
-                <span class="badge-label">Emote</span>
-                <strong id="active-emote">Neutral</strong>
-              </span>
-              <span class="badge">
-                <span class="badge-label">Gesture</span>
-                <strong id="active-gesture">Pose</strong>
-              </span>
-              <span class="badge">
-                <span class="badge-label">Mouth</span>
-                <strong id="active-mouth">rest</strong>
-              </span>
+            <div class="actions actions--tight">
+              <button id="run-demo-reply" type="button" disabled>Run Fallback Reply</button>
             </div>
           </div>
 
-          <div id="stage-shell" class="stage-shell">
-            <canvas id="agent-canvas" aria-label="Agent avatar stage"></canvas>
+          <div class="field-grid">
+            <div class="field">
+              <label for="human-locale">Recognition Locale</label>
+              <select id="human-locale" name="human-locale">
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
+                <option value="vi-VN">Vietnamese</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="voice-select">Agent Voice</label>
+              <select id="voice-select" name="voice-select" disabled>
+                <option>Loading voices…</option>
+              </select>
+            </div>
           </div>
 
           <div class="metric-grid metric-grid--wide">
@@ -238,93 +371,26 @@
               <select id="gesture-select" name="gesture-select"></select>
             </div>
           </div>
-        </article>
 
-        <div class="session-side stack-lg">
-          <article class="panel stack-lg">
-            <div class="section-head">
-              <h2>Human</h2>
-              <div id="human-status" class="status-pill">idle</div>
-            </div>
-
-            <div id="local-stage" class="participant-stage-frame">
-              <div class="empty-state">Start the room to preview local media.</div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="speech-rate"
+                >Speech Rate <span id="speech-rate-value" class="value-tag">1.00x</span></label
+              >
+              <input id="speech-rate" type="range" min="0.75" max="1.35" step="0.05" value="1" />
             </div>
 
             <div class="field">
-              <label for="human-locale">Recognition Locale</label>
-              <select id="human-locale" name="human-locale">
-                <option value="en-US">English (US)</option>
-                <option value="en-GB">English (UK)</option>
-                <option value="vi-VN">Vietnamese</option>
-              </select>
+              <label for="speech-pitch"
+                >Pitch <span id="speech-pitch-value" class="value-tag">1.00x</span></label
+              >
+              <input id="speech-pitch" type="range" min="0.75" max="1.4" step="0.05" value="1" />
             </div>
+          </div>
 
-            <div class="actions actions--tight">
-              <button id="start-listening" class="primary" type="button" disabled>Listen</button>
-              <button id="stop-listening" type="button" disabled>Stop</button>
-            </div>
-
-            <div class="field">
-              <label for="typed-input">Typed Turn</label>
-              <textarea
-                id="typed-input"
-                name="typed-input"
-                rows="4"
-                placeholder="Type a prompt for the agent."
-              ></textarea>
-            </div>
-
-            <div class="actions actions--tight">
-              <button id="send-typed" type="button" disabled>Send Text</button>
-              <button id="clear-typed" type="button">Clear</button>
-            </div>
-
-            <div class="field">
-              <span class="legend">Transcript</span>
-              <div id="human-transcript" class="callout status-detail">none</div>
-            </div>
-          </article>
-
-          <article class="panel stack-lg">
-            <div class="section-head">
-              <h2>Voice</h2>
-              <button id="run-demo-reply" type="button" disabled>Run Fallback Reply</button>
-            </div>
-
-            <div class="field">
-              <label for="voice-select">Agent Voice</label>
-              <select id="voice-select" name="voice-select" disabled>
-                <option>Loading voices…</option>
-              </select>
-            </div>
-
-            <div class="field-grid">
-              <div class="field">
-                <label for="speech-rate"
-                  >Speech Rate <span id="speech-rate-value" class="value-tag">1.00x</span></label
-                >
-                <input id="speech-rate" type="range" min="0.75" max="1.35" step="0.05" value="1" />
-              </div>
-
-              <div class="field">
-                <label for="speech-pitch"
-                  >Pitch <span id="speech-pitch-value" class="value-tag">1.00x</span></label
-                >
-                <input id="speech-pitch" type="range" min="0.75" max="1.4" step="0.05" value="1" />
-              </div>
-            </div>
-
-            <div class="field">
-              <span class="legend">Latest Reply</span>
-              <div id="last-agent-reply" class="callout status-detail">none</div>
-            </div>
-          </article>
-        </div>
-
-        <article class="panel stack-lg session-turns">
-          <div class="section-head">
-            <h2>Turns</h2>
+          <div class="field">
+            <span class="legend">Latest Reply</span>
+            <div id="last-agent-reply" class="callout status-detail">none</div>
           </div>
 
           <ol id="transcript-list" class="turn-list">
@@ -332,6 +398,32 @@
           </ol>
         </article>
       </section>
+
+      <dialog id="connect-prompt-dialog" class="prompt-dialog">
+        <article class="prompt-dialog-card stack-lg">
+          <div class="section-head">
+            <div class="stack-sm">
+              <span class="eyebrow">Agent Prompt</span>
+              <h2>Paste Into Agent Chat</h2>
+            </div>
+
+            <div class="actions actions--tight">
+              <button id="copy-connect-prompt" class="primary" type="button">Copy Prompt</button>
+              <button id="close-connect-prompt" type="button">Close</button>
+            </div>
+          </div>
+
+          <p class="status-detail">
+            Copy this block and paste it into the agent chat. The session id updates here as soon
+            as the bridge session is ready.
+          </p>
+
+          <div class="field">
+            <label for="connect-prompt-body">Prompt</label>
+            <textarea id="connect-prompt-body" rows="14" readonly>Preparing call instructions…</textarea>
+          </div>
+        </article>
+      </dialog>
 
       <section
         id="screen-diagnostics"
@@ -341,6 +433,24 @@
         aria-labelledby="screen-tab-diagnostics"
         hidden
       >
+        <article class="panel stack-lg">
+          <div class="section-head">
+            <h2>MCP Inspector</h2>
+            <button id="refresh-inspector" type="button">Refresh</button>
+          </div>
+          <div id="inspector-summary" class="callout status-detail">Waiting for bridge data…</div>
+          <div class="field-grid inspector-grid">
+            <div class="field">
+              <label for="inspector-events">Recent Events</label>
+              <pre id="inspector-events" class="debug-output">[]</pre>
+            </div>
+            <div class="field">
+              <label for="inspector-actions">Pending Actions</label>
+              <pre id="inspector-actions" class="debug-output">[]</pre>
+            </div>
+          </div>
+        </article>
+
         <article class="panel stack-lg">
           <div class="section-head">
             <h2>Debug Snapshot</h2>

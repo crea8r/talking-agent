@@ -171,6 +171,34 @@ dt {
   backdrop-filter: blur(18px);
 }
 
+.prompt-dialog {
+  width: min(760px, calc(100% - 1.5rem));
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.prompt-dialog::backdrop {
+  background: rgba(2, 6, 12, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.prompt-dialog-card {
+  border: 1px solid var(--border-strong);
+  border-radius: 28px;
+  background: linear-gradient(180deg, rgba(13, 21, 31, 0.99), rgba(8, 13, 20, 0.98));
+  box-shadow: 0 36px 90px rgba(0, 0, 0, 0.45);
+  padding: 1.35rem;
+}
+
+#connect-prompt-body {
+  min-height: 320px;
+  font-family: "SFMono-Regular", "SF Mono", Consolas, monospace;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
 .topbar {
   gap: 1rem;
 }
@@ -232,7 +260,7 @@ dt {
 }
 
 .status-strip {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .status-card,
@@ -289,13 +317,13 @@ dt {
   font-size: 1rem;
 }
 
-.screen-grid--setup {
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+.screen-grid--call {
+  grid-template-columns: 1fr;
   align-items: start;
 }
 
-.screen-grid--session {
-  grid-template-columns: minmax(0, 1.28fr) minmax(320px, 0.82fr);
+.screen-grid--agent-setup {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   align-items: start;
 }
 
@@ -304,13 +332,72 @@ dt {
   align-items: start;
 }
 
-.session-side {
+.call-surface {
+  gap: 1.25rem;
+}
+
+.call-lobby,
+.call-grid,
+.call-dock-grid {
   display: grid;
   gap: 1rem;
 }
 
-.session-turns {
-  grid-column: 1 / -1;
+.call-lobby {
+  grid-template-columns: minmax(0, 720px);
+}
+
+.call-lobby-form,
+.call-tile,
+.call-dock {
+  display: grid;
+  gap: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: rgba(16, 24, 35, 0.76);
+  padding: 1rem;
+}
+
+.call-live {
+  gap: 1rem;
+}
+
+.call-grid {
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+  align-items: stretch;
+}
+
+.call-tile {
+  align-content: start;
+}
+
+.call-dock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.call-dock-grid {
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  align-items: start;
+}
+
+.backstage-status-card {
+  max-width: 360px;
+}
+
+#disconnect-call-live[disabled] {
+  display: none;
+}
+
+.shell[data-room-state='live'] .status-strip {
+  display: none;
+}
+
+.shell[data-room-state='live'] .topbar {
+  gap: 0.5rem;
 }
 
 .field,
@@ -394,6 +481,10 @@ dt {
     linear-gradient(180deg, rgba(10, 15, 24, 0.98), rgba(7, 11, 18, 0.98));
   min-height: 270px;
   overflow: hidden;
+}
+
+.participant-stage-frame--call {
+  min-height: 540px;
 }
 
 .participant-card {
@@ -555,9 +646,17 @@ dt {
   font-size: 0.92rem;
 }
 
+.inspector-grid .debug-output {
+  min-height: 260px;
+  max-height: 360px;
+}
+
 @media (max-width: 1180px) {
-  .screen-grid--setup,
-  .screen-grid--session,
+  .call-lobby,
+  .call-grid,
+  .call-dock-grid,
+  .screen-grid--call,
+  .screen-grid--agent-setup,
   .screen-grid--diagnostics {
     grid-template-columns: 1fr;
   }

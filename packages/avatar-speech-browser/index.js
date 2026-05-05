@@ -19,6 +19,7 @@ export function createAvatarSpeechController({
     currentMouth: 'rest',
     durationMs: 0,
     startedAt: 0,
+    playbackStarted: false,
     frames: [],
     rafId: 0,
     sessionId: 0,
@@ -39,6 +40,7 @@ export function createAvatarSpeechController({
       currentText: state.currentText,
       currentMouth: state.currentMouth,
       durationMs: state.durationMs,
+      playbackStarted: state.playbackStarted,
     };
   }
 
@@ -62,10 +64,29 @@ export function createAvatarSpeechController({
     state.currentText = '';
     state.durationMs = 0;
     state.startedAt = 0;
+    state.playbackStarted = false;
     state.frames = [];
     state.rafId = 0;
     resetFace();
     emitState();
+  }
+
+  function getHeldMouthCue() {
+    const lastAnimatedFrame = [...state.frames].reverse().find((frame) => frame.mouth !== 'rest');
+    return lastAnimatedFrame?.mouth || 'rest';
+  }
+
+  function startPlayback(sessionId) {
+    if (!state.active || state.sessionId !== sessionId || state.playbackStarted) {
+      return;
+    }
+
+    state.startedAt = performance.now();
+    state.playbackStarted = true;
+    avatarLayer.setSpeaking(true);
+    avatarLayer.setMouthCue('rest');
+    emitState();
+    tickPlayback(sessionId);
   }
 
   function tickPlayback(sessionId) {
@@ -73,9 +94,14 @@ export function createAvatarSpeechController({
       return;
     }
 
+    if (!state.playbackStarted) {
+      return;
+    }
+
     const elapsed = performance.now() - state.startedAt;
     const frame = state.frames.find((item) => elapsed >= item.startMs && elapsed < item.endMs) || null;
-    const nextMouth = frame?.mouth || 'rest';
+    const nextMouth =
+      frame?.mouth || (state.mode === 'voice' && elapsed >= state.durationMs ? getHeldMouthCue() : 'rest');
 
     if (nextMouth !== state.currentMouth) {
       state.currentMouth = nextMouth;
@@ -84,16 +110,10 @@ export function createAvatarSpeechController({
     }
 
     if (elapsed >= state.durationMs) {
-      state.currentMouth = 'rest';
-      avatarLayer.setMouthCue('rest');
-
       if (state.mode === 'silent') {
         stop({ cancelVoice: false });
         return;
       }
-
-      emitState();
-      return;
     }
 
     state.rafId = requestAnimationFrame(() => tickPlayback(sessionId));
@@ -108,6 +128,10 @@ export function createAvatarSpeechController({
       preferredVoiceName = '',
       speechRate = 1,
       speechPitch = 1,
+      characterId = '',
+      mood = '',
+      onPlaybackStart = null,
+      onPlaybackEnd = null,
     } = {},
   ) {
     const cleanedText = `${text || ''}`.trim();
@@ -117,43 +141,84 @@ export function createAvatarSpeechController({
 
     stop({ cancelVoice: true });
 
-    const timeline = buildMouthTimeline(cleanedText, speechRate);
+    const resolvedRenderProfile =
+      typeof voiceLayer.resolveRenderProfile === 'function'
+        ? voiceLayer.resolveRenderProfile({
+            preferredVoiceName,
+            speechRate,
+            speechPitch,
+            characterId,
+            mood,
+          })
+        : {
+            voiceName: preferredVoiceName,
+            speechRate,
+            speechPitch,
+            characterId,
+            mood,
+          };
+    const timeline = buildMouthTimeline(cleanedText, resolvedRenderProfile.speechRate);
     const sessionId = state.sessionId + 1;
     state.sessionId = sessionId;
     state.active = true;
     state.mode = withVoice ? 'voice' : 'silent';
     state.currentText = cleanedText;
     state.durationMs = timeline.durationMs;
-    state.startedAt = performance.now();
+    state.startedAt = 0;
+    state.playbackStarted = false;
     state.frames = timeline.frames;
     state.currentMouth = 'rest';
 
-    avatarLayer.setSpeaking(true);
-    avatarLayer.setMouthCue('rest');
     voiceLayer.updateConfig({
       locale,
       autoRestart: false,
       speakReplies: withVoice,
-      preferredVoiceName,
-      speechRate,
-      speechPitch,
+      preferredVoiceName: resolvedRenderProfile.voiceName,
+      speechRate: resolvedRenderProfile.speechRate,
+      speechPitch: resolvedRenderProfile.speechPitch,
       getReply: async (transcript) => transcript,
     });
 
-    emitLog('info', withVoice ? 'Avatar voice playback started.' : 'Avatar silent playback started.', {
+    emitLog('info', withVoice ? 'Avatar voice playback queued.' : 'Avatar silent playback started.', {
       source,
       withVoice,
       durationMs: timeline.durationMs,
     });
     emitState();
-    tickPlayback(sessionId);
 
     if (!withVoice) {
+      startPlayback(sessionId);
+      onPlaybackStart?.();
       return getSnapshot();
     }
 
     try {
-      await voiceLayer.runTextTurn(cleanedText, source);
+      await voiceLayer.runTextTurn(cleanedText, source, {
+        onSpeechStart: () => {
+          if (!state.active || state.sessionId !== sessionId) {
+            return;
+          }
+
+          startPlayback(sessionId);
+          emitLog('info', 'Avatar voice playback started.', {
+            source,
+            withVoice,
+            durationMs: timeline.durationMs,
+          });
+          onPlaybackStart?.();
+        },
+        onSpeechEnd: () => {
+          if (state.active && state.sessionId === sessionId) {
+            onPlaybackEnd?.();
+          }
+        },
+      }, {
+        preferredVoiceName: resolvedRenderProfile.voiceName,
+        speechRate: resolvedRenderProfile.speechRate,
+        speechPitch: resolvedRenderProfile.speechPitch,
+        characterId: resolvedRenderProfile.characterId,
+        mood: resolvedRenderProfile.mood,
+      });
     } finally {
       if (state.sessionId === sessionId) {
         stop({ cancelVoice: false });

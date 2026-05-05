@@ -1,3 +1,5 @@
+import { buildDefaultCallForm, shouldReplaceLegacyCallValue } from './call-session.js';
+
 export function createAppStore({
   storageKey,
   bundledModels,
@@ -9,6 +11,7 @@ export function createAppStore({
   clampNumber,
 }) {
   const storedState = readStoredState(storageKey);
+  const bootstrapDefaults = buildDefaultCallForm();
   const bundledModelMap = new Map(bundledModels.map((model) => [model.id, model]));
   const stageMap = new Map(stages.map((stage) => [stage.id, stage]));
   const emoteMap = new Map(emotes.map((emote) => [emote.id, emote]));
@@ -24,9 +27,14 @@ export function createAppStore({
     room: null,
     session: null,
     sessionPollId: 0,
+    sessionKey: '',
+    sessionPreparing: false,
     logs: [],
     localVideoElement: null,
     transcriptPreview: 'none',
+    activeUtteranceId: null,
+    activeUtteranceText: '',
+    inspectorSnapshot: null,
     processingReplies: false,
     modelLoading: false,
     avatarSpeechSnapshot: null,
@@ -35,12 +43,25 @@ export function createAppStore({
     voiceOptions: [],
     preferences: {
       bundledModelId: defaultBundledModel.id,
-      livekitUrl: storedState.livekitUrl || '',
-      roomName: storedState.roomName || '',
-      identity: storedState.identity || '',
-      participantName: storedState.participantName || '',
-      enableCamera: Boolean(storedState.enableCamera),
-      enableMicrophone: Boolean(storedState.enableMicrophone),
+      livekitUrl: `${storedState.livekitUrl || ''}`.trim() || bootstrapDefaults.livekitUrl,
+      roomName:
+        `${storedState.roomName || ''}`.trim() &&
+        !shouldReplaceLegacyCallValue('roomName', storedState.roomName)
+          ? `${storedState.roomName}`.trim()
+          : bootstrapDefaults.roomName,
+      identity:
+        `${storedState.identity || ''}`.trim() &&
+        !shouldReplaceLegacyCallValue('identity', storedState.identity)
+          ? `${storedState.identity}`.trim()
+          : bootstrapDefaults.identity,
+      participantName:
+        `${storedState.participantName || ''}`.trim() || bootstrapDefaults.participantName,
+      enableCamera: Object.hasOwn(storedState, 'enableCamera')
+        ? Boolean(storedState.enableCamera)
+        : bootstrapDefaults.enableCamera,
+      enableMicrophone: Object.hasOwn(storedState, 'enableMicrophone')
+        ? Boolean(storedState.enableMicrophone)
+        : bootstrapDefaults.enableMicrophone,
       humanLocale: storedState.humanLocale || 'en-US',
       voiceName: storedState.voiceName || '',
       speechRate: clampNumber(storedState.speechRate, 0.75, 1.35, 1),
@@ -93,20 +114,40 @@ export function createAppStore({
   }
 
   function ensureDefaults(dom) {
+    const defaults = buildDefaultCallForm({
+      runtimeConfig: state.runtimeConfig,
+    });
+    const genericDefaults = buildDefaultCallForm();
+
     if (!dom.livekitUrl.value.trim()) {
-      dom.livekitUrl.value = state.runtimeConfig?.livekitUrl || 'ws://127.0.0.1:7880';
+      dom.livekitUrl.value = defaults.livekitUrl;
     }
 
-    if (!dom.roomName.value.trim()) {
-      dom.roomName.value = 'app4-one-to-one-room';
+    if (
+      !dom.roomName.value.trim() ||
+      shouldReplaceLegacyCallValue('roomName', dom.roomName.value) ||
+      dom.roomName.value.trim() === genericDefaults.roomName
+    ) {
+      dom.roomName.value = defaults.roomName;
     }
 
-    if (!dom.identity.value.trim()) {
-      dom.identity.value = `human-${Math.random().toString(36).slice(2, 8)}`;
+    if (
+      !dom.identity.value.trim() ||
+      shouldReplaceLegacyCallValue('identity', dom.identity.value)
+    ) {
+      dom.identity.value = defaults.identity;
     }
 
     if (!dom.participantName.value.trim()) {
-      dom.participantName.value = 'Human Caller';
+      dom.participantName.value = defaults.participantName;
+    }
+
+    if (!Object.hasOwn(storedState, 'enableCamera')) {
+      dom.enableCamera.checked = defaults.enableCamera;
+    }
+
+    if (!Object.hasOwn(storedState, 'enableMicrophone')) {
+      dom.enableMicrophone.checked = defaults.enableMicrophone;
     }
 
     dom.mcpCommand.value = state.runtimeConfig?.bridge?.mcpServerCommand || '';
@@ -121,6 +162,7 @@ export function createAppStore({
       participantName: dom.participantName.value.trim(),
       enableCamera: dom.enableCamera.checked,
       enableMicrophone: dom.enableMicrophone.checked,
+      bundledModelId: state.preferences.bundledModelId,
     };
   }
 

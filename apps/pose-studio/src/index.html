@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>pose-studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/",
+          "@pixiv/three-vrm": "/vendor/@pixiv/three-vrm/three-vrm.module.js",
+          "@pixiv/three-vrm-animation": "/vendor/@pixiv/three-vrm-animation/three-vrm-animation.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body data-capture-mode="false" data-director-mode="false" data-panel-mode="manual">
+    <main class="studio">
+      <section
+        id="capture-shell"
+        class="capture-shell"
+        data-avatar-state="loading"
+        data-has-live-model="false"
+      >
+        <div class="capture-stage">
+          <div id="capture-frame" class="capture-frame">
+            <img
+              id="avatar-loader-poster"
+              class="avatar-loader-poster"
+              src="/assets/default-loader-sx.jpg"
+              data-full-src="/assets/default-loader.jpg"
+              alt=""
+            />
+            <canvas
+              id="pose-avatar"
+              class="avatar-canvas"
+              aria-label="Pose Studio avatar scene"
+            ></canvas>
+            <div class="capture-orbit capture-orbit--outer" aria-hidden="true"></div>
+            <div class="capture-orbit capture-orbit--inner" aria-hidden="true"></div>
+            <div class="capture-floor" aria-hidden="true"></div>
+            <div id="capture-flash" class="capture-flash" aria-hidden="true"></div>
+            <div class="avatar-loading" aria-live="polite">
+              <span class="avatar-loading-ring" aria-hidden="true"></span>
+              <span id="avatar-loading-label">Loading default pose…</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="director-overlay" class="director-overlay" aria-hidden="true">
+          <div
+            id="director-countdown"
+            class="director-countdown"
+            aria-live="assertive"
+            aria-atomic="true"
+          ></div>
+        </div>
+
+        <aside id="control-panel" class="control-panel">
+          <div id="control-card" class="control-card">
+            <div class="panel-mode-row">
+              <div class="panel-mode-group" role="tablist" aria-label="Panel mode">
+                <button
+                  id="panel-mode-manual"
+                  class="panel-mode-chip"
+                  type="button"
+                  aria-pressed="true"
+                  title="Photo mode"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 8h3l1.4-2h7.2L17 8h3v10H4z" />
+                    <circle cx="12" cy="13" r="3.2" />
+                  </svg>
+                  <span>Photo</span>
+                </button>
+                <button
+                  id="panel-mode-direct"
+                  class="panel-mode-chip"
+                  type="button"
+                  aria-pressed="false"
+                  title="Action mode"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4.5 6.5h11" />
+                    <path d="M4.5 11.5h8.5" />
+                    <path d="M4.5 16.5h7" />
+                    <path d="M17.8 6.8l.8 1.8 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2-1.5-1.4 2-.3z" />
+                  </svg>
+                  <span>Action</span>
+                </button>
+              </div>
+
+              <button
+                id="panel-minimize"
+                class="transport-button transport-button--ghost"
+                type="button"
+                aria-label="Minimize panel"
+                aria-pressed="false"
+                title="Minimize panel"
+              >
+                <svg class="minimize-icon minimize-icon--collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M6 12h12" />
+                </svg>
+                <svg class="minimize-icon minimize-icon--expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 6v12" />
+                  <path d="M6 12h12" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="control-body">
+              <div class="field-row field-row--wide">
+                <label class="field">
+                  <span class="field-label">Model</span>
+                  <select id="model-select" autocomplete="off"></select>
+                </label>
+
+                <label id="manual-action-field" class="field">
+                  <span class="field-label">Action</span>
+                  <select id="action-select" autocomplete="off"></select>
+                </label>
+              </div>
+
+              <div class="field-row field-row--single">
+                <label class="field">
+                  <span class="field-label">Screen size</span>
+                  <select id="screen-preset" autocomplete="off"></select>
+                </label>
+              </div>
+
+              <div id="director-prompt-field" class="field-row field-row--single" hidden>
+                <label class="field field--prompt">
+                  <span class="field-label">Direct with Codex</span>
+                  <div class="prompt-composer">
+                    <textarea
+                      id="director-prompt"
+                      class="director-prompt-input"
+                      rows="4"
+                      placeholder="Describe the animation you want the character to perform."
+                    ></textarea>
+                    <button
+                      id="director-prompt-send"
+                      class="prompt-composer-send"
+                      type="button"
+                      aria-label="Send prompt to Codex"
+                      title="Send prompt to Codex"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M4.5 12 19 4.5l-3.4 15-4.1-5-7 .5Z" />
+                        <path d="M10.8 13.2 19 4.5" />
+                      </svg>
+                    </button>
+                  </div>
+                  <p id="director-response" class="director-response" hidden></p>
+                </label>
+              </div>
+            </div>
+
+            <div class="action-row">
+              <div id="manual-transport-group" class="action-group" role="group" aria-label="Manual transport controls">
+                <div class="transport-shell">
+                  <button
+                    id="manual-transport-play"
+                    class="transport-button"
+                    type="button"
+                    aria-label="Play animation"
+                    title="Play"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M8 6.5v11l9-5.5z" />
+                    </svg>
+                  </button>
+                  <button
+                    id="manual-transport-pause"
+                    class="transport-button"
+                    type="button"
+                    aria-label="Pause animation"
+                    title="Pause"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M7 6h4v12H7zM13 6h4v12h-4z" />
+                    </svg>
+                  </button>
+                  <button
+                    id="manual-transport-restart"
+                    class="transport-button"
+                    type="button"
+                    aria-label="Restart animation"
+                    title="Restart"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 12a8 8 0 1 0 2.35-5.65" />
+                      <path d="M4 4v5h5" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div id="manual-utility-group" class="action-group" role="group" aria-label="Manual utility controls">
+                <div class="transport-shell">
+                  <button
+                    id="prepare-capture"
+                    class="transport-button transport-button--primary"
+                    type="button"
+                    aria-label="Screenshot"
+                    title="Screenshot"
+                    disabled
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 8h3l1.4-2h7.2L17 8h3v10H4z" />
+                      <circle cx="12" cy="13" r="3.2" />
+                    </svg>
+                  </button>
+
+                  <button
+                    id="transport-act"
+                    class="transport-button transport-button--act"
+                    type="button"
+                    aria-label="Act"
+                    aria-pressed="false"
+                    title="Act"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M8 5.5h8" />
+                      <path d="M6 9.5h12" />
+                      <path d="M5 13.5h14" />
+                      <path d="M8.5 17.5h7" />
+                      <path d="M18 4.5l1 2.1 2.3.3-1.7 1.6.4 2.3-2-1.1-2 1.1.4-2.3-1.7-1.6 2.3-.3z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div id="director-playback-group" class="action-group" role="group" aria-label="Director playback controls">
+                <div class="transport-shell">
+                  <button
+                    id="director-transport-play"
+                    class="transport-button"
+                    type="button"
+                    aria-label="Play sequence"
+                    title="Play"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M8 6.5v11l9-5.5z" />
+                    </svg>
+                  </button>
+                  <button
+                    id="director-transport-pause"
+                    class="transport-button"
+                    type="button"
+                    aria-label="Pause sequence"
+                    title="Pause"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M7 6h4v12H7zM13 6h4v12h-4z" />
+                    </svg>
+                  </button>
+                  <button
+                    id="director-transport-replay"
+                    class="transport-button"
+                    type="button"
+                    aria-label="Replay sequence"
+                    title="Replay"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 12a8 8 0 1 0 2.35-5.65" />
+                      <path d="M4 4v5h5" />
+                    </svg>
+                  </button>
+                  <button
+                    id="director-transport-stop"
+                    class="transport-button transport-button--stop"
+                    type="button"
+                    aria-label="Stop sequence"
+                    title="Stop"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M7 7h10v10H7z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="control-footer">
+              <p id="status-line" class="status-line">Loading default pose…</p>
+              <p class="panel-note">Pause on the frame you want, then click Screenshot. Press Escape to edit again.</p>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

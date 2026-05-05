@@ -1,3 +1,7 @@
+import {
+  resolveVoiceRenderProfile,
+} from './render-profiles.js';
+
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const SpeechSynthesisSupported =
   typeof window.speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined';
@@ -27,6 +31,11 @@ export function createVoiceLayer(initialConfig = {}) {
       preferredVoiceName: initialConfig.preferredVoiceName || '',
       speechRate: Number.isFinite(initialConfig.speechRate) ? initialConfig.speechRate : 1,
       speechPitch: Number.isFinite(initialConfig.speechPitch) ? initialConfig.speechPitch : 1,
+      defaultCharacterId: initialConfig.defaultCharacterId || 'default',
+      voiceCharacters:
+        initialConfig.voiceCharacters && typeof initialConfig.voiceCharacters === 'object'
+          ? initialConfig.voiceCharacters
+          : {},
       getReply: initialConfig.getReply || (async (transcript) => transcript),
     },
     handlers: {
@@ -115,6 +124,7 @@ export function createVoiceLayer(initialConfig = {}) {
       speakReplies: state.config.speakReplies,
       speechRate: state.config.speechRate,
       speechPitch: state.config.speechPitch,
+      defaultCharacterId: state.config.defaultCharacterId,
       autoRestart: state.config.autoRestart,
       lastTranscript: state.lastTranscript,
       lastReply: state.lastReply,
@@ -210,6 +220,20 @@ export function createVoiceLayer(initialConfig = {}) {
     return findVoiceByName(state.config.preferredVoiceName);
   }
 
+  function resolveRenderProfile(renderOptions = {}) {
+    return resolveVoiceRenderProfile({
+      preferredVoiceName:
+        renderOptions.preferredVoiceName ?? state.config.preferredVoiceName,
+      speechRate: renderOptions.speechRate ?? state.config.speechRate,
+      speechPitch: renderOptions.speechPitch ?? state.config.speechPitch,
+      characterId: renderOptions.characterId || '',
+      mood: renderOptions.mood || '',
+      defaultCharacterId:
+        renderOptions.defaultCharacterId ?? state.config.defaultCharacterId,
+      voiceCharacters: renderOptions.voiceCharacters ?? state.config.voiceCharacters,
+    });
+  }
+
   async function ensureMicMeter() {
     if (state.audioContext && state.micStream) {
       return;
@@ -249,7 +273,28 @@ export function createVoiceLayer(initialConfig = {}) {
     tick();
   }
 
-  async function speak(text, turn = null) {
+  function invokeSpeechHook(handler, payload) {
+    if (typeof handler !== 'function') {
+      return;
+    }
+
+    try {
+      handler(payload);
+    } catch (error) {
+      emitLog('warn', 'Speech lifecycle hook failed.', formatError(error));
+    }
+  }
+
+  function toElapsedTimeMs(event = {}) {
+    const elapsedTime = event?.elapsedTime;
+    if (!Number.isFinite(elapsedTime) || elapsedTime < 0) {
+      return 0;
+    }
+
+    return elapsedTime >= 100 ? Math.round(elapsedTime) : Math.round(elapsedTime * 1000);
+  }
+
+  async function speak(text, turn = null, speechHooks = {}, renderOptions = {}) {
     if (!state.config.speakReplies) {
       if (turn) {
         turn.metrics.ttsStart = 'muted';
@@ -266,14 +311,16 @@ export function createVoiceLayer(initialConfig = {}) {
     window.speechSynthesis.cancel();
     setStatusFlags({ speaking: true });
 
+    const resolvedRender = resolveRenderProfile(renderOptions);
     const utterance = new SpeechSynthesisUtterance(text);
-    const voice = getSelectedVoice();
+    const requestedVoice = findVoiceByName(resolvedRender.voiceName);
+    const voice = requestedVoice || getSelectedVoice();
     if (voice) {
       utterance.voice = voice;
       utterance.lang = voice.lang;
     }
-    utterance.rate = state.config.speechRate;
-    utterance.pitch = state.config.speechPitch;
+    utterance.rate = resolvedRender.speechRate;
+    utterance.pitch = resolvedRender.speechPitch;
 
     const queuedAt = now();
 
@@ -284,20 +331,68 @@ export function createVoiceLayer(initialConfig = {}) {
         }
         emitLog('info', 'Speech synthesis started.', {
           voice: voice?.name || null,
+          characterId: resolvedRender.characterId,
+          mood: resolvedRender.mood,
+          speechRate: resolvedRender.speechRate,
+          speechPitch: resolvedRender.speechPitch,
           queueDelayMs: Math.round(now() - queuedAt),
+        });
+        invokeSpeechHook(speechHooks.onSpeechStart, {
+          text,
+          characterId: resolvedRender.characterId,
+          mood: resolvedRender.mood,
+          voice: voice
+            ? {
+                name: voice.name,
+                lang: voice.lang,
+                default: voice.default,
+              }
+            : null,
+          requestedVoiceName: resolvedRender.voiceName || null,
+          speechRate: resolvedRender.speechRate,
+          speechPitch: resolvedRender.speechPitch,
+          queueDelayMs: Math.round(now() - queuedAt),
+          elapsedTimeMs: 0,
         });
       };
 
-      utterance.onend = () => {
+      utterance.onboundary = (event) => {
+        invokeSpeechHook(speechHooks.onSpeechBoundary, {
+          text,
+          characterId: resolvedRender.characterId,
+          mood: resolvedRender.mood,
+          charIndex: Number.isFinite(event?.charIndex) ? event.charIndex : 0,
+          charLength: Number.isFinite(event?.charLength) ? event.charLength : 0,
+          elapsedTimeMs: toElapsedTimeMs(event),
+          name: `${event?.name || ''}`.trim(),
+        });
+      };
+
+      utterance.onend = (event) => {
         if (turn) {
           turn.metrics.ttsEnd = formatLatency(now() - turn.startedAt);
           turn.metrics.turnTotal = formatLatency(now() - turn.startedAt);
         }
         setStatusFlags({ speaking: false });
+        invokeSpeechHook(speechHooks.onSpeechEnd, {
+          text,
+          characterId: resolvedRender.characterId,
+          mood: resolvedRender.mood,
+          speechRate: resolvedRender.speechRate,
+          speechPitch: resolvedRender.speechPitch,
+          elapsedTimeMs: toElapsedTimeMs(event),
+        });
         resolve();
       };
 
       utterance.onerror = (event) => {
+        invokeSpeechHook(speechHooks.onSpeechError, {
+          text,
+          characterId: resolvedRender.characterId,
+          mood: resolvedRender.mood,
+          error: event.error,
+          elapsedTimeMs: toElapsedTimeMs(event),
+        });
         reject(new Error(`Speech synthesis failed: ${event.error}`));
       };
 
@@ -305,7 +400,13 @@ export function createVoiceLayer(initialConfig = {}) {
     });
   }
 
-  async function processTurn(transcript, source = 'voice', startedAt = now()) {
+  async function processTurn(
+    transcript,
+    source = 'voice',
+    startedAt = now(),
+    speechHooks = {},
+    renderOptions = {},
+  ) {
     state.lastError = null;
     const reply = await Promise.resolve(state.config.getReply(transcript, source));
     const replyReadyAt = now();
@@ -331,7 +432,7 @@ export function createVoiceLayer(initialConfig = {}) {
     emitLog('info', 'Reply prepared.', { source, transcript, reply });
 
     try {
-      await speak(reply, turn);
+      await speak(reply, turn, speechHooks, renderOptions);
     } catch (error) {
       setLastError(error);
       turn.metrics.ttsStart = 'failed';
@@ -476,8 +577,8 @@ export function createVoiceLayer(initialConfig = {}) {
     emitLog('warn', 'Speech synthesis cancelled.');
   }
 
-  async function runTextTurn(text, source = 'typed') {
-    return processTurn(text, source, now());
+  async function runTextTurn(text, source = 'typed', speechHooks = {}, renderOptions = {}) {
+    return processTurn(text, source, now(), speechHooks, renderOptions);
   }
 
   function updateConfig(patch = {}) {
@@ -548,6 +649,7 @@ export function createVoiceLayer(initialConfig = {}) {
     getSnapshot,
     processTurn,
     runTextTurn,
+    resolveRenderProfile,
     setHandlers(nextHandlers = {}) {
       state.handlers = {
         ...state.handlers,

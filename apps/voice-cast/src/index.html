@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voice Cast</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero card">
+        <div class="eyebrow">Voice Cast</div>
+        <h1>Cast a prompt voice, then test a production-shaped local reply loop.</h1>
+        <p class="lede">
+          Tab 1 creates a prompt asset from text alone. Tab 2 rehearses a realistic reply loop with a saved reference WAV, browser speech recognition, and a local production voice pipeline.
+        </p>
+      </section>
+
+      <nav class="tabs" aria-label="Voice Cast Tabs">
+        <button id="tab-casting" class="tab" type="button" data-active="true">Text-Only Casting</button>
+        <button id="tab-production" class="tab" type="button" data-active="false">Production Test</button>
+      </nav>
+
+      <section id="panel-casting" class="card panel">
+        <div class="panel-head">
+          <h2>Text-Only Casting</h2>
+          <p class="muted">Generate a prompt voice and save it as a reusable WAV plus sidecar metadata.</p>
+        </div>
+
+        <div class="field">
+          <label for="casting-model">Model</label>
+          <select id="casting-model" disabled>
+            <option>CosyVoice-300M-Instruct</option>
+          </select>
+        </div>
+
+        <div class="grid two-up">
+          <div class="field">
+            <label for="casting-preset-speaker">Preset Speaker</label>
+            <select id="casting-preset-speaker">
+              <option>Loading speakers…</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="casting-speed">Speed</label>
+            <input id="casting-speed" type="number" step="0.05" value="1.0" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="casting-instruct-text">Voice Direction</label>
+          <textarea id="casting-instruct-text" rows="4" placeholder="Young female, bright, playful, nimble. Speak with lively energy."></textarea>
+          <p class="muted inline-note">Describe tone, mood, age read, and rhythm. This is not the spoken line.</p>
+        </div>
+
+        <div class="field">
+          <div class="field-head">
+            <label for="prompt-text">Line to Speak</label>
+            <button id="refresh-casting-line" class="icon-button" type="button" aria-label="Use next neutral sample line" title="Use next neutral sample line">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M17.65 6.35A7.95 7.95 0 0 0 12 4V1L7 6l5 5V7a5 5 0 1 1-4.9 6h-2.02A7 7 0 1 0 17.65 6.35Z" fill="currentColor"></path>
+              </svg>
+            </button>
+          </div>
+          <textarea id="prompt-text" rows="4" placeholder="I found it. I knew there was still magic left in this room."></textarea>
+          <p class="muted inline-note">This is the actual audio content that will be spoken and saved. Refresh cycles through 100 built-in neutral samples.</p>
+        </div>
+
+        <div class="actions">
+          <button id="generate-casting" class="primary" type="button">Generate Prompt Voice</button>
+        </div>
+
+        <p id="casting-status" class="status">Ready</p>
+        <p id="casting-error" class="error" aria-live="polite"></p>
+
+        <section id="casting-result" class="result" hidden>
+          <div class="result-head">
+            <h3>Prompt Asset Preview</h3>
+            <span id="casting-timing" class="timing">n/a</span>
+          </div>
+          <p class="inline-note"><strong>Spoken line:</strong> <span id="casting-spoken-text">—</span></p>
+          <p class="inline-note"><strong>Voice direction:</strong> <span id="casting-voice-direction">—</span></p>
+          <audio id="casting-audio" controls></audio>
+          <div class="actions">
+            <button id="save-prompt-asset" type="button">Save as Prompt WAV</button>
+          </div>
+        </section>
+      </section>
+
+      <section id="panel-production" class="card panel" hidden>
+        <div class="panel-head">
+          <h2>Production Test</h2>
+          <p class="muted">Save one active voice profile, speak naturally, then measure the end-to-end local reply pipeline.</p>
+        </div>
+
+        <section class="subpanel">
+          <div class="subpanel-head">
+            <div>
+              <h3>Setup</h3>
+              <p id="production-setup-summary" class="muted">No active production profile saved.</p>
+            </div>
+            <button id="production-setup-toggle" type="button">Hide Setup</button>
+          </div>
+
+          <div id="production-setup-panel" class="grid">
+            <div class="field">
+              <label for="production-reference-wav-input">Reference WAV</label>
+              <input id="production-reference-wav-input" type="file" accept=".wav,audio/wav" />
+              <p id="production-reference-file-name" class="muted inline-note">No file selected</p>
+            </div>
+
+            <div class="field">
+              <label for="production-base-speaker">MeloTTS English Base Speaker</label>
+              <select id="production-base-speaker">
+                <option>Loading speakers…</option>
+              </select>
+            </div>
+
+            <div class="actions">
+              <button id="save-production-profile" type="button">Save Setup</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="subpanel">
+          <div class="panel-head">
+            <h3>Live Turn</h3>
+            <p class="muted">Start listening manually. The browser stops on silence, then the app generates one random neutral reply.</p>
+          </div>
+
+          <div class="actions">
+            <button id="start-listening" class="primary" type="button">Start Listening</button>
+            <button id="replay-latest-reply" type="button" hidden>Replay Latest Reply</button>
+          </div>
+
+          <p id="production-status" class="status">Ready</p>
+          <p id="production-error" class="error" aria-live="polite"></p>
+
+          <div class="grid two-up">
+            <div class="field">
+              <label>Transcript</label>
+              <p id="production-transcript" class="console-value">—</p>
+            </div>
+
+            <div class="field">
+              <label>Reply</label>
+              <p id="production-reply-text" class="console-value">—</p>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Speech generation time</label>
+            <p id="production-timing" class="console-value">n/a</p>
+          </div>
+
+          <audio id="production-latest-audio" controls hidden></audio>
+        </section>
+
+        <section class="subpanel">
+          <div class="panel-head">
+            <h3>Recent Turns</h3>
+            <p class="muted">Only the latest 20 persisted turns are kept on disk.</p>
+          </div>
+
+          <ul id="production-history-list" class="history-list">
+            <li class="history-empty">No replies yet.</li>
+          </ul>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

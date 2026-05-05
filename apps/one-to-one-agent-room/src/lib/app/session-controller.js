@@ -1,3 +1,11 @@
+import {
+  getCallPrimaryAction,
+  buildCallSessionKey,
+  buildCallSessionPayload,
+  getAgentHeartbeatState,
+  normalizeSessionForUi,
+} from './call-session.js';
+
 export function createSessionController({
   state,
   roomLayer,
@@ -29,6 +37,83 @@ export function createSessionController({
   refreshActionButtons,
   updateRoomStatus,
 }) {
+  let prepareDebounceId = 0;
+  let prepareRequestId = 0;
+  let heartbeatUiTickId = 0;
+
+  function createUtteranceId() {
+    return globalThis.crypto?.randomUUID?.()
+      ? globalThis.crypto.randomUUID()
+      : `utt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function applyBridgePayload(payload) {
+    if (payload?.session) {
+      state.session = normalizeSessionForUi(payload.session);
+    }
+
+    if (payload?.inspector) {
+      state.inspectorSnapshot = payload.inspector;
+    }
+  }
+
+  function buildPendingActionsFromLegacyReplies(session) {
+    if (!session?.turns?.length) {
+      return [];
+    }
+
+    return session.turns
+      .filter((turn) => turn.agentReply && !turn.agentReply.playedAt)
+      .sort(
+        (left, right) =>
+          Date.parse(left.agentReply.createdAt) - Date.parse(right.agentReply.createdAt),
+      )
+      .map((turn) => ({
+        actionId: turn.agentReply.id,
+        type: 'speech',
+        text: turn.agentReply.text,
+        gestureId: turn.agentReply.gestureId,
+        emoteId: turn.agentReply.emoteId,
+        stageId: turn.agentReply.stageId,
+        mood: turn.agentReply.mood,
+        legacyReplyId: turn.agentReply.id,
+      }));
+  }
+
+  function resolveActiveCharacterId() {
+    return (
+      `${state.session?.avatar?.activeModelId || ''}`.trim() ||
+      `${collectFormState().bundledModelId || ''}`.trim() ||
+      `${state.preferences?.bundledModelId || ''}`.trim()
+    );
+  }
+
+  async function syncAvatarCatalogForSession() {
+    if (!state.session?.id) {
+      return;
+    }
+
+    const modelId =
+      `${collectFormState().bundledModelId || state.preferences?.bundledModelId || ''}`.trim();
+    const catalog = state.runtimeConfig?.bridge?.avatarCatalogByModel?.[modelId];
+    if (!modelId || !catalog) {
+      return;
+    }
+
+    const payload = await postJson(
+      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/avatar-catalog`,
+      {
+        activeModelId: modelId,
+        avatarCatalogUri: catalog.uri,
+        avatarCatalogVersion: catalog.version,
+      },
+    );
+
+    applyBridgePayload(payload);
+    renderBridgeSnapshot();
+    renderDebugSnapshot();
+  }
+
   function installSdkLogging() {
     roomLayer.installSdkLogging(({ message, context }) => {
       addLog('info', `LiveKit SDK · ${message}`, context);
@@ -60,31 +145,109 @@ export function createSessionController({
     return tokenResponse.token;
   }
 
-  async function createBridgeSession() {
-    const form = collectFormState();
-    const sessionResponse = await postJson('/api/bridge/sessions', {
-      roomName: form.roomName,
-      livekitUrl: form.livekitUrl,
-      humanIdentity: state.room?.localParticipant?.identity || form.identity,
-      humanName: state.room?.localParticipant?.name || form.participantName,
-      metadata: {
-        app: 'one-to-one-agent-room',
-        planEntry: 'docs/6-app-plan.md#4-one-to-one-agent-room',
-        reusablePackages: [
-          '@talking-agent/room-layer',
-          '@talking-agent/avatar-layer-browser',
-          '@talking-agent/voice-layer-browser',
-          '@talking-agent/avatar-speech-browser',
-          '@talking-agent/agent-room-bridge',
-        ],
-      },
-    });
+  async function prepareLobbySession({ force = false } = {}) {
+    if (state.room || !state.runtimeConfig) {
+      return state.session;
+    }
 
-    state.session = sessionResponse.session;
+    const form = collectFormState();
+    if (!form.livekitUrl || !form.roomName || !form.identity) {
+      state.session = null;
+      state.sessionKey = '';
+      state.sessionPreparing = false;
+      stopSessionPolling();
+      renderRoomSnapshot();
+      renderBridgeSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      return null;
+    }
+
+    const sessionKey = buildCallSessionKey(form, state.runtimeConfig);
+    if (!force && state.session?.id && state.sessionKey === sessionKey) {
+      if (!state.sessionPollId) {
+        startSessionPolling();
+      }
+      return state.session;
+    }
+
+    const requestId = ++prepareRequestId;
+    state.sessionPreparing = true;
+    renderRoomSnapshot();
     renderBridgeSnapshot();
-    renderTranscriptList();
     renderDebugSnapshot();
-    startSessionPolling();
+
+    try {
+      const sessionResponse = await postJson(
+        '/api/bridge/sessions',
+        buildCallSessionPayload(form, state.runtimeConfig),
+      );
+
+      if (requestId !== prepareRequestId) {
+        return state.session;
+      }
+
+      applyBridgePayload(sessionResponse);
+      state.sessionKey = sessionKey;
+      await syncAvatarCatalogForSession();
+      renderBridgeSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      startSessionPolling();
+      addLog('info', 'Prepared call session.', {
+        sessionId: state.session.id,
+        title: state.session.title,
+      });
+      return state.session;
+    } finally {
+      if (requestId === prepareRequestId) {
+        state.sessionPreparing = false;
+        renderRoomSnapshot();
+        renderBridgeSnapshot();
+        renderAgentStatus();
+        renderDebugSnapshot();
+      }
+    }
+  }
+
+  function scheduleLobbySessionPreparation({ force = false, immediate = false } = {}) {
+    if (prepareDebounceId) {
+      clearTimeout(prepareDebounceId);
+      prepareDebounceId = 0;
+    }
+
+    const run = async () => {
+      try {
+        await prepareLobbySession({ force });
+      } catch (error) {
+        addLog('error', 'Prepare call session failed.', formatError(error));
+      }
+    };
+
+    if (immediate) {
+      void run();
+      return;
+    }
+
+    prepareDebounceId = window.setTimeout(() => {
+      prepareDebounceId = 0;
+      void run();
+    }, 450);
+  }
+
+  function openConnectPrompt() {
+    if (!dom.connectPromptDialog) {
+      return;
+    }
+
+    if (!dom.connectPromptDialog.open) {
+      dom.connectPromptDialog.showModal?.();
+    }
+
+    window.requestAnimationFrame(() => {
+      dom.connectPromptBody?.focus?.();
+      dom.connectPromptBody?.select?.();
+    });
   }
 
   async function probeLivekitBeforeConnect(livekitUrl) {
@@ -114,7 +277,9 @@ export function createSessionController({
   }
 
   async function joinCall() {
+    await prepareLobbySession();
     const form = collectFormState();
+    const heartbeat = getAgentHeartbeatState(state.session);
     if (!form.livekitUrl) {
       throw new Error('LiveKit URL is required.');
     }
@@ -125,6 +290,14 @@ export function createSessionController({
 
     if (!form.identity) {
       throw new Error('Human identity is required.');
+    }
+
+    if (!state.session?.id) {
+      throw new Error('The bridge session is still preparing. Wait a moment and try again.');
+    }
+
+    if (!heartbeat.ready) {
+      throw new Error('Start Room is locked until the system sees a fresh agent heartbeat.');
     }
 
     if (state.room) {
@@ -159,12 +332,15 @@ export function createSessionController({
 
       renderLocalStage();
       renderRoomSnapshot();
-      await createBridgeSession();
+      await postJson(`/api/bridge/sessions/${encodeURIComponent(state.session.id)}/state`, {
+        state: 'live',
+      }).catch(() => {});
       updateRoomStatus('ready', 'Connected', 'Room and bridge are ready.');
-      screenNavigator.show('session');
+      screenNavigator.show('setup');
       addLog('info', 'Call created.', {
         room: room.name,
         identity: room.localParticipant.identity,
+        sessionId: state.session.id,
       });
     } catch (error) {
       addLog('error', 'Call creation failed.', formatError(error));
@@ -178,13 +354,59 @@ export function createSessionController({
     }
   }
 
+  async function handlePrimaryCallAction() {
+    const form = collectFormState();
+    const action = getCallPrimaryAction({
+      session: state.session,
+      room: state.room,
+      sessionPreparing: state.sessionPreparing,
+      modelLoading: state.modelLoading,
+      formReady: Boolean(form.livekitUrl && form.roomName && form.identity),
+    });
+
+    if (action.mode === 'start-room') {
+      await joinCall();
+      return;
+    }
+
+    openConnectPrompt();
+
+    if (!state.runtimeConfig) {
+      updateRoomStatus(
+        'loading',
+        'Loading project',
+        'Runtime config is still loading. Try Connect Agent again in a moment.',
+      );
+      addLog('warn', 'Connect Agent clicked before runtime config finished loading.');
+      return;
+    }
+
+    updateRoomStatus(
+      'loading',
+      'Agent setup',
+      'Opening the bridge steps and preparing a call session for the agent.',
+    );
+
+    try {
+      await prepareLobbySession({ force: true });
+      addLog('info', 'Opened agent connection steps.', {
+        sessionId: state.session?.id || null,
+      });
+    } catch (error) {
+      updateRoomStatus(
+        'error',
+        'Agent setup failed',
+        error instanceof Error ? error.message : 'Unable to prepare the call session.',
+      );
+      throw error;
+    }
+  }
+
   async function disconnectCall({ preserveRoomStatus = false } = {}) {
     stopSessionPolling();
     humanVoiceLayer.stopListening();
     avatarSpeech.stop({ cancelVoice: true });
-    state.session = null;
-    renderBridgeSnapshot();
-    renderTranscriptList();
+    const disconnectSessionId = state.session?.id || null;
 
     if (state.room) {
       try {
@@ -195,17 +417,39 @@ export function createSessionController({
     }
 
     state.room = null;
-    renderLocalStage();
     if (!preserveRoomStatus) {
-      renderRoomSnapshot();
+      state.session = null;
+      state.sessionKey = '';
+      renderBridgeSnapshot();
+      renderTranscriptList();
+    }
+    renderLocalStage();
+    renderRoomSnapshot();
+    if (!preserveRoomStatus) {
       screenNavigator.show('setup');
     } else {
       dom.localIdentity.textContent = collectFormState().identity || 'none';
       dom.remoteCount.textContent = '0';
-      dom.disconnectCall.disabled = true;
     }
     refreshActionButtons();
+    renderAgentStatus();
     renderDebugSnapshot();
+
+    if (preserveRoomStatus && state.session?.id) {
+      startSessionPolling();
+      return;
+    }
+
+    if (!preserveRoomStatus && disconnectSessionId) {
+      await postJson(`/api/bridge/sessions/${encodeURIComponent(disconnectSessionId)}/state`, {
+        state: 'ended',
+        reason: 'human disconnected room',
+      }).catch(() => {});
+    }
+
+    if (!preserveRoomStatus) {
+      scheduleLobbySessionPreparation({ force: true, immediate: true });
+    }
   }
 
   function installRoomListeners(room) {
@@ -255,6 +499,7 @@ export function createSessionController({
       return;
     }
 
+    startHeartbeatFreshnessTicker();
     state.sessionPollId = window.setInterval(() => {
       void pollSession();
     }, 1500);
@@ -267,6 +512,23 @@ export function createSessionController({
       clearInterval(state.sessionPollId);
       state.sessionPollId = 0;
     }
+    stopHeartbeatFreshnessTicker();
+  }
+
+  function startHeartbeatFreshnessTicker() {
+    stopHeartbeatFreshnessTicker();
+    heartbeatUiTickId = window.setInterval(() => {
+      renderRoomSnapshot();
+      renderBridgeSnapshot();
+      renderAgentStatus();
+    }, 1000);
+  }
+
+  function stopHeartbeatFreshnessTicker() {
+    if (heartbeatUiTickId) {
+      clearInterval(heartbeatUiTickId);
+      heartbeatUiTickId = 0;
+    }
   }
 
   async function pollSession() {
@@ -276,29 +538,22 @@ export function createSessionController({
 
     try {
       const payload = await fetchJson(`/api/bridge/sessions/${encodeURIComponent(state.session.id)}`);
-      state.session = payload.session;
+      applyBridgePayload(payload);
       renderBridgeSnapshot();
       renderTranscriptList();
       renderDebugSnapshot();
-      await playAgentRepliesIfReady();
+      await consumePendingActions(
+        payload.pendingActions ||
+          state.session?.pendingActions ||
+          buildPendingActionsFromLegacyReplies(state.session),
+      );
     } catch (error) {
       addLog('error', 'Bridge poll failed.', formatError(error));
     }
   }
 
-  async function playAgentRepliesIfReady() {
-    if (state.processingReplies || !state.session) {
-      return;
-    }
-
-    const unplayedReplies = state.session.turns
-      .filter((turn) => turn.agentReply && !turn.agentReply.playedAt)
-      .sort(
-        (left, right) =>
-          Date.parse(left.agentReply.createdAt) - Date.parse(right.agentReply.createdAt),
-      );
-
-    if (!unplayedReplies.length) {
+  async function consumePendingActions(pendingActions = []) {
+    if (state.processingReplies || !state.session || !pendingActions.length) {
       return;
     }
 
@@ -306,39 +561,86 @@ export function createSessionController({
     renderAgentStatus();
 
     try {
-      for (const turn of unplayedReplies) {
-        const reply = turn.agentReply;
-        if (!reply) {
+      for (const action of pendingActions) {
+        if (!action) {
           continue;
         }
 
-        if (stageMap.has(reply.stageId)) {
-          selectStage(reply.stageId, { persist: false });
+        if (action.type === 'anim') {
+          if (action.stageId && stageMap.has(action.stageId)) {
+            selectStage(action.stageId, { persist: false });
+          }
+
+          if (action.emoteId && emoteMap.has(action.emoteId)) {
+            selectEmote(action.emoteId, { persist: false });
+          }
+
+          if (action.gestureId) {
+            selectGesture(action.gestureId, { persist: false });
+          }
+
+          const payload = await postJson(
+            `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/actions/${encodeURIComponent(action.actionId)}/completed`,
+            {},
+          );
+          applyBridgePayload(payload);
+          renderBridgeSnapshot();
+          renderTranscriptList();
+          renderDebugSnapshot();
+          continue;
         }
 
-        if (emoteMap.has(reply.emoteId)) {
-          selectEmote(reply.emoteId, { persist: false });
+        if (action.type !== 'speech') {
+          continue;
         }
 
-        selectGesture(reply.gestureId, { persist: false });
+        const applySpeechScene = () => {
+          if (action.stageId && stageMap.has(action.stageId)) {
+            selectStage(action.stageId, { persist: false });
+          }
 
-        dom.lastAgentReply.textContent = reply.text;
-        const withVoice =
-          reply.voiceMode !== 'silent' && agentVoiceLayer.getSnapshot().speechSynthesisSupported;
-        await avatarSpeech.speakText(reply.text, {
+          if (action.emoteId && emoteMap.has(action.emoteId)) {
+            selectEmote(action.emoteId, { persist: false });
+          }
+
+          if (action.gestureId) {
+            selectGesture(action.gestureId, { persist: false });
+          }
+
+          dom.lastAgentReply.textContent = action.text;
+        };
+
+        if (!action.legacyReplyId) {
+          const started = await postJson(
+            `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/actions/${encodeURIComponent(action.actionId)}/started`,
+            {},
+          );
+          applyBridgePayload(started);
+          renderBridgeSnapshot();
+          renderTranscriptList();
+          renderDebugSnapshot();
+        }
+
+        const withVoice = agentVoiceLayer.getSnapshot().speechSynthesisSupported;
+        await avatarSpeech.speakText(action.text, {
           withVoice,
-          source: `bridge-reply:${turn.id}`,
+          source: `bridge-action:${action.actionId}`,
           locale: 'en-US',
           preferredVoiceName: state.preferences.voiceName,
           speechRate: state.preferences.speechRate,
           speechPitch: state.preferences.speechPitch,
+          characterId: resolveActiveCharacterId(),
+          mood: action.mood,
+          onPlaybackStart: applySpeechScene,
         });
 
         const payload = await postJson(
-          `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/replies/${encodeURIComponent(reply.id)}/played`,
+          action.legacyReplyId
+            ? `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/replies/${encodeURIComponent(action.legacyReplyId)}/played`
+            : `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/actions/${encodeURIComponent(action.actionId)}/finished`,
           {},
         );
-        state.session = payload.session;
+        applyBridgePayload(payload);
         renderBridgeSnapshot();
         renderTranscriptList();
         renderDebugSnapshot();
@@ -349,45 +651,115 @@ export function createSessionController({
     }
   }
 
-  async function enqueueHumanTurn(transcript, source) {
+  async function beginUserUtterance(utteranceId = createUtteranceId()) {
     await ensureSessionReady();
+    const payload = await postJson(
+      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/utterances/start`,
+      {
+        utteranceId,
+      },
+    );
+    state.activeUtteranceId = utteranceId;
+    state.activeUtteranceText = '';
+    applyBridgePayload(payload);
+    renderBridgeSnapshot();
+    renderTranscriptList();
+    renderDebugSnapshot();
+    return utteranceId;
+  }
+
+  async function syncInterimTranscript(text) {
+    if (!state.session?.id) {
+      return;
+    }
+
+    const nextText = `${text || ''}`.trim();
+    if (!nextText) {
+      return;
+    }
+
+    const utteranceId = state.activeUtteranceId || (await beginUserUtterance());
+    const previousText = `${state.activeUtteranceText || ''}`;
+    if (previousText && !nextText.startsWith(previousText)) {
+      state.activeUtteranceText = nextText;
+      return utteranceId;
+    }
+
+    const delta = previousText ? nextText.slice(previousText.length) : nextText;
+    if (!delta) {
+      return utteranceId;
+    }
+
+    const payload = await postJson(
+      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/utterances/partial`,
+      {
+        utteranceId,
+        delta,
+      },
+    );
+
+    state.activeUtteranceId = utteranceId;
+    state.activeUtteranceText = nextText;
+    applyBridgePayload(payload);
+    renderDebugSnapshot();
+    return utteranceId;
+  }
+
+  async function finalizeUserUtterance(transcript, source) {
+    await ensureSessionReady();
+    const cleanedTranscript = `${transcript || ''}`.trim();
+    if (!cleanedTranscript) {
+      return;
+    }
+
+    const utteranceId = state.activeUtteranceId || (await beginUserUtterance());
     const form = collectFormState();
     const payload = await postJson(
-      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/human-turn`,
+      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/utterances/final`,
       {
-        transcript,
+        utteranceId,
+        text: cleanedTranscript,
         source,
         humanIdentity: state.room?.localParticipant?.identity || form.identity,
         humanName: state.room?.localParticipant?.name || form.participantName,
       },
     );
 
-    state.session = payload.session;
+    state.activeUtteranceId = null;
+    state.activeUtteranceText = '';
+    applyBridgePayload(payload);
     renderBridgeSnapshot();
     renderTranscriptList();
     renderDebugSnapshot();
     addLog('info', 'Queued human turn for the bridge.', {
       source,
-      transcript,
+      transcript: cleanedTranscript,
     });
+    await consumePendingActions(
+      payload.pendingActions ||
+        state.session?.pendingActions ||
+        buildPendingActionsFromLegacyReplies(state.session),
+    );
+  }
+
+  async function enqueueHumanTurn(transcript, source) {
+    await finalizeUserUtterance(transcript, source);
   }
 
   async function runDemoReply() {
     await ensureSessionReady();
-    const payload = await postJson(
+    await postJson(
       `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/demo-reply`,
       {},
     );
-    if (payload.session) {
-      state.session = payload.session;
-      renderBridgeSnapshot();
-      renderTranscriptList();
-      renderDebugSnapshot();
-      await playAgentRepliesIfReady();
-    }
+    await pollSession();
   }
 
   function destroy() {
+    if (prepareDebounceId) {
+      clearTimeout(prepareDebounceId);
+      prepareDebounceId = 0;
+    }
     stopSessionPolling();
     humanVoiceLayer.stopListening();
     avatarSpeech.stop({ cancelVoice: true });
@@ -403,8 +775,17 @@ export function createSessionController({
   return {
     installSdkLogging,
     ensureSessionReady,
+    prepareLobbySession,
+    scheduleLobbySessionPreparation,
+    openConnectPrompt,
+    handlePrimaryCallAction,
     joinCall,
     disconnectCall,
+    beginUserUtterance,
+    syncInterimTranscript,
+    finalizeUserUtterance,
+    syncAvatarCatalogForSession,
+    pollSession,
     enqueueHumanTurn,
     runDemoReply,
     destroy,

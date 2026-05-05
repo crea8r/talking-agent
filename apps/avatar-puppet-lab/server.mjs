@@ -89,10 +89,7 @@ function serializeGesture(gesture) {
     file: gesture.file || `${gesture.id}.vrma`,
     description: gesture.description || gesture.note,
     bestFor: gesture.bestFor || [],
-    avoidFor: gesture.avoidFor || [],
-    cameraFit: gesture.cameraFit || 'either',
     intent: gesture.intent,
-    aliases: gesture.aliases || [],
   };
 }
 
