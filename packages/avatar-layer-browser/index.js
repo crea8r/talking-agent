@@ -458,6 +458,7 @@ export function createAvatarLayer({
   initialGestureId = GESTURES[0].id,
   initialEnergy = 1,
   pointerMode = 'look',
+  preserveDrawingBuffer = false,
   onLog = null,
   onLookTargetChange = null,
 } = {}) {
@@ -486,6 +487,7 @@ export function createAvatarLayer({
     stageShell,
     state,
     pointerMode,
+    preserveDrawingBuffer,
     onLog,
     onLookTargetChange(label) {
       state.lookTargetLabel = label;
@@ -716,7 +718,15 @@ export function createAvatarLayer({
   };
 }
 
-function createRendererRuntime({ canvas, stageShell, state, pointerMode, onLog, onLookTargetChange }) {
+function createRendererRuntime({
+  canvas,
+  stageShell,
+  state,
+  pointerMode,
+  preserveDrawingBuffer,
+  onLog,
+  onLookTargetChange,
+}) {
   const scene = new THREE.Scene();
   const clock = new THREE.Clock();
   const camera = new THREE.PerspectiveCamera(29, canvas.clientWidth / Math.max(canvas.clientHeight, 1), 0.1, 30);
@@ -725,6 +735,7 @@ function createRendererRuntime({ canvas, stageShell, state, pointerMode, onLog, 
     alpha: true,
     antialias: true,
     powerPreference: 'high-performance',
+    preserveDrawingBuffer,
   });
 
   renderer.outputColorSpace = THREE.SRGBColorSpace;

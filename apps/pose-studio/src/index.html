@@ -19,7 +19,7 @@
       }
     </script>
   </head>
-  <body data-capture-mode="false">
+  <body data-capture-mode="false" data-director-mode="false">
     <main class="studio">
       <section
         id="capture-shell"
@@ -44,11 +44,21 @@
             <div class="capture-orbit capture-orbit--outer" aria-hidden="true"></div>
             <div class="capture-orbit capture-orbit--inner" aria-hidden="true"></div>
             <div class="capture-floor" aria-hidden="true"></div>
+            <div id="capture-flash" class="capture-flash" aria-hidden="true"></div>
             <div class="avatar-loading" aria-live="polite">
               <span class="avatar-loading-ring" aria-hidden="true"></span>
               <span id="avatar-loading-label">Loading default pose…</span>
             </div>
           </div>
+        </div>
+
+        <div id="director-overlay" class="director-overlay" aria-hidden="true">
+          <div
+            id="director-countdown"
+            class="director-countdown"
+            aria-live="assertive"
+            aria-atomic="true"
+          ></div>
         </div>
 
         <aside id="control-panel" class="control-panel">
@@ -78,11 +88,16 @@
               <div class="action-row-main">
                 <button
                   id="prepare-capture"
-                  class="capture-button"
+                  class="transport-button transport-button--primary"
                   type="button"
+                  aria-label="Screenshot"
+                  title="Screenshot"
                   disabled
                 >
-                  Screenshot
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 8h3l1.4-2h7.2L17 8h3v10H4z" />
+                    <circle cx="12" cy="13" r="3.2" />
+                  </svg>
                 </button>
 
                 <div class="transport-shell" role="group" aria-label="Animation transport">
@@ -120,24 +135,53 @@
                       <path d="M4 4v5h5" />
                     </svg>
                   </button>
+                  <button
+                    id="transport-stop"
+                    class="transport-button transport-button--stop"
+                    type="button"
+                    aria-label="Stop sequence"
+                    title="Stop"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M7 7h10v10H7z" />
+                    </svg>
+                  </button>
                 </div>
-              </div>
 
-              <button
-                id="panel-minimize"
-                class="transport-button transport-button--ghost"
-                type="button"
-                aria-label="Minimize panel"
-                aria-pressed="false"
-                title="Minimize panel"
-              >
-                <svg class="minimize-icon minimize-icon--collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-                <svg class="minimize-icon minimize-icon--expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M6 15l6-6 6 6" />
-                </svg>
-              </button>
+                <button
+                  id="panel-minimize"
+                  class="transport-button transport-button--ghost"
+                  type="button"
+                  aria-label="Minimize panel"
+                  aria-pressed="false"
+                  title="Minimize panel"
+                >
+                  <svg class="minimize-icon minimize-icon--collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M6 12h12" />
+                  </svg>
+                  <svg class="minimize-icon minimize-icon--expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 6v12" />
+                    <path d="M6 12h12" />
+                  </svg>
+                </button>
+
+                <button
+                  id="transport-act"
+                  class="transport-button transport-button--act"
+                  type="button"
+                  aria-label="Act"
+                  aria-pressed="false"
+                  title="Act"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M8 5.5h8" />
+                    <path d="M6 9.5h12" />
+                    <path d="M5 13.5h14" />
+                    <path d="M8.5 17.5h7" />
+                    <path d="M18 4.5l1 2.1 2.3.3-1.7 1.6.4 2.3-2-1.1-2 1.1.4-2.3-1.7-1.6 2.3-.3z" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <div class="control-footer">

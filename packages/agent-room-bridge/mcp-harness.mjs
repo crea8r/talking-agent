@@ -42,6 +42,8 @@ export function createMcpHarness({
   stateFilePath,
   cwd = process.cwd(),
   mcpServerPath = path.join(cwd, 'packages', 'agent-room-bridge', 'mcp-server.mjs'),
+  stateEnvVarName = 'AGENT_ROOM_BRIDGE_STATE_PATH',
+  env = {},
 } = {}) {
   if (!`${stateFilePath || ''}`.trim()) {
     throw new Error('createMcpHarness requires stateFilePath.');
@@ -99,7 +101,8 @@ export function createMcpHarness({
       cwd,
       env: {
         ...process.env,
-        AGENT_ROOM_BRIDGE_STATE_PATH: stateFilePath,
+        ...env,
+        [stateEnvVarName]: stateFilePath,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

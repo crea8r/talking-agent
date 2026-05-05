@@ -3,6 +3,11 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  createPoseStudioBridgeStore,
+  resolveDefaultPoseStudioBridgeStatePath,
+} from '../../packages/pose-studio-bridge/index.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -15,6 +20,12 @@ const NODE_MODULES_DIR = path.join(REPO_ROOT, 'node_modules');
 const AVATAR_LAYER_DIR = path.join(REPO_ROOT, 'packages', 'avatar-layer-browser');
 const MODELS_DIR = path.join(AVATAR_LAYER_DIR, 'models');
 const ANIMATIONS_DIR = path.join(AVATAR_LAYER_DIR, 'animations');
+const bridgeStore = createPoseStudioBridgeStore({
+  stateFilePath: resolveDefaultPoseStudioBridgeStatePath({
+    cwd: REPO_ROOT,
+    env: process.env,
+  }),
+});
 
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -83,6 +94,32 @@ function sendText(res, statusCode, text) {
   res.end(text);
 }
 
+function sendError(res, statusCode, code, message, data = undefined) {
+  sendJson(res, statusCode, {
+    ok: false,
+    error: {
+      code,
+      message,
+      ...(data ? { data } : {}),
+    },
+  });
+}
+
+async function readJsonBody(req) {
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  const rawBody = Buffer.concat(chunks).toString('utf8').trim();
+  if (!rawBody) {
+    return {};
+  }
+
+  return JSON.parse(rawBody);
+}
+
 async function serveStatic(req, res, filePath) {
   try {
     const body = await readFile(filePath);
@@ -138,7 +175,81 @@ const server = createServer(async (req, res) => {
       app: 'pose-studio',
       host: HOST,
       port: PORT,
+      bridgeStatePath: bridgeStore.stateFilePath,
     });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/director/state') {
+    try {
+      const state = await bridgeStore.getState();
+      sendJson(res, 200, {
+        ok: true,
+        state,
+      });
+    } catch (error) {
+      console.error('Failed to read pose-studio director state', error);
+      sendError(res, 500, error.code || 'DIRECTOR_STATE_ERROR', error.message);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/director/runtime') {
+    try {
+      const body = await readJsonBody(req);
+      const runtime = await bridgeStore.syncRuntime({
+        modelId: body.modelId,
+        modelLabel: body.modelLabel,
+        availableGestures: body.availableGestures,
+      });
+
+      sendJson(res, 200, {
+        ok: true,
+        runtime,
+      });
+    } catch (error) {
+      console.error('Failed to sync pose-studio runtime', error);
+      sendError(res, 400, error.code || 'DIRECTOR_RUNTIME_ERROR', error.message, error.data);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/director/playback') {
+    try {
+      const body = await readJsonBody(req);
+      const playback = await bridgeStore.updatePlayback({
+        sequenceId: body.sequenceId,
+        status: body.status,
+        currentStepIndex: body.currentStepIndex,
+        currentGestureId: body.currentGestureId,
+      });
+
+      sendJson(res, 200, {
+        ok: true,
+        playback,
+      });
+    } catch (error) {
+      console.error('Failed to update pose-studio playback', error);
+      sendError(res, 400, error.code || 'DIRECTOR_PLAYBACK_ERROR', error.message, error.data);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/director/stop') {
+    try {
+      const body = await readJsonBody(req);
+      const playback = await bridgeStore.stopSequence({
+        sequenceId: body.sequenceId,
+      });
+
+      sendJson(res, 200, {
+        ok: true,
+        playback,
+      });
+    } catch (error) {
+      console.error('Failed to stop pose-studio director sequence', error);
+      sendError(res, 400, error.code || 'DIRECTOR_STOP_ERROR', error.message, error.data);
+    }
     return;
   }
 
