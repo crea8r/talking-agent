@@ -621,7 +621,7 @@ export function createAvatarLayer({
     return getSnapshot();
   }
 
-  function setGesture(gestureId, { restart = false } = {}) {
+  function setGesture(gestureId, { restart = false, transition = 'fade', loop = undefined } = {}) {
     const nextGestureId =
       resolveGesturePreset(state.currentModelId, gestureId)?.id ||
       getGesturePresets(state.currentModelId)[0]?.id ||
@@ -630,7 +630,7 @@ export function createAvatarLayer({
       state.currentGestureStartedAt = getNowMs();
     }
     state.currentGestureId = nextGestureId;
-    runtime.syncGestureMotion({ restart });
+    runtime.syncGestureMotion({ restart, transition, loop });
     return getSnapshot();
   }
 
@@ -999,7 +999,7 @@ function createRendererRuntime({
     });
   }
 
-  function syncGestureMotion({ restart = false } = {}) {
+  function syncGestureMotion({ restart = false, transition = 'fade', loop = undefined } = {}) {
     const gesture =
       resolveGesturePreset(state.currentModelId, state.currentGestureId, { fallbackToFirst: false }) ||
       null;
@@ -1016,7 +1016,14 @@ function createRendererRuntime({
       return;
     }
 
-    playGestureMotion(motion.clipId, motion, { restart });
+    playGestureMotion(
+      motion.clipId,
+      {
+        ...motion,
+        ...(loop ? { loop } : {}),
+      },
+      { restart, transition },
+    );
   }
 
   function getOrCreateAction(clipId) {
@@ -1035,12 +1042,17 @@ function createRendererRuntime({
     return runtime.animation.actions.get(clipId) || null;
   }
 
-  function playGestureMotion(clipId, { fadeIn = 0.24, loop = 'repeat' } = {}, { restart = false } = {}) {
+  function playGestureMotion(
+    clipId,
+    { fadeIn = 0.24, loop = 'repeat' } = {},
+    { restart = false, transition = 'fade' } = {},
+  ) {
     const nextAction = getOrCreateAction(clipId);
     if (!nextAction) {
       stopGestureMotion();
       return;
     }
+    const shouldCutTransition = transition === 'cut' || fadeIn <= 0;
 
     const sampleTimeSeconds =
       Number.isFinite(state.poseSampleTimeMs) && state.poseSampleTimeMs >= 0
@@ -1048,6 +1060,9 @@ function createRendererRuntime({
         : null;
 
     if (runtime.animation.activeAction === nextAction && runtime.animation.activeClipId === clipId) {
+      nextAction.setLoop(loop === 'once' ? THREE.LoopOnce : THREE.LoopRepeat, loop === 'once' ? 1 : Infinity);
+      nextAction.clampWhenFinished = loop === 'once';
+
       if (sampleTimeSeconds !== null) {
         const clipDuration = nextAction.getClip()?.duration || sampleTimeSeconds;
         nextAction.paused = true;
@@ -1085,10 +1100,16 @@ function createRendererRuntime({
       nextAction.time = Math.min(sampleTimeSeconds, clipDuration);
       runtime.animation.mixer?.setTime(nextAction.time);
     } else if (previousAction && previousAction !== nextAction) {
-      previousAction.fadeOut(fadeIn);
-      nextAction.fadeIn(fadeIn);
+      if (shouldCutTransition) {
+        previousAction.stop();
+      } else {
+        previousAction.fadeOut(fadeIn);
+        nextAction.fadeIn(fadeIn);
+      }
     } else {
-      nextAction.fadeIn(fadeIn);
+      if (!shouldCutTransition) {
+        nextAction.fadeIn(fadeIn);
+      }
     }
 
     runtime.animation.activeAction = nextAction;

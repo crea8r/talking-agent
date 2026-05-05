@@ -5,7 +5,7 @@ import path from 'node:path';
 import { BUNDLED_MODELS, getGesturePresets } from '../avatar-layer-browser/index.js';
 
 const CAPABILITIES_VERSION = '2026-05-04';
-const MAX_SEQUENCE_DURATION_MS = 30_000;
+const MAX_SEQUENCE_DURATION_MS = 60_000;
 const DEFAULT_GESTURE_DURATION_MS = 2_400;
 const LOCK_RETRY_MS = 25;
 const LOCK_TIMEOUT_MS = 5_000;
@@ -45,6 +45,7 @@ function createEmptyState() {
       revision: 0,
       activeSequence: null,
       lastSequence: null,
+      lastError: null,
       playback: {
         status: 'idle',
         sequenceId: '',
@@ -191,6 +192,7 @@ function normalizeState(state = {}) {
   normalized.director.revision = Number.isFinite(director.revision) ? Number(director.revision) : 0;
   normalized.director.activeSequence = director.activeSequence ? cloneJson(director.activeSequence) : null;
   normalized.director.lastSequence = director.lastSequence ? cloneJson(director.lastSequence) : null;
+  normalized.director.lastError = director.lastError ? cloneJson(director.lastError) : null;
   normalized.director.playback = {
     status: normalizePlaybackStatus(director.playback?.status),
     sequenceId: normalizeString(director.playback?.sequenceId),
@@ -346,7 +348,7 @@ export function createPoseStudioBridgeStore({
 
       const { acceptedSteps, totalDurationMs, trimmed } = trimStepsToDurationLimit(normalizedSteps, MAX_SEQUENCE_DURATION_MS);
       if (!acceptedSteps.length) {
-        throw createTypedError('SEQUENCE_TOO_LONG', 'Pose sequence could not fit within the 30 second limit.');
+        throw createTypedError('SEQUENCE_TOO_LONG', 'Pose sequence could not fit within the 60 second limit.');
       }
 
       const now = new Date().toISOString();
@@ -371,6 +373,7 @@ export function createPoseStudioBridgeStore({
         ...sequence,
         status: 'queued',
       };
+      state.director.lastError = null;
       state.director.playback = {
         status: 'queued',
         sequenceId,
@@ -470,6 +473,47 @@ export function createPoseStudioBridgeStore({
     });
   }
 
+  async function reportError({
+    modelId = '',
+    prompt = '',
+    message = '',
+  } = {}) {
+    return withFileLock(stateFilePath, async () => {
+      const normalizedMessage = normalizeString(message);
+      if (!normalizedMessage) {
+        throw createTypedError('EMPTY_ERROR_MESSAGE', 'Pose error report requires a non-empty message.');
+      }
+
+      const state = await readState(stateFilePath);
+      const catalog = buildCatalogForState(state, modelId);
+      const now = new Date().toISOString();
+      const nextRevision = state.director.revision + 1;
+
+      state.director.revision = nextRevision;
+      state.director.activeSequence = null;
+      state.director.lastError = {
+        revision: nextRevision,
+        source: 'mcp',
+        prompt: normalizeString(prompt),
+        modelId: catalog.modelId,
+        modelLabel: catalog.modelLabel,
+        message: normalizedMessage,
+        createdAt: now,
+      };
+      state.director.playback = {
+        status: 'idle',
+        sequenceId: '',
+        source: '',
+        currentStepIndex: -1,
+        currentGestureId: '',
+        updatedAt: now,
+      };
+      await writeState(stateFilePath, state);
+
+      return cloneJson(state.director.lastError);
+    });
+  }
+
   async function getCatalog({ modelId = '' } = {}) {
     return withFileLock(stateFilePath, async () => {
       const state = await readState(stateFilePath);
@@ -492,6 +536,7 @@ export function createPoseStudioBridgeStore({
     stateFilePath,
     getCatalog,
     getState,
+    reportError,
     stageSequence,
     stopSequence,
     syncRuntime,

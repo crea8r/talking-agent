@@ -46,8 +46,15 @@ const SERVER_OPTIONS = {
     },
   },
   instructions:
-    'Read pose://catalog before staging sequences. Use only gesture ids from the catalog and keep sequences within 30 seconds.',
+    'Read pose://catalog before staging sequences. Use only gesture ids from the catalog, keep sequences within 60 seconds, and call report_pose_sequence_error when no safe sequence can be staged.',
 };
+
+function logMcp(event, details = undefined) {
+  const line = details
+    ? `[pose-studio mcp] ${event} ${JSON.stringify(details)}\n`
+    : `[pose-studio mcp] ${event}\n`;
+  process.stderr.write(line);
+}
 
 const TOOL_DEFINITIONS = [
   {
@@ -62,7 +69,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'stage_pose_sequence',
     description:
-      'Stage a directed pose sequence into the running pose-studio app. Use only gesture ids from pose://catalog and keep the full sequence within 30 seconds.',
+      'Stage a directed pose sequence into the running pose-studio app. Use only gesture ids from pose://catalog and keep the full sequence within 60 seconds.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -82,6 +89,21 @@ const TOOL_DEFINITIONS = [
             },
           },
         },
+      },
+    },
+  },
+  {
+    name: 'report_pose_sequence_error',
+    description:
+      'Report that the user request could not be mapped into a valid pose-studio sequence. Use this instead of replying with plain text when no safe sequence can be staged.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['message'],
+      properties: {
+        modelId: { type: 'string' },
+        prompt: { type: 'string' },
+        message: { type: 'string' },
       },
     },
   },
@@ -133,6 +155,7 @@ async function buildGestureCatalogDescription() {
 }
 
 async function listTools() {
+  logMcp('tools/list');
   const gestureCatalog = await buildGestureCatalogDescription();
   return TOOL_DEFINITIONS.map((tool) =>
     tool.name === 'stage_pose_sequence'
@@ -145,11 +168,19 @@ async function listTools() {
 }
 
 async function handleToolCall(name, args = {}) {
+  logMcp('tools/call', {
+    name,
+    modelId: args?.modelId || '',
+    sequenceId: args?.sequenceId || '',
+    stepCount: Array.isArray(args?.steps) ? args.steps.length : 0,
+  });
   switch (name) {
     case 'get_pose_state':
       return store.getState();
     case 'stage_pose_sequence':
       return store.stageSequence(args);
+    case 'report_pose_sequence_error':
+      return store.reportError(args);
     case 'stop_pose_sequence':
       return store.stopSequence(args);
     default:
@@ -177,24 +208,36 @@ function createPoseStudioMcpServer() {
     })),
   );
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: listPoseStudioResources(),
-  }));
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    logMcp('resources/list');
+    return {
+      resources: listPoseStudioResources(),
+    };
+  });
 
   server.setRequestHandler(
     ReadResourceRequestSchema,
-    wrapRequestHandler(async (request) => ({
-      contents: [await readPoseStudioResource(request.params?.uri || '', store)],
-    })),
+    wrapRequestHandler(async (request) => {
+      logMcp('resources/read', { uri: request.params?.uri || '' });
+      return {
+        contents: [await readPoseStudioResource(request.params?.uri || '', store)],
+      };
+    }),
   );
 
-  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-    prompts: listPoseStudioPrompts(),
-  }));
+  server.setRequestHandler(ListPromptsRequestSchema, async () => {
+    logMcp('prompts/list');
+    return {
+      prompts: listPoseStudioPrompts(),
+    };
+  });
 
   server.setRequestHandler(
     GetPromptRequestSchema,
-    wrapRequestHandler(async (request) => getPoseStudioPrompt(request.params?.name || '')),
+    wrapRequestHandler(async (request) => {
+      logMcp('prompts/get', { name: request.params?.name || '' });
+      return getPoseStudioPrompt(request.params?.name || '');
+    }),
   );
 
   server.setRequestHandler(
@@ -215,6 +258,9 @@ function createPoseStudioMcpServer() {
 async function main() {
   const transport = new StdioServerTransport();
   const server = createPoseStudioMcpServer();
+  logMcp('server/start', {
+    stateFilePath: store.stateFilePath,
+  });
 
   server.onerror = (error) => {
     process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`);

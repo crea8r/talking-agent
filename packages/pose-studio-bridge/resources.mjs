@@ -5,10 +5,11 @@ const MIME_TYPE = 'application/json';
 export function createPoseStudioCapabilitiesPayload() {
   return {
     protocolVersion: CAPABILITIES_VERSION,
-    tools: ['get_pose_state', 'stage_pose_sequence', 'stop_pose_sequence'],
+    tools: ['get_pose_state', 'stage_pose_sequence', 'report_pose_sequence_error', 'stop_pose_sequence'],
     maxSequenceDurationMs: MAX_SEQUENCE_DURATION_MS,
     notes: [
       'Use only gesture ids from pose://catalog.',
+      'If no valid sequence can be staged, call report_pose_sequence_error with a short user-facing explanation.',
       'The pose-studio app takes over the UI while a directed sequence is active.',
       'The browser transport controls are play, pause, replay, and stop.',
     ],
@@ -112,8 +113,9 @@ export function getPoseStudioPrompt(name) {
           text: [
             'Read pose://catalog before sending any sequence.',
             'Choose only gesture ids from the catalog.',
-            'Keep the full sequence within the 30 second limit.',
-            'Use stage_pose_sequence to send the sequence into the app.',
+            'Keep the full sequence within the 60 second limit.',
+            'Use stage_pose_sequence to send a valid sequence into the app.',
+            'If you cannot stage a valid sequence, call report_pose_sequence_error instead of replying with plain text.',
             'Use stop_pose_sequence when the directed takeover should end.',
           ].join('\n'),
         },

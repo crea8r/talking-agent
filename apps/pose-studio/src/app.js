@@ -31,13 +31,26 @@ const dom = {
   screenPreset: document.querySelector('#screen-preset'),
   screenWidth: document.querySelector('#screen-width'),
   screenHeight: document.querySelector('#screen-height'),
+  panelModeManual: document.querySelector('#panel-mode-manual'),
+  panelModeDirect: document.querySelector('#panel-mode-direct'),
   modelSelect: document.querySelector('#model-select'),
+  manualActionField: document.querySelector('#manual-action-field'),
   actionSelect: document.querySelector('#action-select'),
-  playButton: document.querySelector('#transport-play'),
-  pauseButton: document.querySelector('#transport-pause'),
-  restartButton: document.querySelector('#transport-restart'),
-  stopButton: document.querySelector('#transport-stop'),
+  directorPromptField: document.querySelector('#director-prompt-field'),
+  directorPrompt: document.querySelector('#director-prompt'),
+  directorResponse: document.querySelector('#director-response'),
+  manualTransportGroup: document.querySelector('#manual-transport-group'),
+  manualPlayButton: document.querySelector('#manual-transport-play'),
+  manualPauseButton: document.querySelector('#manual-transport-pause'),
+  manualRestartButton: document.querySelector('#manual-transport-restart'),
+  manualUtilityGroup: document.querySelector('#manual-utility-group'),
+  directorPlaybackGroup: document.querySelector('#director-playback-group'),
+  directorPlayButton: document.querySelector('#director-transport-play'),
+  directorPauseButton: document.querySelector('#director-transport-pause'),
+  directorReplayButton: document.querySelector('#director-transport-replay'),
+  directorStopButton: document.querySelector('#director-transport-stop'),
   actButton: document.querySelector('#transport-act'),
+  directorPromptSend: document.querySelector('#director-prompt-send'),
   panelMinimize: document.querySelector('#panel-minimize'),
   statusLine: document.querySelector('#status-line'),
   panelNote: document.querySelector('.panel-note'),
@@ -51,7 +64,11 @@ const state = {
   isCapturing: false,
   isCaptureMode: PAGE_PARAMS.get('capture') === '1',
   isGesturePaused: false,
+  isSubmittingDirectorRequest: false,
   isPanelMinimized: false,
+  panelMode: 'manual',
+  directorPrompt: '',
+  lastSubmittedDirectorPrompt: '',
   act: {
     active: false,
     mode: '',
@@ -69,6 +86,10 @@ const state = {
     pollTimerId: 0,
     polling: false,
     lastSequenceId: '',
+    lastResolvedRequestId: '',
+    requestActive: false,
+    requestId: '',
+    requestErrorText: '',
     phase: 'idle',
     countdownValue: 0,
     countdownTimerId: 0,
@@ -108,6 +129,7 @@ async function initialize() {
   document.body.dataset.captureMode = String(state.isCaptureMode);
   document.body.dataset.directorMode = 'false';
   document.body.dataset.directorCountdown = 'false';
+  document.body.dataset.panelMode = state.panelMode;
   bindViewportSizing();
   primeLoaderPoster();
   populatePresetOptions();
@@ -255,6 +277,12 @@ function bindControls() {
   dom.screenPreset?.addEventListener('change', handlePresetChange);
   dom.screenWidth?.addEventListener('change', handleDimensionChange);
   dom.screenHeight?.addEventListener('change', handleDimensionChange);
+  dom.panelModeManual?.addEventListener('click', () => {
+    setPanelMode('manual');
+  });
+  dom.panelModeDirect?.addEventListener('click', () => {
+    setPanelMode('pre-director');
+  });
   dom.modelSelect?.addEventListener('change', async () => {
     if (state.act.active) {
       renderControls();
@@ -288,29 +316,48 @@ function bindControls() {
     restartGesture();
   });
 
-  dom.playButton?.addEventListener('click', () => {
+  dom.directorPrompt?.addEventListener('input', () => {
+    state.directorPrompt = dom.directorPrompt.value;
+    renderControls();
+  });
+
+  dom.directorPrompt?.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault();
+      void submitDirectorPrompt();
+    }
+  });
+
+  dom.manualPlayButton?.addEventListener('click', () => {
     playGesture();
   });
 
-  dom.pauseButton?.addEventListener('click', () => {
+  dom.manualPauseButton?.addEventListener('click', () => {
     pauseGesture();
   });
 
-  dom.restartButton?.addEventListener('click', () => {
-    if (isDirectorPlaybackMode()) {
-      replayDirectorSequence();
-      return;
-    }
-
+  dom.manualRestartButton?.addEventListener('click', () => {
     restartGesture();
   });
 
-  dom.stopButton?.addEventListener('click', () => {
-    if (!isDirectorMode()) {
-      return;
-    }
+  dom.directorPlayButton?.addEventListener('click', () => {
+    playGesture();
+  });
 
-    void stopDirectedSequenceFromUi();
+  dom.directorPauseButton?.addEventListener('click', () => {
+    pauseGesture();
+  });
+
+  dom.directorReplayButton?.addEventListener('click', () => {
+    if (isDirectorPlaybackMode()) {
+      replayDirectorSequence();
+    }
+  });
+
+  dom.directorStopButton?.addEventListener('click', () => {
+    if (isDirectorMode()) {
+      void stopDirectedSequenceFromUi();
+    }
   });
 
   dom.actButton?.addEventListener('click', () => {
@@ -331,6 +378,10 @@ function bindControls() {
     renderControls();
   });
 
+  dom.directorPromptSend?.addEventListener('click', () => {
+    void submitDirectorPrompt();
+  });
+
   dom.prepareCapture?.addEventListener('click', () => {
     if (!state.isReady || state.isLoadingModel || state.isCapturing) {
       return;
@@ -347,6 +398,86 @@ function bindControls() {
     event.preventDefault();
     restoreControls();
   });
+}
+
+function setPanelMode(nextMode) {
+  if (!['manual', 'pre-director'].includes(nextMode)) {
+    return;
+  }
+
+  if (isDirectorMode() || state.isLoadingModel || state.isCapturing || state.act.active) {
+    renderControls();
+    return;
+  }
+
+  if (state.panelMode === nextMode) {
+    return;
+  }
+
+  state.panelMode = nextMode;
+  renderControls();
+  setStatus(
+    nextMode === 'pre-director'
+      ? 'Pre-director mode ready. Describe the animation and send it to Codex.'
+      : state.isGesturePaused
+        ? buildPausedStatus()
+        : buildPlayingStatus(),
+  );
+}
+
+async function submitDirectorPrompt() {
+  const trimmedPrompt = state.directorPrompt.trim();
+  if (
+    !trimmedPrompt ||
+    isDirectorMode() ||
+    state.isLoadingModel ||
+    state.isCapturing ||
+    state.act.active ||
+    state.isSubmittingDirectorRequest
+  ) {
+    return;
+  }
+
+  state.isSubmittingDirectorRequest = true;
+  state.director.requestActive = true;
+  state.director.requestId = '';
+  state.director.requestErrorText = '';
+  renderControls();
+
+  try {
+    const response = await postJson('/api/director/request', {
+      prompt: trimmedPrompt,
+      modelId: state.selectedModelId,
+    });
+
+    state.lastSubmittedDirectorPrompt = trimmedPrompt;
+    state.director.requestActive = Boolean(response?.request?.active);
+    state.director.requestId = response?.request?.requestId || response?.requestId || '';
+    state.director.requestErrorText = '';
+    setStatus('Codex is staging the directed sequence locally.');
+  } catch (error) {
+    if (error?.code === 'DIRECTOR_REQUEST_ACTIVE') {
+      state.director.requestActive = true;
+      state.director.requestId = error?.data?.request?.requestId || state.director.requestId;
+      state.director.requestErrorText = '';
+      setStatus('Codex is already staging a directed sequence.');
+    } else if (error?.code === 'DIRECTOR_REQUEST_INVALID') {
+      state.director.requestActive = false;
+      state.director.requestId = '';
+      state.director.requestErrorText = '';
+      state.isSubmittingDirectorRequest = false;
+      setStatus(error.message || 'The animation request is invalid.');
+    } else {
+      console.error('Failed to submit director prompt', error);
+      state.director.requestActive = false;
+      state.director.requestId = '';
+      state.director.requestErrorText = '';
+      state.isSubmittingDirectorRequest = false;
+      setStatus('Failed to send the animation request to local Codex.');
+    }
+  } finally {
+    renderControls();
+  }
 }
 
 function handlePresetChange() {
@@ -372,9 +503,17 @@ function renderControls() {
   const directorMode = isDirectorMode();
   const directorPlaybackMode = isDirectorPlaybackMode();
   const directorCountdownMode = isDirectorCountdownMode();
+  const directorRequestActive = state.isSubmittingDirectorRequest || state.director.requestActive;
+  const directorRequestError = Boolean(state.director.requestErrorText) && !directorRequestActive && !directorMode;
+  const preDirectorMode = state.panelMode === 'pre-director';
+  const effectivePanelMode = directorMode ? 'director' : state.panelMode;
+  const hasDirectorPrompt = Boolean(state.directorPrompt.trim());
 
   document.body.dataset.directorMode = String(directorMode);
   document.body.dataset.directorCountdown = String(directorCountdownMode);
+  document.body.dataset.directorRequestActive = String(directorRequestActive);
+  document.body.dataset.directorRequestError = String(directorRequestError);
+  document.body.dataset.panelMode = effectivePanelMode;
 
   if (dom.directorOverlay) {
     dom.directorOverlay.setAttribute('aria-hidden', String(!directorCountdownMode));
@@ -402,12 +541,55 @@ function renderControls() {
 
   if (dom.modelSelect) {
     dom.modelSelect.value = state.selectedModelId;
-    dom.modelSelect.disabled = state.isLoadingModel || state.isCapturing || state.act.active;
+    dom.modelSelect.disabled = state.isLoadingModel || state.isCapturing || state.act.active || directorRequestActive;
+  }
+
+  if (dom.panelModeManual) {
+    const isActive = effectivePanelMode === 'manual';
+    dom.panelModeManual.disabled = state.isLoadingModel || state.isCapturing || directorMode || state.act.active || directorRequestActive;
+    dom.panelModeManual.classList.toggle('is-active', isActive);
+    dom.panelModeManual.setAttribute('aria-pressed', String(isActive));
+  }
+
+  if (dom.panelModeDirect) {
+    const isActive = effectivePanelMode !== 'manual';
+    dom.panelModeDirect.disabled = state.isLoadingModel || state.isCapturing || directorMode || state.act.active || directorRequestActive;
+    dom.panelModeDirect.classList.toggle('is-active', isActive);
+    dom.panelModeDirect.setAttribute('aria-pressed', String(isActive));
+  }
+
+  if (dom.manualActionField) {
+    dom.manualActionField.hidden = preDirectorMode || directorMode;
   }
 
   if (dom.actionSelect) {
     dom.actionSelect.value = state.selectedGestureId;
-    dom.actionSelect.disabled = state.isLoadingModel || !state.availableGestures.length || state.act.active;
+    dom.actionSelect.disabled =
+      state.isLoadingModel || !state.availableGestures.length || state.act.active || preDirectorMode;
+  }
+
+  if (dom.directorPromptField) {
+    dom.directorPromptField.hidden = !preDirectorMode;
+  }
+
+  if (dom.directorResponse) {
+    const showDirectorResponse = Boolean(
+      preDirectorMode && directorRequestError && state.director.requestErrorText,
+    );
+    dom.directorResponse.hidden = !showDirectorResponse;
+    dom.directorResponse.textContent = showDirectorResponse ? state.director.requestErrorText : '';
+  }
+
+  if (dom.directorPrompt) {
+    if (dom.directorPrompt.value !== state.directorPrompt) {
+      dom.directorPrompt.value = state.directorPrompt;
+    }
+    dom.directorPrompt.disabled =
+      state.isLoadingModel ||
+      state.isCapturing ||
+      directorMode ||
+      state.act.active ||
+      directorRequestActive;
   }
 
   if (dom.screenPreset) {
@@ -415,47 +597,54 @@ function renderControls() {
       (preset) => preset.width === state.captureWidth && preset.height === state.captureHeight,
     );
     dom.screenPreset.value = matchingPreset?.id || 'custom';
-    dom.screenPreset.disabled = state.isLoadingModel || state.isCapturing;
+    dom.screenPreset.disabled = state.isLoadingModel || state.isCapturing || directorRequestActive;
   }
 
   const transportDisabled =
     state.isLoadingModel || state.isCapturing || !state.isReady || !state.availableGestures.length;
 
-  if (dom.playButton) {
-    dom.playButton.disabled = transportDisabled || (directorMode && !directorPlaybackMode);
-    dom.playButton.classList.toggle(
-      'is-active',
-      !state.isGesturePaused && state.isReady && (!directorMode || directorPlaybackMode),
-    );
-    dom.playButton.setAttribute(
-      'aria-pressed',
-      String(!state.isGesturePaused && state.isReady && (!directorMode || directorPlaybackMode)),
-    );
+  const manualTransportActive = !directorMode && !state.isGesturePaused && state.isReady;
+  const manualPauseActive = !directorMode && state.isGesturePaused && state.isReady;
+  const directorTransportActive = directorPlaybackMode && !state.isGesturePaused && state.isReady;
+  const directorPauseActive = directorPlaybackMode && state.isGesturePaused && state.isReady;
+
+  if (dom.manualPlayButton) {
+    dom.manualPlayButton.disabled = transportDisabled || preDirectorMode;
+    dom.manualPlayButton.classList.toggle('is-active', manualTransportActive);
+    dom.manualPlayButton.setAttribute('aria-pressed', String(manualTransportActive));
   }
 
-  if (dom.pauseButton) {
-    dom.pauseButton.disabled = transportDisabled || (directorMode && !directorPlaybackMode);
-    dom.pauseButton.classList.toggle(
-      'is-active',
-      state.isGesturePaused && state.isReady && (!directorMode || directorPlaybackMode),
-    );
-    dom.pauseButton.setAttribute(
-      'aria-pressed',
-      String(state.isGesturePaused && state.isReady && (!directorMode || directorPlaybackMode)),
-    );
+  if (dom.manualPauseButton) {
+    dom.manualPauseButton.disabled = transportDisabled || preDirectorMode;
+    dom.manualPauseButton.classList.toggle('is-active', manualPauseActive);
+    dom.manualPauseButton.setAttribute('aria-pressed', String(manualPauseActive));
   }
 
-  if (dom.restartButton) {
-    dom.restartButton.disabled =
+  if (dom.manualRestartButton) {
+    dom.manualRestartButton.disabled = transportDisabled || preDirectorMode || state.act.active;
+  }
+
+  if (dom.directorPlayButton) {
+    dom.directorPlayButton.disabled = transportDisabled || (directorMode && !directorPlaybackMode);
+    dom.directorPlayButton.classList.toggle('is-active', directorTransportActive);
+    dom.directorPlayButton.setAttribute('aria-pressed', String(directorTransportActive));
+  }
+
+  if (dom.directorPauseButton) {
+    dom.directorPauseButton.disabled = transportDisabled || (directorMode && !directorPlaybackMode);
+    dom.directorPauseButton.classList.toggle('is-active', directorPauseActive);
+    dom.directorPauseButton.setAttribute('aria-pressed', String(directorPauseActive));
+  }
+
+  if (dom.directorReplayButton) {
+    dom.directorReplayButton.disabled =
       transportDisabled ||
       (state.act.active && !directorPlaybackMode) ||
       (directorMode && !directorPlaybackMode);
-    dom.restartButton.setAttribute('aria-label', directorPlaybackMode ? 'Replay sequence' : 'Restart animation');
-    dom.restartButton.setAttribute('title', directorPlaybackMode ? 'Replay' : 'Restart');
   }
 
-  if (dom.stopButton) {
-    dom.stopButton.disabled = !directorMode || state.isLoadingModel || state.isCapturing;
+  if (dom.directorStopButton) {
+    dom.directorStopButton.disabled = !directorMode || state.isLoadingModel || state.isCapturing;
   }
 
   if (dom.actButton) {
@@ -474,14 +663,32 @@ function renderControls() {
     dom.panelMinimize.setAttribute('title', state.isPanelMinimized ? 'Expand panel' : 'Minimize panel');
   }
 
+  if (dom.directorPromptSend) {
+    dom.directorPromptSend.disabled =
+      !preDirectorMode ||
+      !hasDirectorPrompt ||
+      state.isLoadingModel ||
+      state.isCapturing ||
+      directorMode ||
+      state.act.active ||
+      directorRequestActive;
+  }
+
   if (dom.prepareCapture) {
-    dom.prepareCapture.disabled = !state.isReady || state.isLoadingModel || state.isCapturing || directorMode;
+    dom.prepareCapture.disabled =
+      !state.isReady || state.isLoadingModel || state.isCapturing || directorMode || preDirectorMode;
   }
 
   if (dom.panelNote) {
     dom.panelNote.textContent = directorMode
       ? 'Codex is directing the stage. Play, pause, replay, or stop.'
-      : 'Pause on the frame you want, then click Screenshot. Press Escape to edit again.';
+      : directorRequestError
+        ? state.director.requestErrorText
+        : directorRequestActive
+        ? 'Codex is translating your prompt into a local directed sequence.'
+      : preDirectorMode
+        ? 'Describe the motion you want. Send runs Codex locally and stages the sequence when ready.'
+        : 'Pause on the frame you want, then click Screenshot. Press Escape to edit again.';
   }
 }
 
@@ -614,10 +821,22 @@ async function pollDirectorState() {
   state.director.polling = true;
 
   try {
+    const previousRequestActive = state.director.requestActive;
     const payload = await fetchJson('/api/director/state');
     const activeSequence = payload?.state?.director?.activeSequence || null;
+    const directorRequest = payload?.request || { active: false };
+
+    state.director.requestActive = Boolean(directorRequest.active);
+    state.director.requestId = directorRequest.requestId || '';
+    state.director.requestErrorText = directorRequest.errorText || '';
+    state.isSubmittingDirectorRequest = Boolean(directorRequest.active);
+
+    if (state.director.requestActive && !activeSequence && !isDirectorMode()) {
+      setStatus('Codex is staging the directed sequence locally.');
+    }
 
     if (activeSequence?.sequenceId && activeSequence.sequenceId !== state.director.lastSequenceId) {
+      state.director.requestErrorText = '';
       await startDirectorSequence(activeSequence);
       state.director.lastSequenceId = activeSequence.sequenceId;
     } else if (!activeSequence && isDirectorMode()) {
@@ -629,7 +848,17 @@ async function pollDirectorState() {
       resetToWaitingPose({
         statusLabel: 'Director mode finished. Waiting on Pose.',
       });
+    } else if (!state.director.requestActive && !activeSequence && !isDirectorMode() && state.lastSubmittedDirectorPrompt) {
+      state.isSubmittingDirectorRequest = false;
+      if (state.director.requestErrorText && state.director.requestId !== state.director.lastResolvedRequestId) {
+        state.director.lastResolvedRequestId = state.director.requestId;
+        setStatus(state.director.requestErrorText);
+      } else if (previousRequestActive) {
+        setStatus('Codex finished without staging a sequence. Refine the prompt and try again.');
+      }
     }
+
+    renderControls();
   } catch (error) {
     console.warn('Failed to poll pose-studio director state', error);
   } finally {
@@ -981,7 +1210,8 @@ function playSequenceStep(index) {
   state.act.currentGestureId = gestureId;
   state.selectedGestureId = gestureId;
   state.heroLayer.setPoseSampleTime(null);
-  state.heroLayer.setGesture(gestureId, { restart: true });
+  // Scripted sequences should play each clip once, but keep the normal crossfade transition.
+  state.heroLayer.setGesture(gestureId, { restart: true, loop: 'once' });
   state.heroLayer.setGesturePaused(false);
   state.isGesturePaused = false;
   scheduleSequenceAdvance(getSequenceStepDuration(step));
@@ -1058,6 +1288,7 @@ function finishSequence() {
   state.act.remainingMs = 0;
   if (wasDirector) {
     clearDirectorTakeoverState();
+    state.panelMode = 'manual';
     if (completedSequenceId) {
       state.director.lastSequenceId = completedSequenceId;
       void reportDirectorPlayback('completed', completedSequenceId);
@@ -1094,6 +1325,7 @@ function stopActSequence({ keepStatus = false, skipDirectorStop = false } = {}) 
 
   if (previousMode === 'director') {
     clearDirectorTakeoverState();
+    state.panelMode = 'manual';
     if (!keepStatus) {
       resetToWaitingPose({
         statusLabel: 'Director mode stopped. Waiting on Pose.',
@@ -1462,9 +1694,17 @@ function setAvatarState(nextState, label) {
 }
 
 function setStatus(label) {
-  if (dom.statusLine && label) {
-    dom.statusLine.textContent = label;
+  if (!dom.statusLine || !label) {
+    return;
   }
+
+  dom.statusLine.textContent = label;
+  dom.statusLine.classList.toggle(
+    'is-error',
+    Boolean(state.director.requestErrorText) &&
+      !state.director.requestActive &&
+      !isDirectorMode(),
+  );
 }
 
 function clampInt(value, min, max, fallback) {

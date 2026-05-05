@@ -43,7 +43,7 @@ test('syncRuntime stores the live gesture catalog with durations', async () => {
   assert.match(runtime.catalogVersion, /^[a-f0-9]{12}$/);
 });
 
-test('stageSequence trims the sequence to the 30 second limit', async () => {
+test('stageSequence trims the sequence to the 60 second limit', async () => {
   const store = createPoseStudioBridgeStore({
     stateFilePath: createStateFilePath('trim'),
   });
@@ -89,11 +89,14 @@ test('stageSequence trims the sequence to the 30 second limit', async () => {
       { gestureId: 'Thinking' },
       { gestureId: 'Greeting' },
       { gestureId: 'Goodbye' },
+      { gestureId: 'Pose' },
+      { gestureId: 'Thinking' },
+      { gestureId: 'Greeting' },
     ],
   });
 
-  assert.equal(staged.steps.length, 3);
-  assert.equal(staged.totalDurationMs, 27_000);
+  assert.equal(staged.steps.length, 6);
+  assert.equal(staged.totalDurationMs, 54_000);
   assert.equal(staged.trimmed, true);
 });
 

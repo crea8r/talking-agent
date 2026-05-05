@@ -82,14 +82,21 @@ async function withServer(setup, run, options = {}) {
     await setup(store);
   }
 
+  let stderr = '';
+
   const proc = spawn(process.execPath, ['packages/pose-studio-bridge/mcp-server.mjs'], {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
       POSE_STUDIO_BRIDGE_STATE_PATH: stateFilePath,
     },
-    stdio: ['pipe', 'pipe', 'inherit'],
+    stdio: ['pipe', 'pipe', options.captureStderr ? 'pipe' : 'inherit'],
   });
+  if (options.captureStderr) {
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+  }
   const client = createMcpClient(proc);
   const protocolVersion = options.protocolVersion || '2024-11-05';
 
@@ -104,7 +111,11 @@ async function withServer(setup, run, options = {}) {
   proc.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
 
   try {
-    await run(client, store, initializeResult);
+    await run(client, store, initializeResult, {
+      getStderr() {
+        return stderr;
+      },
+    });
   } finally {
     proc.stdin.end();
     proc.kill();
@@ -136,7 +147,7 @@ test('tools/list exposes the pose director tool surface', async () => {
     const result = await client.request('tools/list');
     assert.deepEqual(
       result.tools.map((tool) => tool.name),
-      ['get_pose_state', 'stage_pose_sequence', 'stop_pose_sequence'],
+      ['get_pose_state', 'stage_pose_sequence', 'report_pose_sequence_error', 'stop_pose_sequence'],
     );
     assert.match(result.tools[1].description, /Available gestures:/);
     assert.match(result.tools[1].description, /gestureId: Pose/);
@@ -211,4 +222,74 @@ test('tools/call stage_pose_sequence writes a queued sequence into the bridge st
     assert.equal(state.director.playback.status, 'queued');
     assert.equal(state.director.activeSequence.steps[0].gestureId, 'Greeting');
   });
+});
+
+test('tools/call report_pose_sequence_error writes a bridge error result', async () => {
+  await withServer(async (store) => {
+    await store.syncRuntime({
+      modelId: 'bhf-1-2',
+      modelLabel: 'Red Tinker Bell',
+      availableGestures: [
+        {
+          id: 'Pose',
+          label: 'Pose',
+          description: 'Held neutral model pose.',
+          bestFor: ['idle'],
+          durationMs: 1800,
+        },
+      ],
+    });
+  }, async (client, store) => {
+    const payload = await client.request('tools/call', {
+      name: 'report_pose_sequence_error',
+      arguments: {
+        modelId: 'bhf-1-2',
+        prompt: 'Do something impossible.',
+        message: 'I could not map that request to the current gesture catalog.',
+      },
+    });
+
+    assert.equal(
+      payload.structuredContent.message,
+      'I could not map that request to the current gesture catalog.',
+    );
+
+    const state = await store.getState();
+    assert.equal(state.director.activeSequence, null);
+    assert.equal(
+      state.director.lastError?.message,
+      'I could not map that request to the current gesture catalog.',
+    );
+  });
+});
+
+test('tools/call writes terminal-visible stderr logs', async () => {
+  await withServer(async (store) => {
+    await store.syncRuntime({
+      modelId: 'bhf-1-2',
+      modelLabel: 'Red Tinker Bell',
+      availableGestures: [
+        {
+          id: 'Greeting',
+          label: 'Greeting',
+          description: 'Friendly hello.',
+          bestFor: ['hello'],
+          durationMs: 2100,
+        },
+      ],
+    });
+  }, async (client, _store, _initializeResult, helpers) => {
+    await client.request('tools/call', {
+      name: 'stage_pose_sequence',
+      arguments: {
+        prompt: 'Say hello',
+        steps: [{ gestureId: 'Greeting' }],
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const stderr = helpers.getStderr();
+    assert.match(stderr, /\[pose-studio mcp\] server\/start/);
+    assert.match(stderr, /\[pose-studio mcp\] tools\/call/);
+  }, { captureStderr: true });
 });
