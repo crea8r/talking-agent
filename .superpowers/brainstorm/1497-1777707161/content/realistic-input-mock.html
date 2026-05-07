@@ -1,0 +1,200 @@
+<div class="section">
+  <h2>CosyVoice Casting Lab</h2>
+  <p class="subtitle">Prompt-driven casting mock with realistic controls, a generate action, and a post-generation save-to-WAV action.</p>
+</div>
+
+<style>
+  .cv-shell {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 18px;
+    min-height: 520px;
+  }
+  .cv-panel {
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 16px;
+    padding: 16px;
+    background: rgba(255,255,255,.035);
+  }
+  .cv-stack {
+    display: grid;
+    gap: 14px;
+  }
+  .cv-label {
+    display: block;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    opacity: .72;
+    margin-bottom: 8px;
+  }
+  .cv-input,
+  .cv-select,
+  .cv-textarea {
+    width: 100%;
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 12px;
+    background: rgba(9,12,18,.72);
+    color: #f3f6fb;
+    padding: 12px 13px;
+    font: inherit;
+    box-sizing: border-box;
+  }
+  .cv-textarea {
+    min-height: 112px;
+    resize: vertical;
+    line-height: 1.45;
+  }
+  .cv-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .cv-help {
+    font-size: 13px;
+    line-height: 1.45;
+    opacity: .78;
+    margin-top: 8px;
+  }
+  .cv-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .cv-button {
+    border: 0;
+    border-radius: 999px;
+    padding: 12px 18px;
+    font: inherit;
+    font-weight: 600;
+    cursor: default;
+  }
+  .cv-button-primary {
+    background: linear-gradient(135deg, #ffd36e, #ff9e4a);
+    color: #1c1308;
+  }
+  .cv-button-secondary {
+    background: rgba(255,255,255,.1);
+    color: #f3f6fb;
+    border: 1px solid rgba(255,255,255,.12);
+  }
+  .cv-inline {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .cv-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    opacity: .9;
+  }
+  .cv-result {
+    border: 1px dashed rgba(255,255,255,.16);
+    border-radius: 14px;
+    padding: 14px;
+    background: rgba(255,255,255,.025);
+  }
+  .cv-audio {
+    width: 100%;
+    margin: 12px 0 10px;
+    opacity: .88;
+  }
+  .cv-note {
+    font-size: 12px;
+    opacity: .7;
+  }
+  @media (max-width: 980px) {
+    .cv-shell {
+      grid-template-columns: 1fr;
+    }
+    .cv-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="mockup">
+  <div class="mockup-header">Single Generate Flow</div>
+  <div class="mockup-body">
+    <div class="cv-shell">
+      <div class="cv-stack">
+        <div class="cv-panel">
+          <label class="cv-label" for="character-prompt">Character Prompt</label>
+          <textarea id="character-prompt" class="cv-textarea">young female voice, bright, playful, nimble, fairy-like, quick reactions, not squeaky, warm but mischievous</textarea>
+          <div class="cv-help">App-level field. The lab turns this into CosyVoice <strong>instruct_text</strong> for casting.</div>
+        </div>
+
+        <div class="cv-panel">
+          <label class="cv-label" for="session-text">Session Text</label>
+          <textarea id="session-text" class="cv-textarea">I found it. I knew there was still magic left in this room.</textarea>
+          <div class="cv-help">Real CosyVoice field: <strong>tts_text</strong>.</div>
+        </div>
+
+        <div class="cv-panel">
+          <div class="cv-label">Action</div>
+          <div class="cv-actions">
+            <button class="cv-button cv-button-primary">Generate Voice</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="cv-stack">
+        <div class="cv-panel">
+          <div class="cv-label">Real CosyVoice Inputs</div>
+          <div class="cv-grid">
+            <div>
+              <label class="cv-label" for="model">Model</label>
+              <select id="model" class="cv-select">
+                <option>Fun-CosyVoice3-0.5B</option>
+                <option>Fun-CosyVoice3-1.5B</option>
+              </select>
+            </div>
+            <div>
+              <label class="cv-label" for="mode">Mode</label>
+              <select id="mode" class="cv-select">
+                <option>instruct2</option>
+                <option>sft</option>
+                <option>zero_shot</option>
+              </select>
+            </div>
+            <div>
+              <label class="cv-label" for="speaker-id">Preset Speaker Id</label>
+              <input id="speaker-id" class="cv-input" value="female-07">
+            </div>
+            <div>
+              <label class="cv-label" for="speed">Speed</label>
+              <input id="speed" class="cv-input" value="1.0">
+            </div>
+          </div>
+
+          <div style="margin-top:12px;">
+            <label class="cv-label" for="instruct-text">CosyVoice Instruct Text</label>
+            <textarea id="instruct-text" class="cv-textarea">young female, bright, playful, nimble, quick delivery, warm but mischievous</textarea>
+            <div class="cv-help">Real CosyVoice field for <strong>instruct2</strong>. In practice this can be auto-derived from the character prompt, but the lab should let you edit it directly.</div>
+          </div>
+
+          <div class="cv-inline" style="margin-top:12px;">
+            <label class="cv-check"><input type="checkbox" checked> stream = true</label>
+            <label class="cv-check"><input type="checkbox" checked> text_frontend = true</label>
+          </div>
+        </div>
+
+        <div class="cv-panel">
+          <div class="cv-label">Result</div>
+          <div class="cv-result">
+            <div style="font-weight:600;">Generated voice preview</div>
+            <audio class="cv-audio" controls></audio>
+            <div class="cv-actions">
+              <button class="cv-button cv-button-secondary">Save as WAV</button>
+            </div>
+            <div class="cv-note">Visible only after a voice has been generated.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

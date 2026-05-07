@@ -1,0 +1,112 @@
+<h2>Production Test</h2>
+<p class="subtitle">
+  Thin mock with production-shaped server. Browser STT captures the user turn, then the server
+  picks a random built-in reply, waits 100 ms, produces mocked speech, stores the turn, and keeps
+  the latest 20 reply audios with replay.
+</p>
+
+<div class="mockup">
+  <div class="mockup-header">Minimal Test Console</div>
+  <div class="mockup-body">
+    <div class="section">
+      <div class="label">Reference Voice</div>
+      <div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
+        <div class="mock-input" style="flex:1;">Remembered reference WAV: green-fairy-v2.wav</div>
+        <button class="mock-button">Replace Reference WAV</button>
+      </div>
+      <p class="subtitle" style="margin-top:10px;">
+        Copied into Voice Cast storage and reused across reloads.
+      </p>
+    </div>
+
+    <div class="section">
+      <div class="label">Live Turn</div>
+      <div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
+        <button class="mock-button">Start Listening</button>
+        <div class="placeholder" style="flex:1; min-height:64px;">
+          Mic state: Listening... auto-stop on silence
+        </div>
+      </div>
+      <div class="mock-content" style="margin-top:12px;">
+        <strong>User transcript</strong>
+        <br />
+        "Can you stay here for a second?"
+        <br /><br />
+        <strong>Random reply</strong>
+        <br />
+        "I can stay right here until you are ready."
+        <br /><br />
+        <strong>Speech generation time</strong>
+        <br />
+        1.14s
+        <br /><br />
+        <strong>Chain</strong>
+        <br />
+        Browser STT -> 100 ms pause -> mocked MeloTTS -> mocked OpenVoice V2
+      </div>
+      <div style="display:flex; gap:12px; margin-top:12px;">
+        <button class="mock-button">Replay Latest Reply</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="label">Recent Turns</div>
+      <p class="subtitle">Persisted on disk. Oldest turn is pruned after 20 items and its audio file is deleted.</p>
+
+      <div style="display:grid; gap:10px; margin-top:12px;">
+        <div class="mock-content">
+          <strong>#20 · 15:42:11</strong>
+          <br />
+          Heard: "Can you stay here for a second?"
+          <br />
+          Reply: "I can stay right here until you are ready."
+          <br />
+          Time: 1.14s
+          <br />
+          <button class="mock-button" style="margin-top:8px;">Replay</button>
+        </div>
+
+        <div class="mock-content">
+          <strong>#19 · 15:40:48</strong>
+          <br />
+          Heard: "Where did you go?"
+          <br />
+          Reply: "I only stepped away for a moment."
+          <br />
+          Time: 0.96s
+          <br />
+          <button class="mock-button" style="margin-top:8px;">Replay</button>
+        </div>
+
+        <div class="mock-content">
+          <strong>#18 · 15:39:02</strong>
+          <br />
+          Heard: "Are you still listening?"
+          <br />
+          Reply: "Yes, I am still listening."
+          <br />
+          Time: 1.28s
+          <br />
+          <button class="mock-button" style="margin-top:8px;">Replay</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:18px;">
+  <div class="option" data-choice="approve-ui" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>UI Direction Looks Right</h3>
+      <p>Move on to server/data design and written spec.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="revise-ui" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Needs UI Changes</h3>
+      <p>Keep the flow, but adjust layout, labels, or what is shown per turn.</p>
+    </div>
+  </div>
+</div>

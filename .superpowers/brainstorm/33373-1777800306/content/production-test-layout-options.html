@@ -1,0 +1,94 @@
+<h2>Production Test Layout</h2>
+<p class="subtitle">
+  Same behavior in all three: choose a reference WAV, speak until silence, show the recognized
+  transcript plus the chosen random reply, wait 100 ms, then play the mocked
+  MeloTTS -> OpenVoice V2 response.
+</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. Guided Stage Flow</div>
+        <div class="mockup-body">
+          <div class="label">Step 1</div>
+          <div class="mock-input">Reference WAV attached: green-fairy.wav</div>
+          <div class="label" style="margin-top:14px;">Step 2</div>
+          <div class="placeholder" style="height:88px;">Mic orb: Listening...</div>
+          <div class="label" style="margin-top:14px;">Step 3</div>
+          <div class="mock-content">
+            User said: "Can you help me?"
+            <br />
+            Reply picked: "I can walk you through it."
+          </div>
+          <div class="mock-button" style="margin-top:14px;">Play mocked response</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Guided Stage Flow</h3>
+      <p>Most explicit. Good if this tab is a demo bench and clarity matters more than speed.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. Conversation Bench</div>
+        <div class="mockup-body">
+          <div class="mock-nav">Reference WAV | Mic | Reply Engine Chain</div>
+          <div style="display:flex; gap:12px; margin-top:12px;">
+            <div class="mock-sidebar" style="width:36%;">Reference: snowshoe.wav</div>
+            <div class="mock-content" style="width:64%;">
+              <strong>User transcript</strong>
+              <br />
+              "Where did you go?"
+              <br /><br />
+              <strong>Random reply</strong>
+              <br />
+              "I only stepped away for a moment."
+            </div>
+          </div>
+          <div class="placeholder" style="margin-top:12px; height:64px;">
+            Timeline: listen -> silence -> 100ms -> MeloTTS -> OpenVoice V2 -> playback
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Conversation Bench</h3>
+      <p>Feels closest to a real turn loop. Best if you want the tab to feel like a production rehearsal.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. Minimal Test Console</div>
+        <div class="mockup-body">
+          <div class="mock-input">Reference WAV: red-tinkerbell.wav</div>
+          <div class="placeholder" style="margin-top:12px; height:72px;">Mic meter + auto-stop on silence</div>
+          <div class="mock-content" style="margin-top:12px;">
+            Transcript: "Are you still there?"
+            <br />
+            Reply: "Yes, I am right here."
+          </div>
+          <div class="pros-cons" style="margin-top:12px;">
+            <div class="pros">
+              <h4>Fast</h4>
+              <ul><li>Few controls</li></ul>
+            </div>
+            <div class="cons">
+              <h4>Tradeoff</h4>
+              <ul><li>Less explainable flow</li></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Minimal Test Console</h3>
+      <p>Smallest surface area. Best if this tab is purely for quick repeated testing.</p>
+    </div>
+  </div>
+</div>

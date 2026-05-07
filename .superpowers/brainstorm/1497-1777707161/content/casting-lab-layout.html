@@ -1,0 +1,135 @@
+<div class="section">
+  <h2>CosyVoice Character Casting Lab</h2>
+  <p class="subtitle">Mac-first local app for casting 3 characters, checking latency, and exporting production recipes.</p>
+</div>
+
+<div class="label">Recommended layout</div>
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Main Workspace</div>
+    <div class="mockup-body">
+      <div style="display:grid;grid-template-columns:220px 1fr 280px;gap:16px;min-height:460px;">
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+          <div class="label">Characters</div>
+          <div class="option" style="margin-top:10px;">
+            <div class="content">
+              <h3>Red Tinker Bell</h3>
+              <p>Bright, playful, quick</p>
+            </div>
+          </div>
+          <div class="option" style="margin-top:10px;">
+            <div class="content">
+              <h3>Green Fairy</h3>
+              <p>Soft, warm, gentle</p>
+            </div>
+          </div>
+          <div class="option" style="margin-top:10px;">
+            <div class="content">
+              <h3>Snowshoe</h3>
+              <p>Clear, cool, precise</p>
+            </div>
+          </div>
+          <div style="margin-top:18px;">
+            <div class="label">Saved recipe</div>
+            <div class="placeholder" style="height:110px;">engine: CosyVoice3<br>speaker: preset-07<br>style: bright playful young<br>moods: happy/excited/playful</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-rows:auto auto 1fr auto;gap:14px;">
+          <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+            <div class="label">Casting controls</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
+              <div class="placeholder" style="height:84px;">Base speaker picker<br>preset voices</div>
+              <div class="placeholder" style="height:84px;">Style prompt editor<br>young female, bright, playful</div>
+              <div class="placeholder" style="height:84px;">Speech params<br>speed, temperature, stream</div>
+              <div class="placeholder" style="height:84px;">Mood preset test<br>neutral / happy / sad / focused</div>
+            </div>
+          </div>
+
+          <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+            <div class="label">Test script</div>
+            <div class="placeholder" style="height:76px;">Canonical lines for neutral, playful, warm, sad, focused, surprised</div>
+          </div>
+
+          <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+            <div class="label">Audition results</div>
+            <div class="cards" style="grid-template-columns:repeat(2,minmax(0,1fr));">
+              <div class="card">
+                <div class="card-body">
+                  <h3>Candidate A</h3>
+                  <p>Preset 07 + bright playful</p>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-body">
+                  <h3>Candidate B</h3>
+                  <p>Preset 12 + airy warm</p>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-body">
+                  <h3>Candidate C</h3>
+                  <p>Preset 03 + cool precise</p>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-body">
+                  <h3>Candidate D</h3>
+                  <p>Preset 09 + youthful crisp</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+            <div class="label">Compare queue</div>
+            <div class="placeholder" style="height:56px;">Pin 2-4 candidates and replay the same line across them</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-rows:auto auto 1fr;gap:14px;">
+          <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+            <div class="label">Latency panel</div>
+            <div class="placeholder" style="height:122px;">cold start<br>warm start<br>first audio ms<br>full render ms<br>streaming on/off</div>
+          </div>
+
+          <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+            <div class="label">Consistency checks</div>
+            <div class="placeholder" style="height:96px;">same recipe, 5 reruns<br>same recipe, different moods<br>same recipe, longer conversation turns</div>
+          </div>
+
+          <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+            <div class="label">Export</div>
+            <div class="placeholder" style="height:160px;">Save character recipe JSON<br>save benchmark snapshot<br>mark recipe production-ready</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:22px;">
+  <div class="options">
+    <div class="option" data-choice="layout-approve" onclick="toggleSelect(this)">
+      <div class="letter">A</div>
+      <div class="content">
+        <h3>Structure looks right</h3>
+        <p>Keep casting, consistency, latency, and export in one workspace.</p>
+      </div>
+    </div>
+    <div class="option" data-choice="layout-too-dense" onclick="toggleSelect(this)">
+      <div class="letter">B</div>
+      <div class="content">
+        <h3>Too dense</h3>
+        <p>Split casting and benchmarking into separate screens.</p>
+      </div>
+    </div>
+    <div class="option" data-choice="layout-missing" onclick="toggleSelect(this)">
+      <div class="letter">C</div>
+      <div class="content">
+        <h3>Missing a key area</h3>
+        <p>The app needs another core workspace before design is valid.</p>
+      </div>
+    </div>
+  </div>
+</div>

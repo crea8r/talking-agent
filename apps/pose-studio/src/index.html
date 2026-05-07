@@ -143,18 +143,21 @@
                       rows="4"
                       placeholder="Describe the animation you want the character to perform."
                     ></textarea>
-                    <button
-                      id="director-prompt-send"
-                      class="prompt-composer-send"
-                      type="button"
-                      aria-label="Send prompt to Codex"
-                      title="Send prompt to Codex"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M4.5 12 19 4.5l-3.4 15-4.1-5-7 .5Z" />
-                        <path d="M10.8 13.2 19 4.5" />
-                      </svg>
-                    </button>
+                    <div class="prompt-composer-controls">
+                      <span id="director-prompt-elapsed" class="prompt-composer-elapsed" hidden>0.0s</span>
+                      <button
+                        id="director-prompt-send"
+                        class="prompt-composer-send"
+                        type="button"
+                        aria-label="Send prompt to Codex"
+                        title="Send prompt to Codex"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M4.5 12 19 4.5l-3.4 15-4.1-5-7 .5Z" />
+                          <path d="M10.8 13.2 19 4.5" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   <p id="director-response" class="director-response" hidden></p>
                 </label>

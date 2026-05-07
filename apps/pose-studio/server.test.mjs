@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable } from 'node:stream';
 
 import {
   buildDirectorCodexExecArgs,
   createPoseStudioRequestHandler,
+  ensureDirectorCodexHome,
 } from './server-lib.mjs';
 
 function createBridgeStoreStub() {
@@ -91,12 +95,6 @@ function createSpawnStub() {
 
   const spawnFn = (command, args, options) => {
     const child = new EventEmitter();
-    child.stdin = {
-      ended: false,
-      end() {
-        this.ended = true;
-      },
-    };
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     child.kill = () => {
@@ -116,6 +114,25 @@ function createSpawnStub() {
     spawnFn,
   };
 }
+
+async function noopPrepareDirectorCodexHome() {}
+
+test('ensureDirectorCodexHome blocks Codex system skill installation by making skills a file', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'pose-studio-director-home-'));
+  const sourceCodexHome = path.join(tempRoot, 'source');
+  const directorCodexHome = path.join(tempRoot, 'director');
+
+  await mkdir(sourceCodexHome, { recursive: true });
+  await Promise.all([
+    writeFile(path.join(sourceCodexHome, 'auth.json'), '{}\n'),
+    writeFile(path.join(sourceCodexHome, 'installation_id'), 'test-installation\n'),
+  ]);
+
+  await ensureDirectorCodexHome({ sourceCodexHome, directorCodexHome });
+
+  const skillsPayload = await readFile(path.join(directorCodexHome, 'skills'), 'utf8');
+  assert.match(skillsPayload, /blocks Codex skill installation/i);
+});
 
 async function invokeHandler(handler, {
   method = 'GET',
@@ -162,8 +179,11 @@ async function withHandler(run, options = {}) {
     host: '127.0.0.1',
     port: 4387,
     repoRoot: '/Users/hieu/Work/crea8r/talking-agent',
+    directorCodexHome: '/private/tmp/pose-studio-codex-home-test',
+    directorCodexWorkdir: '/private/tmp/pose-studio-director-test',
     bridgeStore,
     spawnCodex: options.spawnCodex,
+    prepareDirectorCodexHome: options.prepareDirectorCodexHome || noopPrepareDirectorCodexHome,
   });
 
   await run({ bridgeStore, handler });
@@ -171,31 +191,70 @@ async function withHandler(run, options = {}) {
 
 test('buildDirectorCodexExecArgs injects a local pose-studio MCP config override', () => {
   const args = buildDirectorCodexExecArgs({
-    repoRoot: '/Users/hieu/Work/crea8r/talking-agent',
-    stateFilePath: '/private/tmp/pose-studio-state.json',
+    mcpUrl: 'http://127.0.0.1:4387/mcp',
     prompt: 'Make her greet, think, then bow.',
     modelId: 'bhf-1-2',
   });
 
-  assert.deepEqual(args.slice(0, 7), [
+  assert.deepEqual(args.slice(0, 5), [
+    '-a',
+    'never',
     'exec',
     '--json',
     '--ephemeral',
-    '--skip-git-repo-check',
-    '-s',
-    'read-only',
-    '-C',
   ]);
-  assert.match(args.join(' '), /mcp_servers\.pose-studio\.command=/);
-  assert.match(args.join(' '), /mcp_servers\.pose-studio\.args=/);
-  assert.match(args.join(' '), /POSE_STUDIO_BRIDGE_STATE_PATH/);
+  const disabledFeatures = [];
+  for (let index = 5; index < args.length; index += 2) {
+    if (args[index] !== '--disable') {
+      break;
+    }
+    disabledFeatures.push(args[index + 1]);
+  }
+  assert.deepEqual(disabledFeatures, [
+    'multi_agent',
+    'multi_agent_v2',
+    'enable_fanout',
+    'plugins',
+    'shell_tool',
+    'shell_snapshot',
+  ]);
+  assert.equal(args[5 + disabledFeatures.length * 2], '-m');
+  assert.equal(args[6 + disabledFeatures.length * 2], 'gpt-5.4-mini');
+  assert.match(args.join(' '), /--skip-git-repo-check/);
+  assert.match(args.join(' '), /-s read-only/);
+  assert.match(args.join(' '), /-C \/private\/tmp\/pose-studio-director/);
+  assert.match(args.join(' '), /mcp_servers\.pose-studio\.url="http:\/\/127\.0\.0\.1:4387\/mcp"/);
+  assert.match(args.join(' '), /model_reasoning_effort=\"low\"/);
+  assert.match(args.join(' '), /notify=\[\]/);
   assert.match(args.join(' '), /tools\.report_pose_sequence_error\.approval_mode/);
   assert.match(args.join(' '), /tools\.stage_pose_sequence\.approval_mode=\"approve\"/);
-  assert.match(args.at(-1), /pose:\/\/catalog/);
-  assert.match(args.at(-1), /stage_pose_sequence/);
-  assert.match(args.at(-1), /report_pose_sequence_error/);
+  assert.doesNotMatch(args.join(' '), /tools\.get_pose_state\.approval_mode/);
+  assert.doesNotMatch(args.join(' '), /tools\.stop_pose_sequence\.approval_mode/);
+  assert.match(args.at(-1), /Do not run shell commands\./);
+  assert.match(args.at(-1), /Do not use web search\./);
+  assert.match(args.at(-1), /Use only pose-studio MCP tools\./);
+  assert.match(args.at(-1), /Do not delegate\./);
+  assert.match(args.at(-1), /Do not spawn agents\./);
+  assert.match(args.at(-1), /Do not use collab tools\./);
+  assert.match(args.at(-1), /stage_pose_sequence tool description includes the gesture catalog you need\./);
+  assert.match(args.at(-1), /Your next step must be exactly one pose-studio MCP write tool call\./);
+  assert.match(args.at(-1), /stage_pose_sequence exactly once with \{ prompt, steps \}/);
+  assert.match(args.at(-1), /report_pose_sequence_error exactly once with \{ prompt, message \}/);
   assert.match(args.at(-1), /bhf-1-2/);
   assert.match(args.at(-1), /Make her greet, think, then bow\./);
+});
+
+test('GET /healthz exposes the persistent local MCP endpoint', async () => {
+  await withHandler(async ({ handler }) => {
+    const response = await invokeHandler(handler, {
+      method: 'GET',
+      url: '/healthz',
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.ok, true);
+    assert.equal(response.payload.mcpUrl, 'http://127.0.0.1:4387/mcp');
+  });
 });
 
 test('POST /api/director/request launches a single ephemeral codex run', async () => {
@@ -215,7 +274,9 @@ test('POST /api/director/request launches a single ephemeral codex run', async (
     assert.equal(firstResponse.payload.ok, true);
     assert.equal(spawnStub.calls.length, 1);
     assert.equal(spawnStub.calls[0].command, 'codex');
-    assert.equal(spawnStub.children[0].stdin.ended, true);
+    assert.deepEqual(spawnStub.calls[0].options.stdio, ['ignore', 'pipe', 'pipe']);
+    assert.equal(spawnStub.calls[0].options.env.CODEX_HOME, '/private/tmp/pose-studio-codex-home-test');
+    assert.equal(spawnStub.calls[0].options.cwd, '/private/tmp/pose-studio-director-test');
 
     const activeState = await invokeHandler(handler, {
       method: 'GET',
