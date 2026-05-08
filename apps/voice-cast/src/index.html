@@ -25,6 +25,7 @@
         <div class="panel-head">
           <h2>Text-Only Casting</h2>
           <p class="muted">Generate a prompt voice and save it as a reusable WAV plus sidecar metadata.</p>
+          <p id="casting-backend-health" class="backend-health" data-state="checking">Checking server…</p>
         </div>
 
         <div class="field">
@@ -92,6 +93,7 @@
         <div class="panel-head">
           <h2>Production Test</h2>
           <p class="muted">Save one active voice profile, speak naturally, then measure the end-to-end local reply pipeline.</p>
+          <p id="production-backend-health" class="backend-health" data-state="checking">Checking server…</p>
         </div>
 
         <section class="subpanel">
@@ -126,11 +128,11 @@
         <section class="subpanel">
           <div class="panel-head">
             <h3>Live Turn</h3>
-            <p class="muted">Start listening manually. The browser stops on silence, then the app generates one random neutral reply.</p>
+            <p class="muted">Turn listening on to keep the loop active. The browser stops on silence, plays one random neutral reply, then listens again after playback ends.</p>
           </div>
 
           <div class="actions">
-            <button id="start-listening" class="primary" type="button">Start Listening</button>
+            <button id="start-listening" class="primary" type="button" aria-pressed="false">Turn Listening On</button>
             <button id="replay-latest-reply" type="button" hidden>Replay Latest Reply</button>
           </div>
 
@@ -154,7 +156,7 @@
             <p id="production-timing" class="console-value">n/a</p>
           </div>
 
-          <audio id="production-latest-audio" controls hidden></audio>
+          <audio id="production-latest-audio" controls autoplay preload="auto" hidden></audio>
         </section>
 
         <section class="subpanel">

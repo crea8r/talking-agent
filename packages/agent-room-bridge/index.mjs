@@ -10,7 +10,7 @@ const LOCK_RETRY_MS = 25;
 const LOCK_TIMEOUT_MS = 5000;
 const ACTIVE_AGENT_WINDOW_MS = 15_000;
 const WAIT_POLL_MS = 50;
-const CAPABILITIES_VERSION = '2026-05-01';
+const CAPABILITIES_VERSION = '2026-05-07';
 
 export function resolveDefaultBridgeStatePath({
   cwd = process.cwd(),
@@ -35,6 +35,41 @@ function createEmptyState() {
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function clampRatio(value) {
+  const parsed = Number.parseFloat(`${value ?? ''}`);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return Math.min(1, Math.max(0, parsed));
+}
+
+function normalizeAnimationBeat(beat = {}) {
+  const gestureId = typeof beat.gestureId === 'string' ? beat.gestureId.trim() : '';
+  const emoteId = typeof beat.emoteId === 'string' ? beat.emoteId.trim() : '';
+  const stageId = typeof beat.stageId === 'string' ? beat.stageId.trim() : '';
+  const atRatio = clampRatio(beat.atRatio);
+
+  if (!gestureId && !emoteId && !stageId) {
+    return null;
+  }
+
+  return {
+    gestureId,
+    emoteId,
+    stageId,
+    atRatio: atRatio ?? 0,
+  };
+}
+
+function normalizeAnimationSequence(sequence = []) {
+  const source = Array.isArray(sequence) ? sequence : Array.isArray(sequence?.beats) ? sequence.beats : [];
+  return source
+    .map((beat) => normalizeAnimationBeat(beat))
+    .filter(Boolean)
+    .sort((left, right) => left.atRatio - right.atRatio);
 }
 
 function limitItems(items, limit) {
@@ -106,8 +141,15 @@ function normalizeTurn(turn = {}) {
           gestureId:
             typeof turn.agentReply.gestureId === 'string' ? turn.agentReply.gestureId : 'Pose',
           stageId: typeof turn.agentReply.stageId === 'string' ? turn.agentReply.stageId : '',
+          subtitle:
+            typeof turn.agentReply.subtitle === 'string' ? turn.agentReply.subtitle : '',
           mood: typeof turn.agentReply.mood === 'string' ? turn.agentReply.mood : 'neutral',
           notes: typeof turn.agentReply.notes === 'string' ? turn.agentReply.notes : '',
+          interruptedAt:
+            typeof turn.agentReply.interruptedAt === 'string'
+              ? turn.agentReply.interruptedAt
+              : null,
+          animationSequence: normalizeAnimationSequence(turn.agentReply.animationSequence),
         }
       : null,
   };
@@ -168,6 +210,8 @@ function buildDerivedActionId(action = {}, { inReplyToEventId = null, batchIndex
     mood: `${action.mood || ''}`.trim(),
     reason: `${action.reason || ''}`.trim(),
     notes: `${action.notes || ''}`.trim(),
+    subtitle: `${action.subtitle || ''}`.trim(),
+    animationSequence: normalizeAnimationSequence(action.animationSequence),
   });
 
   return createHash('sha1').update(fingerprint).digest('hex').slice(0, 16);
@@ -193,11 +237,13 @@ function normalizeAction(action = {}, { inReplyToEventId = null, batchIndex = 0,
     gestureId: typeof action.gestureId === 'string' ? action.gestureId : '',
     emoteId: typeof action.emoteId === 'string' ? action.emoteId : '',
     stageId: typeof action.stageId === 'string' ? action.stageId : '',
+    subtitle: typeof action.subtitle === 'string' ? action.subtitle : '',
     mood: typeof action.mood === 'string' ? action.mood : 'neutral',
     characterId: `${action.characterId || activeModelId || ''}`.trim(),
     reason: typeof action.reason === 'string' ? action.reason : '',
     notes: typeof action.notes === 'string' ? action.notes : '',
     replyId: typeof action.replyId === 'string' ? action.replyId : '',
+    animationSequence: normalizeAnimationSequence(action.animationSequence),
   };
 }
 
@@ -351,7 +397,9 @@ function buildMetrics(turns, actions = []) {
   const pendingTurns = turns.filter((turn) => turn.status === 'pending').length;
   const claimedTurns = turns.filter((turn) => turn.status === 'claimed').length;
   const repliedTurns = turns.filter((turn) => turn.status === 'replied').length;
-  const unplayedReplies = turns.filter((turn) => turn.agentReply && !turn.agentReply.playedAt).length;
+  const unplayedReplies = turns.filter(
+    (turn) => turn.agentReply && !turn.agentReply.playedAt && !turn.agentReply.interruptedAt,
+  ).length;
   const pendingActions = actions.filter((action) => action.status === 'pending').length;
   const playingActions = actions.filter((action) => action.status === 'playing').length;
 
@@ -586,6 +634,25 @@ function applyReplyDirection(reply, context = {}) {
   }
 }
 
+function findEventById(session, eventId = null) {
+  if (!eventId) {
+    return null;
+  }
+
+  return session.events.find((entry) => entry.id === eventId) || null;
+}
+
+function hasInterruptionAfterEvent(session, eventId = null) {
+  const event = findEventById(session, eventId);
+  if (!event) {
+    return false;
+  }
+
+  return session.events.some(
+    (entry) => entry.type === 'user.interrupted_agent' && Number(entry.seq) > Number(event.seq),
+  );
+}
+
 function buildJoinPayload(session, cursor, recentFinalTurns = null) {
   const payload = {
     callId: session.id,
@@ -597,6 +664,8 @@ function buildJoinPayload(session, cursor, recentFinalTurns = null) {
     activeModelId: session.avatar.activeModelId || null,
     avatarCatalogUri: session.avatar.catalogUri || 'avatar://catalog',
     avatarCatalogVersion: session.avatar.catalogVersion || null,
+    human: cloneJson(session.human),
+    metadata: cloneJson(session.metadata),
   };
 
   if (recentFinalTurns) {
@@ -662,6 +731,7 @@ export function createAgentRoomBridgeStore({
         reusableSession.title = normalizedTitle;
         reusableSession.roomName = normalizedRoomName;
         reusableSession.livekitUrl = normalizedLivekitUrl;
+        reusableSession.state = 'waiting';
         reusableSession.human = {
           identity: normalizedHumanIdentity,
           name: normalizedHumanName,
@@ -803,6 +873,32 @@ export function createAgentRoomBridgeStore({
     });
   }
 
+  async function mergeSessionMetadata({ sessionId, metadata = {} }) {
+    return mutate((state) => {
+      const session = getSessionOrThrow(state, sessionId);
+      const now = new Date().toISOString();
+      const patch = metadata && typeof metadata === 'object' ? cloneJson(metadata) : {};
+
+      session.metadata = {
+        ...session.metadata,
+        ...patch,
+      };
+
+      if (typeof patch.activeModelId === 'string') {
+        session.avatar.activeModelId = patch.activeModelId.trim();
+      }
+      if (typeof patch.avatarCatalogUri === 'string') {
+        session.avatar.catalogUri = patch.avatarCatalogUri.trim();
+      }
+      if (typeof patch.avatarCatalogVersion === 'string') {
+        session.avatar.catalogVersion = patch.avatarCatalogVersion.trim();
+      }
+
+      touchSession(session, now);
+      return buildSessionSnapshot(session);
+    });
+  }
+
   async function setCallState({ sessionId, state: nextState, reason = '' }) {
     return mutate((rawState) => {
       const session = getSessionOrThrow(rawState, sessionId);
@@ -924,6 +1020,56 @@ export function createAgentRoomBridgeStore({
         );
         touchSession(session, now);
       }
+
+      return buildSessionSnapshot(session);
+    });
+  }
+
+  async function interruptAgent({
+    sessionId,
+    reason = 'human started speaking',
+    interruptedActionIds = [],
+  }) {
+    return mutate((state) => {
+      const session = getSessionOrThrow(state, sessionId);
+      const now = new Date().toISOString();
+      const interruptedSet = new Set(
+        interruptedActionIds
+          .map((value) => `${value || ''}`.trim())
+          .filter(Boolean),
+      );
+      const interruptedActions = [];
+
+      for (const action of session.actions) {
+        if (action.type !== 'speech' || action.status === 'completed') {
+          continue;
+        }
+
+        if (interruptedSet.size && !interruptedSet.has(action.actionId)) {
+          continue;
+        }
+
+        action.status = 'completed';
+        action.completedAt = now;
+        interruptedActions.push(action.actionId);
+
+        if (action.replyId) {
+          const turn = session.turns.find((entry) => entry.agentReply?.id === action.replyId);
+          if (turn?.agentReply && !turn.agentReply.playedAt && !turn.agentReply.interruptedAt) {
+            turn.agentReply.interruptedAt = now;
+          }
+        }
+      }
+
+      appendEvent(
+        session,
+        'user.interrupted_agent',
+        {
+          reason: `${reason || 'human started speaking'}`.trim(),
+          interruptedActionIds: interruptedActions,
+        },
+        now,
+      );
 
       return buildSessionSnapshot(session);
     });
@@ -1064,6 +1210,10 @@ export function createAgentRoomBridgeStore({
           };
         }
 
+        if (action.type === 'speech' && hasInterruptionAfterEvent(session, inReplyToEventId)) {
+          continue;
+        }
+
         const storedAction = normalizeAction(action);
         session.actions = limitItems([...session.actions, storedAction], DEFAULT_MAX_ACTIONS);
         acceptedActionIds.push(storedAction.actionId);
@@ -1081,6 +1231,7 @@ export function createAgentRoomBridgeStore({
               id: randomUUID(),
               actionId: storedAction.actionId,
               text: storedAction.text,
+              subtitle: storedAction.subtitle || storedAction.text,
               createdAt: now,
               playedAt: null,
               agentId: session.agent.id || 'codex-openai',
@@ -1090,6 +1241,11 @@ export function createAgentRoomBridgeStore({
               stageId: storedAction.stageId || batchDirection?.stageId || '',
               mood: storedAction.mood,
               notes: storedAction.notes,
+              animationSequence:
+                storedAction.animationSequence.length > 0
+                  ? storedAction.animationSequence
+                  : [],
+              interruptedAt: null,
             };
             storedAction.replyId = turn.agentReply.id;
             lastReply = turn.agentReply;
@@ -1184,6 +1340,12 @@ export function createAgentRoomBridgeStore({
         const now = new Date().toISOString();
         action.status = 'completed';
         action.completedAt = now;
+        if (action.type === 'speech' && action.replyId) {
+          const turn = session.turns.find((entry) => entry.agentReply?.id === action.replyId);
+          if (turn?.agentReply && !turn.agentReply.playedAt && !turn.agentReply.interruptedAt) {
+            turn.agentReply.interruptedAt = now;
+          }
+        }
         touchSession(session, now);
       }
 
@@ -1386,7 +1548,9 @@ export function createAgentRoomBridgeStore({
     submitAgentReply,
     markReplyPlayed,
     syncAvatarCatalog,
+    mergeSessionMetadata,
     setCallState,
+    interruptAgent,
     appendUserUtteranceStart,
     appendUserUtterancePartial,
     appendUserUtteranceFinal,

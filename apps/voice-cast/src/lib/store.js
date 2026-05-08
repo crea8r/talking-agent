@@ -8,6 +8,10 @@ export function createVoiceCastState() {
       model: 'CosyVoice-300M-Instruct',
       speakers: [],
       speakersLoading: true,
+      backendHealth: {
+        running: null,
+        detail: '',
+      },
       presetSpeaker: '',
       sampleLineIndex: 0,
       speed: '1.0',
@@ -22,6 +26,10 @@ export function createVoiceCastState() {
     production: {
       speakers: [],
       speakersLoading: true,
+      backendHealth: {
+        running: null,
+        detail: '',
+      },
       selectedSpeakerId: '',
       selectedReferenceFile: null,
       profile: null,
@@ -30,7 +38,9 @@ export function createVoiceCastState() {
       transcript: '',
       setupOpen: true,
       sttSupported: true,
+      listenerEnabled: false,
       listening: false,
+      replyPlaying: false,
       savingProfile: false,
       submittingTurn: false,
       error: '',

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Talking Agent · App 4 One-to-One Agent Room</title>
+    <title>Talking Agent · One-to-One Voice Session</title>
     <link rel="stylesheet" href="/styles.css" />
     <script type="importmap">
       {
@@ -17,454 +17,281 @@
     </script>
   </head>
   <body>
-    <main class="shell stack-lg">
-      <header class="panel topbar stack-lg">
-        <div class="topbar-row">
-          <div class="stack-sm">
-            <span class="eyebrow">App 4</span>
-            <h1>One-to-One Agent Room</h1>
-          </div>
-
-          <nav class="screen-nav" role="tablist" aria-label="App screens">
-            <button
-              id="screen-tab-setup"
-              class="screen-tab is-active"
-              type="button"
-              role="tab"
-              aria-selected="true"
-              aria-controls="screen-setup"
-              data-screen-target="setup"
-            >
-              Call
-            </button>
-            <button
-              id="screen-tab-agent-setup"
-              class="screen-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="screen-agent-setup"
-              data-screen-target="agent-setup"
-            >
-              Agent Setup
-            </button>
-            <button
-              id="screen-tab-diagnostics"
-              class="screen-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="screen-diagnostics"
-              data-screen-target="diagnostics"
-            >
-              Diagnostics
-            </button>
-          </nav>
-        </div>
-
-        <div class="status-strip">
-          <article class="status-card status-card--compact" data-state="idle">
-            <span class="status-label">Room</span>
-            <strong id="room-status">Idle</strong>
-            <p id="room-detail" class="status-detail">Not connected.</p>
-          </article>
-
-          <article class="status-card status-card--compact" data-state="idle">
-            <span class="status-label">Agent</span>
-            <strong id="agent-status">Waiting</strong>
-            <p id="agent-detail" class="status-detail">No reply playing.</p>
-          </article>
-        </div>
-      </header>
+    <main class="shell">
+      <div class="floating-mode-switch">
+        <nav class="screen-nav screen-nav--floating" role="tablist" aria-label="Primary surfaces">
+          <button
+            id="screen-tab-setup"
+            class="screen-tab is-active"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="screen-setup"
+            data-screen-target="setup"
+          >
+            <span class="screen-tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M4 7h8"></path>
+                <path d="M16 7h4"></path>
+                <path d="M10 7a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z"></path>
+                <path d="M4 17h4"></path>
+                <path d="M12 17h8"></path>
+                <path d="M8 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z"></path>
+              </svg>
+            </span>
+            <span class="screen-tab-label">Setup</span>
+          </button>
+          <button
+            id="screen-tab-call"
+            class="screen-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="screen-call"
+            data-screen-target="call"
+          >
+            <span class="screen-tab-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M8.7 4.8c.6-.6 1.5-.8 2.3-.4l2.1 1c.8.4 1.2 1.3 1 2.2l-.4 2a2 2 0 0 0 .6 1.8l1.3 1.3a2 2 0 0 0 1.8.6l2-.4c.9-.2 1.8.2 2.2 1l1 2.1c.4.8.2 1.7-.4 2.3l-1.3 1.3c-1.4 1.4-3.5 1.9-5.4 1.2a22 22 0 0 1-7-4.5 22 22 0 0 1-4.5-7c-.7-1.9-.2-4 1.2-5.4l1.3-1.3Z"></path>
+              </svg>
+            </span>
+            <span class="screen-tab-label">Call</span>
+          </button>
+        </nav>
+      </div>
 
       <section
         id="screen-setup"
-        class="screen screen-grid screen-grid--call"
+        class="screen"
         data-screen="setup"
         role="tabpanel"
         aria-labelledby="screen-tab-setup"
       >
-        <article class="panel stack-lg call-surface">
-          <div class="section-head call-surface-head">
-            <div class="stack-sm">
-              <span class="eyebrow">Call</span>
-              <h2 id="call-title">Loading…</h2>
-              <p id="call-subtitle" class="status-detail">Preparing the call session.</p>
-            </div>
-
-            <div class="actions actions--tight">
-              <button id="disconnect-call-live" type="button" disabled>End Call</button>
-            </div>
-          </div>
-
-          <div id="call-lobby" class="call-lobby">
-            <div class="call-lobby-form stack-lg">
-              <div class="stack-sm">
-                <span class="legend">Before the call starts</span>
-                <p class="status-detail">
-                  Set the room details here. The live camera and avatar surfaces only appear after
-                  the room is active.
-                </p>
-              </div>
-
-              <div class="field">
-                <label for="livekit-url">LiveKit WebSocket URL</label>
-                <input id="livekit-url" name="livekit-url" placeholder="ws://127.0.0.1:7880" />
-              </div>
-
-              <div class="field-grid">
-                <div class="field">
-                  <label for="room-name">Room Name</label>
-                  <input id="room-name" name="room-name" placeholder="talking-agent-call" />
-                </div>
-
-                <div class="field">
-                  <label for="identity">Human Identity</label>
-                  <input id="identity" name="identity" placeholder="human-room-host" />
-                </div>
-              </div>
-
-              <div class="field">
-                <label for="participant-name">Display Name</label>
-                <input id="participant-name" name="participant-name" placeholder="Human Caller" />
-              </div>
-
-              <div class="toggle-row" role="group" aria-label="Media publish settings">
-                <label class="toggle">
-                  <input id="enable-camera" type="checkbox" />
-                  <span>Publish camera</span>
-                </label>
-                <label class="toggle">
-                  <input id="enable-microphone" type="checkbox" />
-                  <span>Publish microphone</span>
-                </label>
-              </div>
-
-              <div class="actions actions--tight">
-                <button id="join-call" class="primary" type="button">Connect Agent</button>
-              </div>
-
-              <p class="status-detail">
-                Start Room unlocks after a fresh heartbeat from the agent runtime.
-              </p>
-
-              <div class="badge-row">
-                <span class="badge">
-                  <span class="badge-label">Project</span>
-                  <strong id="project-name">Loading…</strong>
-                </span>
-                <span class="badge">
-                  <span class="badge-label">Call</span>
-                  <strong id="bridge-call-title">Loading…</strong>
-                </span>
-                <span class="badge">
-                  <span class="badge-label">Agent</span>
-                  <strong id="bridge-agent-label">Codex OpenAI</strong>
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div id="call-live" class="call-live stack-lg" hidden>
-            <div class="badge-row badge-row--call-meta">
-              <span class="badge">
-                <span class="badge-label">You</span>
-                <strong id="local-identity">none</strong>
-              </span>
-              <span class="badge">
-                <span class="badge-label">Remote</span>
-                <strong id="remote-count">0</strong>
-              </span>
-            </div>
-
-            <div class="call-grid">
-              <div id="local-stage" class="participant-stage-frame participant-stage-frame--call">
-                <div class="empty-state">Start the room to preview local media.</div>
-              </div>
-
-              <article class="call-tile call-tile--agent">
-                <div class="participant-header">
-                  <div class="stack-sm">
-                    <span class="legend">Agent</span>
-                    <strong id="call-agent-name">Codex OpenAI</strong>
-                  </div>
-                  <div id="call-agent-presence" class="status-pill" data-state="idle">waiting</div>
-                </div>
-
-                <div id="stage-shell" class="stage-shell stage-shell--call">
+        <article class="panel stack-xl setup-panel">
+          <section class="avatar-preview-card" aria-label="Avatar preview">
+            <div id="setup-avatar-host" class="avatar-host">
+              <section id="avatar-preview-shell" class="avatar-preview-shell">
+                <div id="stage-shell" class="stage-shell">
                   <canvas id="agent-canvas" aria-label="Agent avatar stage"></canvas>
+                  <div class="orb orb-a"></div>
+                  <div class="orb orb-b"></div>
                 </div>
-
-                <div class="badge-row">
-                  <span class="badge">
-                    <span class="badge-label">Avatar</span>
-                    <strong id="active-avatar">Loading…</strong>
-                  </span>
-                  <span class="badge">
-                    <span class="badge-label">Emote</span>
-                    <strong id="active-emote">Neutral</strong>
-                  </span>
-                  <span class="badge">
-                    <span class="badge-label">Gesture</span>
-                    <strong id="active-gesture">Pose</strong>
-                  </span>
-                  <span class="badge">
-                    <span class="badge-label">Mouth</span>
-                    <strong id="active-mouth">rest</strong>
-                  </span>
-                </div>
-              </article>
+              </section>
             </div>
+          </section>
 
-            <div class="call-dock">
-              <div class="call-dock-row">
-                <div class="actions actions--tight">
-                  <button id="start-listening" class="primary" type="button" disabled>
-                    Listen
+          <div class="setup-controls">
+            <div class="setup-control">
+              <div class="setup-control-head">
+                <label for="bundled-model-select" class="setup-control-label">Character</label>
+                <div class="setup-action-cluster">
+                  <button
+                    id="preview-character-animation"
+                    class="setup-action-button"
+                    type="button"
+                    aria-label="Preview character animation"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M8 6v12l10-6-10-6Z" fill="currentColor" stroke="none"></path>
+                    </svg>
                   </button>
-                  <button id="stop-listening" type="button" disabled>Stop</button>
-                </div>
-                <div id="human-status" class="status-pill">idle</div>
-              </div>
-
-              <div class="call-dock-grid">
-                <div class="field">
-                  <label for="typed-input">Typed Turn</label>
-                  <textarea
-                    id="typed-input"
-                    name="typed-input"
-                    rows="4"
-                    placeholder="Type a prompt for the agent."
-                  ></textarea>
-                </div>
-
-                <div class="stack-lg">
-                  <div class="field">
-                    <span class="legend">Transcript</span>
-                    <div id="human-transcript" class="callout status-detail">none</div>
-                  </div>
-
-                  <div class="actions actions--tight">
-                    <button id="send-typed" type="button" disabled>Send Text</button>
-                    <button id="clear-typed" type="button">Clear</button>
-                  </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </article>
-      </section>
-
-      <section
-        id="screen-agent-setup"
-        class="screen screen-grid screen-grid--agent-setup"
-        data-screen="agent-setup"
-        role="tabpanel"
-        aria-labelledby="screen-tab-agent-setup"
-        hidden
-      >
-        <article class="panel stack-lg">
-          <div class="section-head">
-            <div class="stack-sm">
-              <span class="eyebrow">Agent Setup</span>
-              <h2>Runtime Bootstrap</h2>
-            </div>
-
-            <div class="actions actions--tight">
-              <button id="open-connect-prompt" type="button">Open Prompt</button>
-              <button id="copy-mcp-command" type="button">Copy Command</button>
-            </div>
-          </div>
-
-          <p class="status-detail">
-            Use this screen to connect the agent runtime and inspect the bridge session. It stays
-            out of the live call UI.
-          </p>
-
-          <article class="status-card status-card--compact backstage-status-card" data-state="idle">
-            <span class="status-label">Bridge</span>
-            <strong id="bridge-status">No session</strong>
-            <p id="bridge-detail" class="status-detail">No pending turns.</p>
-          </article>
-
-          <div class="field">
-            <label for="mcp-command">MCP command</label>
-            <textarea id="mcp-command" rows="3" readonly></textarea>
-          </div>
-
-          <div class="metric-grid">
-            <div class="metric-card">
-              <dt>Session</dt>
-              <dd id="session-id">none</dd>
-            </div>
-            <div class="metric-card">
-              <dt>Pending</dt>
-              <dd id="pending-count">0</dd>
-            </div>
-          </div>
-
-          <div class="field">
-            <span class="legend">State file</span>
-            <div id="state-file" class="code-block">Loading runtime config…</div>
-          </div>
-        </article>
-
-        <article class="panel stack-lg">
-          <div class="section-head">
-            <div class="stack-sm">
-              <span class="eyebrow">Room Tools</span>
-              <h2>Voice, Avatar, And Turns</h2>
-            </div>
-
-            <div class="actions actions--tight">
-              <button id="run-demo-reply" type="button" disabled>Run Fallback Reply</button>
-            </div>
-          </div>
-
-          <div class="field-grid">
-            <div class="field">
-              <label for="human-locale">Recognition Locale</label>
-              <select id="human-locale" name="human-locale">
-                <option value="en-US">English (US)</option>
-                <option value="en-GB">English (UK)</option>
-                <option value="vi-VN">Vietnamese</option>
-              </select>
-            </div>
-
-            <div class="field">
-              <label for="voice-select">Agent Voice</label>
-              <select id="voice-select" name="voice-select" disabled>
-                <option>Loading voices…</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="metric-grid metric-grid--wide">
-            <div class="metric-card">
-              <dt>Look</dt>
-              <dd id="look-target">center</dd>
-            </div>
-            <div class="metric-card metric-card--wide">
-              <dt>Scene</dt>
-              <dd id="scene-note">Loading avatar scene…</dd>
-            </div>
-          </div>
-
-          <div class="field-grid avatar-controls-grid">
-            <div class="field">
-              <label for="bundled-model-select">Avatar</label>
               <select id="bundled-model-select" name="bundled-model-select"></select>
             </div>
 
-            <div class="field">
-              <label for="stage-select">Stage</label>
-              <select id="stage-select" name="stage-select"></select>
-            </div>
-
-            <div class="field">
-              <label for="emote-select">Emote</label>
-              <select id="emote-select" name="emote-select"></select>
-            </div>
-
-            <div class="field">
-              <label for="gesture-select">Gesture</label>
-              <select id="gesture-select" name="gesture-select"></select>
+            <div class="setup-control setup-control--voice">
+              <div class="setup-control-head">
+                <span class="setup-control-label">Voice</span>
+                <div class="setup-action-cluster">
+                  <button
+                    id="preview-voice-sample"
+                    class="setup-action-button"
+                    type="button"
+                    aria-label="Preview selected voice sample"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M5 15.5V8.5h3.2l4.8-3.7v14.4L8.2 15.5H5Z"></path>
+                      <path d="M16 9.5c1.3.9 2 2.1 2 3.5s-.7 2.6-2 3.5"></path>
+                      <path d="M18.8 7c2.1 1.6 3.2 3.6 3.2 6s-1.1 4.4-3.2 6"></path>
+                    </svg>
+                  </button>
+                  <span
+                    id="preview-voice-sample-timer"
+                    class="setup-action-timer"
+                    aria-live="polite"
+                    hidden
+                  >0s</span>
+                </div>
+              </div>
+              <label for="voice-sample-file" class="voice-sample-picker" aria-live="polite">
+                <span class="voice-sample-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M12 16V7"></path>
+                    <path d="M8.5 10.5 12 7l3.5 3.5"></path>
+                    <path d="M5 17.5h14"></path>
+                  </svg>
+                </span>
+                <span class="voice-sample-copy">
+                  <strong id="voice-sample-file-name">Choose WAV</strong>
+                  <span id="voice-sample-status" data-tone="danger">missing voice reference, a 3+s wav file</span>
+                </span>
+                <input
+                  id="voice-sample-file"
+                  class="voice-sample-input"
+                  name="voice-sample-file"
+                  type="file"
+                  accept=".wav,audio/wav"
+                />
+              </label>
             </div>
           </div>
 
-          <div class="field-grid">
-            <div class="field">
-              <label for="speech-rate"
-                >Speech Rate <span id="speech-rate-value" class="value-tag">1.00x</span></label
-              >
-              <input id="speech-rate" type="range" min="0.75" max="1.35" step="0.05" value="1" />
-            </div>
-
-            <div class="field">
-              <label for="speech-pitch"
-                >Pitch <span id="speech-pitch-value" class="value-tag">1.00x</span></label
-              >
-              <input id="speech-pitch" type="range" min="0.75" max="1.4" step="0.05" value="1" />
-            </div>
+          <div hidden>
+            <select id="stage-select" name="stage-select"></select>
+            <select id="emote-select" name="emote-select"></select>
+            <select id="gesture-select" name="gesture-select"></select>
           </div>
-
-          <div class="field">
-            <span class="legend">Latest Reply</span>
-            <div id="last-agent-reply" class="callout status-detail">none</div>
-          </div>
-
-          <ol id="transcript-list" class="turn-list">
-            <li class="empty-state">No turns yet.</li>
-          </ol>
         </article>
       </section>
 
-      <dialog id="connect-prompt-dialog" class="prompt-dialog">
-        <article class="prompt-dialog-card stack-lg">
-          <div class="section-head">
-            <div class="stack-sm">
-              <span class="eyebrow">Agent Prompt</span>
-              <h2>Paste Into Agent Chat</h2>
-            </div>
-
-            <div class="actions actions--tight">
-              <button id="copy-connect-prompt" class="primary" type="button">Copy Prompt</button>
-              <button id="close-connect-prompt" type="button">Close</button>
-            </div>
-          </div>
-
-          <p class="status-detail">
-            Copy this block and paste it into the agent chat. The session id updates here as soon
-            as the bridge session is ready.
-          </p>
-
-          <div class="field">
-            <label for="connect-prompt-body">Prompt</label>
-            <textarea id="connect-prompt-body" rows="14" readonly>Preparing call instructions…</textarea>
-          </div>
-        </article>
-      </dialog>
-
       <section
-        id="screen-diagnostics"
-        class="screen screen-grid screen-grid--diagnostics"
-        data-screen="diagnostics"
+        id="screen-call"
+        class="screen"
+        data-screen="call"
         role="tabpanel"
-        aria-labelledby="screen-tab-diagnostics"
+        aria-labelledby="screen-tab-call"
         hidden
       >
-        <article class="panel stack-lg">
-          <div class="section-head">
-            <h2>MCP Inspector</h2>
-            <button id="refresh-inspector" type="button">Refresh</button>
-          </div>
-          <div id="inspector-summary" class="callout status-detail">Waiting for bridge data…</div>
-          <div class="field-grid inspector-grid">
-            <div class="field">
-              <label for="inspector-events">Recent Events</label>
-              <pre id="inspector-events" class="debug-output">[]</pre>
+        <article class="call-panel">
+          <div id="call-layout" class="call-layout" data-history-visible="false">
+            <div class="call-stage">
+              <div id="call-avatar-host" class="avatar-host avatar-host--call" data-agent-online="false">
+                <div id="call-empty-state" class="call-empty-state">
+                  <div class="call-empty-visual" aria-hidden="true">
+                    <span class="call-empty-ring"></span>
+                    <span class="call-empty-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M8.7 4.8c.6-.6 1.5-.8 2.3-.4l2.1 1c.8.4 1.2 1.3 1 2.2l-.4 2a2 2 0 0 0 .6 1.8l1.3 1.3a2 2 0 0 0 1.8.6l2-.4c.9-.2 1.8.2 2.2 1l1 2.1c.4.8.2 1.7-.4 2.3l-1.3 1.3c-1.4 1.4-3.5 1.9-5.4 1.2a22 22 0 0 1-7-4.5 22 22 0 0 1-4.5-7c-.7-1.9-.2-4 1.2-5.4l1.3-1.3Z"></path>
+                      </svg>
+                    </span>
+                  </div>
+                  <p id="call-empty-state-title" class="call-empty-title">Waiting</p>
+                  <p id="call-empty-state-detail" class="call-empty-detail">Ready to start</p>
+                </div>
+                <div id="call-stage-loading" class="call-stage-loading" hidden>
+                  <span class="call-stage-spinner" aria-hidden="true"></span>
+                  <span class="call-stage-loading-label">Loading</span>
+                </div>
+              </div>
+              <button
+                id="call-mic-toggle"
+                class="call-mic-toggle"
+                type="button"
+                data-state="muted"
+                data-speaking="false"
+                aria-label="Microphone muted"
+                title="Microphone muted"
+                disabled
+              >
+                <span class="call-mic-icon call-mic-icon--live" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+                    <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0"></path>
+                    <path d="M12 17v4"></path>
+                    <path d="M8.5 21h7"></path>
+                  </svg>
+                </span>
+                <span class="call-mic-icon call-mic-icon--muted" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+                    <path d="M6.5 11.5a5.5 5.5 0 0 0 8 4.8"></path>
+                    <path d="M12 17v4"></path>
+                    <path d="M8.5 21h7"></path>
+                    <path d="M4 4l16 16"></path>
+                  </svg>
+                </span>
+              </button>
+              <section class="call-subtitle-overlay" aria-label="Live call subtitles">
+                <div class="call-subtitle-bar">
+                  <p id="call-subtitle-combined" class="call-subtitle-copy">Me: Waiting for you to start the call.
+Agent: Agent is offline.</p>
+                  <div class="call-subtitle-actions">
+                    <span
+                      id="call-thinking-timer"
+                      class="call-thinking-timer"
+                      aria-live="polite"
+                      hidden
+                    ></span>
+                    <button
+                      id="call-history-toggle"
+                      class="call-history-toggle call-history-toggle--overlay"
+                      type="button"
+                      aria-label="Show call history"
+                      title="Show call history"
+                      hidden
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M7 7h10"></path>
+                        <path d="M7 12h10"></path>
+                        <path d="M7 17h10"></path>
+                      </svg>
+                    </button>
+                    <button
+                      id="join-call"
+                      class="primary call-button call-button--overlay"
+                      type="button"
+                      data-mode="start-call"
+                      aria-label="Start Call"
+                      title="Start Call"
+                    >
+                      <span class="call-button-icon call-button-icon--start" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                          <path d="M8.7 4.8c.6-.6 1.5-.8 2.3-.4l2.1 1c.8.4 1.2 1.3 1 2.2l-.4 2a2 2 0 0 0 .6 1.8l1.3 1.3a2 2 0 0 0 1.8.6l2-.4c.9-.2 1.8.2 2.2 1l1 2.1c.4.8.2 1.7-.4 2.3l-1.3 1.3c-1.4 1.4-3.5 1.9-5.4 1.2a22 22 0 0 1-7-4.5 22 22 0 0 1-4.5-7c-.7-1.9-.2-4 1.2-5.4l1.3-1.3Z"></path>
+                        </svg>
+                      </span>
+                      <span class="call-button-icon call-button-icon--end" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                          <path d="M4 16.5c2.4-2.3 5-3.5 8-3.5s5.6 1.2 8 3.5"></path>
+                          <path d="M9 15 4.5 19.5"></path>
+                          <path d="M15 15 19.5 19.5"></path>
+                        </svg>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+                <div class="call-compose">
+                  <textarea
+                    id="typed-input"
+                    class="call-compose-input"
+                    rows="1"
+                    placeholder="Type to agent"
+                  ></textarea>
+                  <button
+                    id="send-typed"
+                    class="call-compose-send"
+                    type="button"
+                    aria-label="Send typed message"
+                    title="Send typed message"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M4 12 20 4 14 20 11 13 4 12Z"></path>
+                    </svg>
+                  </button>
+                </div>
+              </section>
             </div>
-            <div class="field">
-              <label for="inspector-actions">Pending Actions</label>
-              <pre id="inspector-actions" class="debug-output">[]</pre>
-            </div>
-          </div>
-        </article>
 
-        <article class="panel stack-lg">
-          <div class="section-head">
-            <h2>Debug Snapshot</h2>
+            <aside id="call-history-panel" class="call-history" hidden>
+              <div class="call-history-head">
+                <span class="legend">History</span>
+              </div>
+              <ol id="call-history-list" class="turn-list call-history-list">
+                <li class="empty-state">No turns yet.</li>
+              </ol>
+            </aside>
           </div>
-          <pre id="debug-snapshot" class="debug-output">booting</pre>
-        </article>
 
-        <article class="panel stack-lg">
-          <div class="section-head">
-            <h2>Event Log</h2>
-          </div>
-          <ol id="log-list" class="log-list">
-            <li class="log-line">App booting…</li>
-          </ol>
         </article>
       </section>
     </main>

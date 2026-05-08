@@ -38,6 +38,7 @@ const dom = {
   actionSelect: document.querySelector('#action-select'),
   directorPromptField: document.querySelector('#director-prompt-field'),
   directorPrompt: document.querySelector('#director-prompt'),
+  directorPromptElapsed: document.querySelector('#director-prompt-elapsed'),
   directorResponse: document.querySelector('#director-response'),
   manualTransportGroup: document.querySelector('#manual-transport-group'),
   manualPlayButton: document.querySelector('#manual-transport-play'),
@@ -90,6 +91,9 @@ const state = {
     requestActive: false,
     requestId: '',
     requestErrorText: '',
+    requestStartedAtMs: 0,
+    requestElapsedSeconds: 0,
+    requestElapsedTimerId: 0,
     phase: 'idle',
     countdownValue: 0,
     countdownTimerId: 0,
@@ -442,6 +446,7 @@ async function submitDirectorPrompt() {
   state.director.requestActive = true;
   state.director.requestId = '';
   state.director.requestErrorText = '';
+  startDirectorRequestTimer();
   renderControls();
 
   try {
@@ -466,6 +471,7 @@ async function submitDirectorPrompt() {
       state.director.requestId = '';
       state.director.requestErrorText = '';
       state.isSubmittingDirectorRequest = false;
+      stopDirectorRequestTimer();
       setStatus(error.message || 'The animation request is invalid.');
     } else {
       console.error('Failed to submit director prompt', error);
@@ -473,6 +479,7 @@ async function submitDirectorPrompt() {
       state.director.requestId = '';
       state.director.requestErrorText = '';
       state.isSubmittingDirectorRequest = false;
+      stopDirectorRequestTimer();
       setStatus('Failed to send the animation request to local Codex.');
     }
   } finally {
@@ -590,6 +597,12 @@ function renderControls() {
       directorMode ||
       state.act.active ||
       directorRequestActive;
+  }
+
+  if (dom.directorPromptElapsed) {
+    const showDirectorElapsed = preDirectorMode && directorRequestActive && state.director.requestStartedAtMs > 0;
+    dom.directorPromptElapsed.hidden = !showDirectorElapsed;
+    dom.directorPromptElapsed.textContent = `${state.director.requestElapsedSeconds.toFixed(1)}s`;
   }
 
   if (dom.screenPreset) {
@@ -836,6 +849,7 @@ async function pollDirectorState() {
     }
 
     if (activeSequence?.sequenceId && activeSequence.sequenceId !== state.director.lastSequenceId) {
+      stopDirectorRequestTimer();
       state.director.requestErrorText = '';
       await startDirectorSequence(activeSequence);
       state.director.lastSequenceId = activeSequence.sequenceId;
@@ -850,6 +864,7 @@ async function pollDirectorState() {
       });
     } else if (!state.director.requestActive && !activeSequence && !isDirectorMode() && state.lastSubmittedDirectorPrompt) {
       state.isSubmittingDirectorRequest = false;
+      stopDirectorRequestTimer();
       if (state.director.requestErrorText && state.director.requestId !== state.director.lastResolvedRequestId) {
         state.director.lastResolvedRequestId = state.director.requestId;
         setStatus(state.director.requestErrorText);
@@ -1367,6 +1382,41 @@ function clearDirectorTakeoverState() {
   state.director.phase = 'idle';
   state.director.countdownValue = 0;
   state.director.pendingSequence = null;
+}
+
+function refreshDirectorRequestElapsed() {
+  if (!state.director.requestStartedAtMs) {
+    state.director.requestElapsedSeconds = 0;
+    return;
+  }
+
+  state.director.requestElapsedSeconds = Math.max(
+    0,
+    Math.round(((performance.now() - state.director.requestStartedAtMs) / 1000) * 10) / 10,
+  );
+}
+
+function clearDirectorRequestElapsedTimer() {
+  if (state.director.requestElapsedTimerId) {
+    window.clearInterval(state.director.requestElapsedTimerId);
+    state.director.requestElapsedTimerId = 0;
+  }
+}
+
+function startDirectorRequestTimer() {
+  clearDirectorRequestElapsedTimer();
+  state.director.requestStartedAtMs = performance.now();
+  refreshDirectorRequestElapsed();
+  state.director.requestElapsedTimerId = window.setInterval(() => {
+    refreshDirectorRequestElapsed();
+    renderControls();
+  }, 100);
+}
+
+function stopDirectorRequestTimer() {
+  clearDirectorRequestElapsedTimer();
+  state.director.requestStartedAtMs = 0;
+  state.director.requestElapsedSeconds = 0;
 }
 
 function getSequenceStepDuration(step) {

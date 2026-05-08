@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 
 import { createPromptAssetStore } from './prompt-assets.mjs';
 import { createProductionTestStore } from './production-test-store.mjs';
+import { PRODUCTION_TEST_REPLIES } from './production-replies.mjs';
 import { createVoiceCastRequestHandler } from './server.mjs';
 
 async function createTestHarness(overrides = {}) {
@@ -22,7 +23,11 @@ async function createTestHarness(overrides = {}) {
   const productionTestRoot = path.join(tempDir, 'production-test');
   const productionTestStore = createProductionTestStore({ rootDir: productionTestRoot });
   const calls = [];
-  const ttsClient = {
+  const defaultTtsClient = {
+    async checkTextOnlyHealth() {
+      calls.push({ method: 'checkTextOnlyHealth' });
+      return { ok: true, app: 'cosyvoice-text-only' };
+    },
     async listTextOnlySpeakers() {
       calls.push({ method: 'listTextOnlySpeakers' });
       return ['English-speaking woman', '中文女'];
@@ -40,6 +45,10 @@ async function createTestHarness(overrides = {}) {
         },
       };
     },
+    async checkProductionHealth() {
+      calls.push({ method: 'checkProductionHealth' });
+      return { ok: true, app: 'production-voice' };
+    },
     async listProductionSpeakers() {
       calls.push({ method: 'listProductionSpeakers' });
       return ['EN-Default', 'EN-US', 'EN-BR'];
@@ -54,13 +63,39 @@ async function createTestHarness(overrides = {}) {
       };
     },
   };
+  const ttsClient = {
+    ...defaultTtsClient,
+    ...(overrides.ttsClient || {}),
+  };
+  const defaultReplyProvider = {
+    async checkHealth() {
+      calls.push({ method: 'checkReplyProviderHealth' });
+      return { ok: true, app: 'codex-reply' };
+    },
+    async generateReply(payload) {
+      calls.push({ method: 'generateReply', payload });
+      return 'Fixed production reply.';
+    },
+  };
+  const replyProvider =
+    Object.prototype.hasOwnProperty.call(overrides, 'replyProvider')
+      ? overrides.replyProvider
+      : {
+        ...defaultReplyProvider,
+        ...(overrides.replyProvider || {}),
+      };
+  const pickProductionReply =
+    Object.prototype.hasOwnProperty.call(overrides, 'pickProductionReply')
+      ? overrides.pickProductionReply
+      : (() => 'Fixed production reply.');
 
   const handleRequest = createVoiceCastRequestHandler({
     srcDir,
     promptAssetStore,
     productionTestStore,
     ttsClient,
-    pickProductionReply: overrides.pickProductionReply || (() => 'Fixed production reply.'),
+    replyProvider,
+    pickProductionReply,
     sleepImpl: overrides.sleepImpl || (() => Promise.resolve()),
     ...overrides,
   });
@@ -85,6 +120,21 @@ test('runtime config and speaker routes return normalized data', async (t) => {
   const speakersPayload = await speakersResponse.json();
   assert.deepEqual(speakersPayload.speakers, ['English-speaking woman', '中文女']);
   assert.equal(harness.calls[0].method, 'listTextOnlySpeakers');
+});
+
+test('backend status route reports running backends and app names', async () => {
+  const harness = await createTestHarness();
+
+  const response = await harness.handleRequest(new Request('http://voice-cast.local/api/backend-status'));
+
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.casting.running, true);
+  assert.equal(payload.casting.app, 'cosyvoice-text-only');
+  assert.equal(payload.production.running, true);
+  assert.equal(payload.production.app, 'production-pipeline');
+  assert.equal(payload.production.components.voice.app, 'production-voice');
+  assert.equal(payload.production.components.codex.app, 'codex-reply');
 });
 
 test('prompt asset save endpoint writes the wav and sidecar', async (t) => {
@@ -123,6 +173,24 @@ test('production test state returns speakers plus empty profile and history befo
   assert.deepEqual(payload.profile, null);
   assert.deepEqual(payload.history, []);
   assert.deepEqual(payload.speakers, ['EN-Default', 'EN-US', 'EN-BR']);
+});
+
+test('production test state still returns saved state when production speakers are unavailable', async () => {
+  const harness = await createTestHarness({
+    ttsClient: {
+      async listProductionSpeakers() {
+        throw new Error('connection refused');
+      },
+    },
+  });
+
+  const response = await harness.handleRequest(new Request('http://voice-cast.local/api/production-test/state'));
+
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.deepEqual(payload.profile, null);
+  assert.deepEqual(payload.history, []);
+  assert.deepEqual(payload.speakers, []);
 });
 
 test('production test profile route stores the copied wav and speaker choice', async () => {
@@ -179,8 +247,13 @@ test('production test turn route uses the active profile, persists history, and 
   assert.equal(payload.turn.replyText, 'Fixed production reply.');
   assert.equal(payload.history.length, 1);
   assert.match(payload.turn.replyAudioUrl, /\/api\/production-test\/replies\//);
+  assert.equal(payload.turn.pipeline, 'browser-stt -> codex -> melotts -> openvoice-v2');
 
+  const replyCall = harness.calls.find((entry) => entry.method === 'generateReply');
   const productionCall = harness.calls.find((entry) => entry.method === 'generateProductionTurn');
+  assert.equal(replyCall.payload.transcript, 'hello there');
+  assert.equal(replyCall.payload.profile.id.startsWith('profile-'), true);
+  assert.deepEqual(replyCall.payload.history, []);
   assert.equal(productionCall.payload.replyText, 'Fixed production reply.');
   assert.equal(productionCall.payload.meloBaseSpeakerId, 'EN-BR');
   assert.match(productionCall.payload.referenceWavPath, /reference\.wav$/);
@@ -188,4 +261,42 @@ test('production test turn route uses the active profile, persists history, and 
   const replayResponse = await harness.handleRequest(new Request(`http://voice-cast.local${payload.turn.replyAudioUrl}`));
   assert.equal(replayResponse.status, 200);
   assert.equal(replayResponse.headers.get('content-type'), 'audio/wav');
+});
+
+test('production test turn route falls back to the built-in reply pool when no picker is injected', async () => {
+  const harness = await createTestHarness({
+    replyProvider: null,
+    pickProductionReply: null,
+  });
+
+  const setupFormData = new FormData();
+  setupFormData.set('meloBaseSpeakerId', 'EN-US');
+  setupFormData.set('meloBaseSpeakerLabel', 'EN-US');
+  setupFormData.set(
+    'referenceWav',
+    new File([Uint8Array.from([1, 2, 3])], 'reference.wav', { type: 'audio/wav' }),
+  );
+
+  await harness.handleRequest(new Request('http://voice-cast.local/api/production-test/profile', {
+    method: 'POST',
+    body: setupFormData,
+  }));
+
+  const response = await harness.handleRequest(new Request('http://voice-cast.local/api/production-test/turn', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+    },
+    body: JSON.stringify({
+      transcript: 'hello again',
+    }),
+  }));
+
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(PRODUCTION_TEST_REPLIES.includes(payload.turn.replyText), true);
+  assert.equal(payload.turn.pipeline, 'browser-stt -> melotts -> openvoice-v2');
+
+  const productionCall = harness.calls.find((entry) => entry.method === 'generateProductionTurn');
+  assert.equal(PRODUCTION_TEST_REPLIES.includes(productionCall.payload.replyText), true);
 });

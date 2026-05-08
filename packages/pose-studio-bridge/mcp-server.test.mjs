@@ -215,6 +215,7 @@ test('tools/call stage_pose_sequence writes a queued sequence into the bridge st
       },
     });
 
+    assert.deepEqual(payload.content, []);
     assert.equal(payload.structuredContent.steps.length, 2);
     assert.equal(payload.structuredContent.modelId, 'bhf-1-2');
 
@@ -290,6 +291,8 @@ test('tools/call writes terminal-visible stderr logs', async () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
     const stderr = helpers.getStderr();
     assert.match(stderr, /\[pose-studio mcp\] server\/start/);
-    assert.match(stderr, /\[pose-studio mcp\] tools\/call/);
+    assert.match(stderr, /\[pose-studio mcp\] tools\/call\.start/);
+    assert.match(stderr, /\[pose-studio mcp\] tools\/call\.end/);
+    assert.match(stderr, /\[pose-studio bridge\] stageSequence\.timing/);
   }, { captureStderr: true });
 });

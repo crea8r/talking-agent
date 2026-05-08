@@ -17,6 +17,7 @@ test('pose-studio exposes the grouped mode-based panel shell', async () => {
   assert.match(html, />\s*Action\s*</, 'expected the action mode label');
   assert.match(html, /id="director-prompt"/, 'expected a long-form pre-director prompt textarea');
   assert.match(html, /class="prompt-composer"/, 'expected a codex-style embedded prompt composer shell');
+  assert.match(html, /id="director-prompt-elapsed"/, 'expected a live elapsed timer next to the send control');
   assert.match(html, /id="director-prompt-send"/, 'expected a send-to-codex button');
   assert.match(html, /id="director-response"/, 'expected a visible slot for Codex reply text');
   assert.match(html, /id="manual-transport-group"/, 'expected a manual transport group');

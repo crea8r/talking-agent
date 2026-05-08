@@ -2,27 +2,23 @@
 
 Monorepo for small discovery apps that lead toward a live talking avatar agent.
 
-The current integration spike is `apps/one-to-one-agent-room`, where:
+The current main spike is `apps/one-to-one-agent-room`. Its flow is now:
 
-- a human joins a LiveKit room in the browser
-- spoken or typed turns are persisted into a reusable bridge event log
-- a Codex or OpenAI runtime connects through an MCP server
-- the agent joins the active call, waits for transcript events, and drives avatar speech and gestures through published actions
+- the browser listens with Web Speech API
+- final human text is sent to the app server
+- the app server runs `codex exec` directly for that turn
+- Codex returns structured reply text plus coarse animation beats
+- the browser synthesizes the reply with `production-voice`, plays the avatar animation, and lip-syncs locally
 
-The dedicated MCP debugger is `apps/agent-room-mcp-tester`, where:
-
-- the browser simulates the human side with typed input and optional speech recognition
-- the app server hosts a local MCP harness that talks to the real stdio MCP server
-- the UI shows raw JSON-RPC requests/responses, bridge events, pending actions, and recent turns
-- no LiveKit room, 3D avatar, or TTS playback is required
+There is no live MCP listener in this app anymore.
 
 The working plan for the repo lives in [docs/6-app-plan.md](docs/6-app-plan.md).
-The first product draft for this repo lives in [docs/prd-local-call-command.md](docs/prd-local-call-command.md).
+The first product draft lives in [docs/prd-local-call-command.md](docs/prd-local-call-command.md).
 
 ## Repo Layout
 
 - `apps/`: runnable spikes and integration shells
-- `packages/`: shared room, voice, avatar, and MCP bridge code
+- `packages/`: shared voice, avatar, Codex exec, and support utilities
 - `docs/`: durable product and architecture decisions
 
 Current reusable packages are listed in [packages/README.md](packages/README.md).
@@ -32,22 +28,18 @@ Current reusable packages are listed in [packages/README.md](packages/README.md)
 - `apps/meeting-link-probe`: prove local room transport
 - `apps/voice-loop-lab`: prove browser voice turn-taking
 - `apps/avatar-puppet-lab`: prove avatar rendering and playback
-- `apps/one-to-one-agent-room`: integrate room + voice + avatar + MCP bridge
-- `apps/agent-room-mcp-tester`: debug the bridge and MCP loop without room/media rendering
+- `apps/one-to-one-agent-room`: direct browser voice + avatar + `codex exec`
+- `apps/voice-cast`: production voice experiments with direct Codex replies
+- `apps/pose-studio`: pose/gesture staging with direct Codex control
+- `apps/agent-room-mcp-tester`: older MCP/bridge debugging spike
 
 ## Prerequisites
 
 - Node `>=20`
 - `npm install`
-- a local LiveKit server reachable from the browser
-
-The app defaults to:
-
-- `LIVEKIT_URL=ws://127.0.0.1:7880`
-- `LIVEKIT_API_KEY=devkey`
-- `LIVEKIT_API_SECRET=secret`
-
-If your local LiveKit server uses different values, export them before starting the app server.
+- a browser with Web Speech API support
+- a working local Codex auth home at `~/.codex` or `CODEX_HOME`
+- the local `production-voice` backend running
 
 ## Run App 4
 
@@ -55,185 +47,133 @@ From the repo root:
 
 ```bash
 npm install
-LIVEKIT_URL=ws://127.0.0.1:7880 \
-LIVEKIT_API_KEY=devkey \
-LIVEKIT_API_SECRET=secret \
 npm run start:one-to-one-agent-room
 ```
 
 Open [http://127.0.0.1:4384](http://127.0.0.1:4384).
 
-If `Create Call` fails immediately, the usual cause is that no LiveKit server is reachable at `LIVEKIT_URL`.
+## Start The Voice Backend
 
-## Run The MCP Tester
+`one-to-one-agent-room` expects `production-voice` at `http://127.0.0.1:50003` by default.
 
-From the repo root:
-
-```bash
-npm install
-npm run start:agent-room-mcp-tester
-```
-
-Open [http://127.0.0.1:4386](http://127.0.0.1:4386).
-
-Use this app when you want to debug the MCP loop without LiveKit, avatar rendering, or speech playback. It gives you:
-
-- a human simulator pane
-- a direct MCP request console backed by the real stdio server
-- a bridge inspector with auto/manual action acknowledgement
-
-## Run The MCP Bridge Server
-
-The browser app writes room state to a local JSON file. The agent runtime talks to that same state file through the stdio MCP server in `packages/agent-room-bridge`.
-
-From the repo root:
+If you use a different URL, set:
 
 ```bash
-AGENT_ROOM_BRIDGE_STATE_PATH="$PWD/output/one-to-one-agent-room-bridge.json" \
-node "$PWD/packages/agent-room-bridge/mcp-server.mjs"
+ONE_TO_ONE_AGENT_ROOM_PRODUCTION_VOICE_BASE_URL=http://127.0.0.1:50003
 ```
 
-This MCP server exposes these tools:
+before starting the app server.
 
-- `join_call`
-- `wait_for_events`
-- `publish_actions`
-- `leave_call`
-- `get_recent_turns`
+## How `one-to-one-agent-room` Talks To Codex
 
-It also exposes:
+The app does not wait on an external agent loop.
 
-- resource: `bridge://capabilities`
-- resources: `avatar://catalog` and `avatar://catalog/<modelId>`
-- prompt: `call_agent_bootstrap`
+Instead:
 
-Use that command in any MCP-capable runtime. In the app UI, the same bootstrap command is shown in `Codex MCP Bootstrap`, and `Copy MCP Command` copies it.
+1. the browser captures a final transcript
+2. the browser `POST`s that transcript to `/api/call/sessions/:id/turns`
+3. the app server runs local `codex exec`
+4. Codex returns JSON with:
+   - `spokenText`
+   - `subtitle`
+   - `mood`
+   - `animationSequence`
+5. the browser speaks and animates the reply immediately
 
-## Short Video Call Test
+The reusable subprocess helper for this lives in `packages/codex-exec`.
 
-Use this flow when you want to verify the full human-to-agent loop quickly.
+## Short Voice Call Test
 
-1. Start the app server.
-2. Start the MCP bridge server.
+Use this flow for a quick end-to-end check:
+
+1. Start the `production-voice` backend.
+2. Start `one-to-one-agent-room`.
 3. Open [http://127.0.0.1:4384](http://127.0.0.1:4384).
-4. Leave the default room values, or point the page at your local LiveKit server.
-5. Click `Create Call`.
-6. Allow browser mic and camera access if you want live media.
-7. Click `Start Listening`.
-8. Say a short sentence such as `hello can you hear me`.
-9. Have your MCP agent join the call, wait for finalized transcript events, and publish a speech action.
-10. The avatar should speak the reply and animate its mouth and gesture state.
+4. In `Setup`, choose a character model.
+5. Upload a WAV voice sample.
+6. Wait for both `Voice` and `Codex` to show ready states.
+7. Click `Start Call`.
+8. Allow microphone access.
+9. Say `hello can you hear me`.
+10. The app server should call Codex directly and the avatar should answer.
 
-Useful follow-up prompts for a short smoke test:
-
-- `what day is today`
-- `who are you`
-- `tell me a joke`
-
-If microphone capture is unavailable, use `Typed Fallback` and `Queue Typed Turn`.
+If microphone capture is unavailable, use `Typed Turn` in `Diagnostics`.
 
 ## Recommended Dev Test Flow
 
-There are two levels of testing.
+### 1. HTTP Smoke Test
 
-### 1. Browser And Avatar Only
+These routes should all work locally:
 
-This isolates the front end from the external agent runtime.
+- `GET /healthz`
+- `GET /api/runtime-config`
+- `GET /api/codex/state`
+- `GET /api/production-voice/state`
+- `POST /api/call/sessions`
+- `POST /api/call/sessions/:id/state`
+- `POST /api/call/sessions/:id/turns`
+- `POST /api/call/sessions/:id/turns/:turnId/played`
 
-1. Click `Create Call`.
-2. Enter text in `Typed Fallback`.
-3. Click `Queue Typed Turn`.
-4. Click `Run Local Fallback Reply`.
+### 2. Browser Session Test
 
-That path uses the local fallback route in the app server instead of Codex. It proves:
+1. Hard refresh the page.
+2. Confirm the `Character Model` dropdown populates.
+3. Confirm the live preview updates when the model changes.
+4. Confirm the saved WAV sample persists across reload.
+5. Start a call.
+6. Speak one short sentence.
+7. Confirm:
+   - human subtitle updates live
+   - agent subtitle shows `Thinking…`
+   - the reply speaks with `production-voice`
+   - the avatar mouth and gestures animate
+8. Interrupt the agent while it is speaking and confirm playback stops immediately.
 
-- the room session is created
-- the bridge can hold transcript events and pending actions
-- the browser can poll the action queue
-- the avatar can speak and animate a response
+## Runtime Notes
 
-### 2. Full MCP Agent Loop
+- `one-to-one-agent-room` no longer depends on a visible LiveKit room flow.
+- the browser still handles:
+  - speech recognition
+  - subtitles
+  - interruption
+  - lip sync
+  - ambient idle/thinking animation
+- the app server handles:
+  - session state
+  - direct `codex exec`
+  - reply shaping
+  - production voice profile persistence
 
-This is the real integration path for app 4.
+## Legacy MCP Spikes
 
-1. Start the MCP server with the command above.
-2. Attach a Codex or OpenAI runtime to that MCP server.
-3. Create a room session in the browser.
-4. In the MCP runtime, call `join_call`.
-5. Read `avatar://catalog` or the model-specific URI returned by `join_call`.
-6. Call `wait_for_events` with the returned `callId` and `cursor`.
-7. Call `publish_actions` with:
+These still exist in the repo, but they are not part of the current `one-to-one-agent-room` path:
 
-```json
-{
-  "callId": "<call-id>",
-  "actions": [
-    {
-      "actionId": "reply-1-anim",
-      "type": "anim",
-      "emoteId": "warm",
-      "gestureId": "Pose"
-    },
-    {
-      "actionId": "reply-1-speech",
-      "type": "speech",
-      "text": "Hello. I can hear you clearly.",
-      "voiceMode": "speak"
-    }
-  ]
-}
-```
+- `packages/agent-room-bridge`
+- `apps/agent-room-mcp-tester`
 
-The browser app will pick up the reply, animate the avatar, and speak it aloud.
-
-## How To Test With Codex
-
-Point Codex at the MCP command:
-
-```bash
-AGENT_ROOM_BRIDGE_STATE_PATH="$PWD/output/one-to-one-agent-room-bridge.json" \
-node "$PWD/packages/agent-room-bridge/mcp-server.mjs"
-```
-
-Then give it a task like:
-
-> Join the active one-to-one-agent-room call, wait for transcript events, and answer them briefly with `publish_actions`.
-
-For a short call, keep the agent behavior tight:
-
-- short replies
-- keep one `wait_for_events` loop open
-- always send a speech action with `voiceMode: "speak"`
-- send a simple animation action alongside the speech when the emotional intent matters
-
-## MCP Inspector
-
-Open the `Diagnostics` tab in `one-to-one-agent-room` to inspect:
-
-- active call metadata
-- current event cursor
-- recent bridge events
-- pending agent actions
-- active avatar model and catalog version
+They are useful only if you want to revisit the earlier MCP-mediated architecture.
 
 ## Troubleshooting
 
-- `Create Call` appears to do nothing:
-  The app could not reach your LiveKit server. Confirm something is listening on `LIVEKIT_URL`.
-- The session exists but the agent never replies:
-  Confirm the MCP server is running against the same `AGENT_ROOM_BRIDGE_STATE_PATH` the app uses.
-- The MCP agent submits replies but the avatar stays silent:
-  Confirm the `speech` action uses `voiceMode: "speak"`.
-- The avatar still does not respond:
-  Use `Run Local Fallback Reply` first. If that works, the failure is in the external MCP runtime loop, not the browser playback path.
+- `Start Call` stays disabled:
+  Confirm all three prerequisites are ready:
+  - browser speech recognition
+  - a saved WAV sample
+  - `GET /api/codex/state` shows `running: true`
+- Codex is ready but replies fail:
+  Check the `Diagnostics` panel for the active request and the server event log.
+- The avatar does not speak:
+  Confirm `GET /api/production-voice/state` reports `running: true` and a saved profile exists.
+- The reply text appears but playback stops:
+  That usually means the turn was interrupted by new human speech, which is expected behavior.
 
 ## Notes
 
 - This repo intentionally keeps spike apps small and disposable.
 - Reusable logic should move into `packages/` once at least two apps need it.
-- `apps/one-to-one-agent-room` is intentionally thin. The reusable pieces live in:
-  - `packages/room-layer`
+- `apps/one-to-one-agent-room` is intentionally thin. Its main reusable pieces are:
   - `packages/voice-layer-browser`
   - `packages/avatar-layer-browser`
   - `packages/avatar-speech-browser`
-  - `packages/agent-room-bridge`
+  - `packages/production-voice`
+  - `packages/codex-exec`

@@ -1,6 +1,9 @@
 import { buildPromptAssetFileStem } from './format.js';
 import { getNextNeutralSampleIndex, NEUTRAL_SAMPLE_LINES } from './neutral-sample-lines.js';
 
+const SILENT_WAV_DATA_URL =
+  'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+
 function syncCastingStateFromDom(dom, state) {
   const voiceDirection = dom.castingInstructText.value;
   state.casting.presetSpeaker = dom.castingPresetSpeaker.value;
@@ -64,17 +67,84 @@ function createDefaultSpeechRecognition() {
   return recognition;
 }
 
+function resetAudioElement(audioElement) {
+  if (!audioElement) {
+    return;
+  }
+
+  if (typeof audioElement.pause === 'function') {
+    audioElement.pause();
+  }
+  if ('currentTime' in audioElement) {
+    audioElement.currentTime = 0;
+  }
+  if (typeof audioElement.removeAttribute === 'function') {
+    audioElement.removeAttribute('src');
+  } else {
+    audioElement.src = '';
+  }
+  if (typeof audioElement.load === 'function') {
+    audioElement.load();
+  }
+}
+
+function primeAudioPlayback(audioElement) {
+  if (!audioElement) {
+    return;
+  }
+
+  audioElement.autoplay = true;
+  audioElement.preload = 'auto';
+
+  if (audioElement.src) {
+    return;
+  }
+
+  audioElement.muted = true;
+  audioElement.src = SILENT_WAV_DATA_URL;
+  const cleanup = () => {
+    audioElement.muted = false;
+    if (audioElement.src !== SILENT_WAV_DATA_URL) {
+      return;
+    }
+    resetAudioElement(audioElement);
+  };
+
+  if (typeof audioElement.play === 'function') {
+    Promise.resolve(audioElement.play()).catch(() => {}).finally(cleanup);
+    return;
+  }
+
+  cleanup();
+}
+
 function playAudioUrl(audioElement, url) {
   if (!audioElement || !url) {
-    return Promise.resolve();
+    return Promise.resolve(false);
   }
 
   audioElement.hidden = false;
-  audioElement.src = url;
-  if (typeof audioElement.play === 'function') {
-    return Promise.resolve(audioElement.play()).catch(() => {});
+  audioElement.autoplay = true;
+  audioElement.preload = 'auto';
+  audioElement.muted = false;
+  if (typeof audioElement.pause === 'function') {
+    audioElement.pause();
   }
-  return Promise.resolve();
+  if (audioElement.src !== url) {
+    audioElement.src = url;
+  }
+  if ('currentTime' in audioElement) {
+    audioElement.currentTime = 0;
+  }
+  if (typeof audioElement.load === 'function') {
+    audioElement.load();
+  }
+  if (typeof audioElement.play === 'function') {
+    return Promise.resolve(audioElement.play())
+      .then(() => true)
+      .catch(() => false);
+  }
+  return Promise.resolve(false);
 }
 
 function runAsync(handler) {
@@ -98,6 +168,155 @@ export function bindAppEvents({
   let pendingTranscript = '';
   let transcriptSubmitted = false;
 
+  function teardownRecognition() {
+    activeRecognition = null;
+    pendingTranscript = '';
+    transcriptSubmitted = false;
+  }
+
+  function pauseReplyAudio() {
+    if (!dom.productionLatestAudio) {
+      return;
+    }
+    if (typeof dom.productionLatestAudio.pause === 'function') {
+      dom.productionLatestAudio.pause();
+    }
+    dom.productionLatestAudio.muted = false;
+  }
+
+  function canEnableListeningLoop() {
+    return (
+      state.runtimeConfig?.backends?.productionConfigured !== false &&
+      state.production.backendHealth.running !== false &&
+      state.production.sttSupported &&
+      Boolean(state.production.profile)
+    );
+  }
+
+  function maybeStartRecognitionSession() {
+    if (
+      !state.production.listenerEnabled ||
+      state.production.listening ||
+      state.production.submittingTurn ||
+      state.production.replyPlaying
+    ) {
+      render();
+      return;
+    }
+
+    const recognition = createSpeechRecognition();
+    if (!recognition) {
+      state.production.sttSupported = false;
+      state.production.listenerEnabled = false;
+      state.production.listening = false;
+      state.production.error = 'Browser speech recognition is not available.';
+      teardownRecognition();
+      render();
+      return;
+    }
+
+    state.production.error = '';
+    state.production.transcript = '';
+    state.production.listening = true;
+    render();
+
+    pendingTranscript = '';
+    transcriptSubmitted = false;
+    activeRecognition = recognition;
+
+    recognition.onstart = () => {
+      state.production.listening = true;
+      render();
+    };
+
+    recognition.onresult = (event) => {
+      const transcripts = [];
+      for (let index = event.resultIndex || 0; index < (event.results?.length || 0); index += 1) {
+        const result = event.results[index];
+        if (result?.isFinal) {
+          transcripts.push(result[0]?.transcript || '');
+        }
+      }
+      pendingTranscript = transcripts.join(' ').trim();
+      state.production.transcript = pendingTranscript;
+      render();
+    };
+
+    recognition.onspeechend = () => {
+      recognition.stop();
+    };
+
+    recognition.onerror = (event) => {
+      state.production.listening = false;
+      const wasListeningEnabled = state.production.listenerEnabled;
+      const errorCode = `${event?.error || ''}`.trim();
+      teardownRecognition();
+
+      if (!wasListeningEnabled && errorCode === 'aborted') {
+        render();
+        return;
+      }
+
+      state.production.error = errorCode
+        ? `Speech recognition error: ${errorCode}`
+        : 'Speech recognition failed.';
+      render();
+    };
+
+    recognition.onend = () => {
+      const nextTranscript = pendingTranscript;
+      const shouldSubmit = state.production.listenerEnabled && !transcriptSubmitted && Boolean(nextTranscript);
+
+      state.production.listening = false;
+      teardownRecognition();
+      render();
+
+      if (shouldSubmit) {
+        transcriptSubmitted = true;
+        void submitRecognizedTranscript(nextTranscript);
+        return;
+      }
+
+      if (state.production.listenerEnabled && !state.production.submittingTurn && !state.production.replyPlaying) {
+        maybeStartRecognitionSession();
+      }
+    };
+
+    recognition.start();
+  }
+
+  function setListeningLoopEnabled(enabled) {
+    if (!enabled) {
+      state.production.listenerEnabled = false;
+      state.production.listening = false;
+      pendingTranscript = '';
+      transcriptSubmitted = true;
+      if (activeRecognition && typeof activeRecognition.stop === 'function') {
+        activeRecognition.stop();
+      } else {
+        teardownRecognition();
+      }
+      if (state.production.replyPlaying) {
+        state.production.replyPlaying = false;
+        pauseReplyAudio();
+      }
+      render();
+      return;
+    }
+
+    if (!canEnableListeningLoop()) {
+      render();
+      return;
+    }
+
+    state.production.listenerEnabled = true;
+    state.production.error = '';
+    state.production.saveMessage = '';
+    primeAudioPlayback(dom.productionLatestAudio);
+    render();
+    maybeStartRecognitionSession();
+  }
+
   async function submitRecognizedTranscript(transcript) {
     if (!transcript) {
       state.production.listening = false;
@@ -117,7 +336,20 @@ export function bindAppEvents({
       state.production.history = payload.history || [];
       state.production.saveMessage = '';
       render();
-      await playAudioUrlImpl(dom.productionLatestAudio, payload.turn?.replyAudioUrl || '');
+      const shouldAutoplay = Boolean(payload.turn?.replyAudioUrl) && state.production.listenerEnabled;
+      state.production.replyPlaying = shouldAutoplay;
+      render();
+      const didStartPlayback = shouldAutoplay
+        ? await playAudioUrlImpl(dom.productionLatestAudio, payload.turn?.replyAudioUrl || '')
+        : false;
+
+      if (shouldAutoplay && !didStartPlayback) {
+        state.production.replyPlaying = false;
+        render();
+        if (state.production.listenerEnabled) {
+          maybeStartRecognitionSession();
+        }
+      }
     } catch (error) {
       state.production.error =
         error instanceof Error ? error.message : 'Unable to generate production reply.';
@@ -125,12 +357,6 @@ export function bindAppEvents({
       state.production.submittingTurn = false;
       render();
     }
-  }
-
-  function teardownRecognition() {
-    activeRecognition = null;
-    pendingTranscript = '';
-    transcriptSubmitted = false;
   }
 
   dom.castingTabButton.addEventListener('click', () => {
@@ -224,73 +450,7 @@ export function bindAppEvents({
   );
 
   dom.startListening.addEventListener('click', () => {
-    if (!state.production.profile || state.production.submittingTurn || state.production.listening) {
-      return;
-    }
-
-    const recognition = createSpeechRecognition();
-    if (!recognition) {
-      state.production.sttSupported = false;
-      state.production.error = 'Browser speech recognition is not available.';
-      render();
-      return;
-    }
-
-    state.production.error = '';
-    state.production.transcript = '';
-    state.production.listening = true;
-    render();
-
-    pendingTranscript = '';
-    transcriptSubmitted = false;
-    activeRecognition = recognition;
-
-    recognition.onstart = () => {
-      state.production.listening = true;
-      render();
-    };
-
-    recognition.onresult = (event) => {
-      const transcripts = [];
-      for (let index = event.resultIndex || 0; index < (event.results?.length || 0); index += 1) {
-        const result = event.results[index];
-        if (result?.isFinal) {
-          transcripts.push(result[0]?.transcript || '');
-        }
-      }
-      pendingTranscript = transcripts.join(' ').trim();
-      state.production.transcript = pendingTranscript;
-      render();
-    };
-
-    recognition.onspeechend = () => {
-      recognition.stop();
-    };
-
-    recognition.onerror = (event) => {
-      state.production.listening = false;
-      state.production.error = event?.error
-        ? `Speech recognition error: ${event.error}`
-        : 'Speech recognition failed.';
-      teardownRecognition();
-      render();
-    };
-
-    recognition.onend = () => {
-      if (transcriptSubmitted || !pendingTranscript) {
-        state.production.listening = false;
-        teardownRecognition();
-        render();
-        return;
-      }
-
-      transcriptSubmitted = true;
-      void submitRecognizedTranscript(pendingTranscript).finally(() => {
-        teardownRecognition();
-      });
-    };
-
-    recognition.start();
+    setListeningLoopEnabled(!state.production.listenerEnabled);
   });
 
   dom.replayLatestReply.addEventListener(
@@ -310,4 +470,17 @@ export function bindAppEvents({
       await playAudioUrlImpl(dom.productionLatestAudio, replayUrl);
     }),
   );
+
+  dom.productionLatestAudio?.addEventListener?.('ended', () => {
+    if (!state.production.replyPlaying) {
+      return;
+    }
+
+    state.production.replyPlaying = false;
+    render();
+
+    if (state.production.listenerEnabled) {
+      maybeStartRecognitionSession();
+    }
+  });
 }

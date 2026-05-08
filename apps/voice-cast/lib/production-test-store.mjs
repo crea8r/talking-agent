@@ -124,6 +124,7 @@ export function createProductionTestStore({ rootDir, maxHistory = 20 } = {}) {
     generationTimeMs = 0,
     replyAudioBuffer = null,
     replyAudioMimeType = 'audio/wav',
+    pipeline = 'browser-stt -> melotts -> openvoice-v2',
   } = {}) {
     const profile = await loadProfile();
     if (!profile) {
@@ -147,6 +148,7 @@ export function createProductionTestStore({ rootDir, maxHistory = 20 } = {}) {
       generationTimeMs,
       replyAudioPath,
       replyAudioMimeType,
+      pipeline,
     });
 
     const previousHistory = await loadHistory();

@@ -8,6 +8,8 @@ const dom = {
   productionTabButton: document.querySelector('#tab-production'),
   castingPanel: document.querySelector('#panel-casting'),
   productionPanel: document.querySelector('#panel-production'),
+  castingBackendHealth: document.querySelector('#casting-backend-health'),
+  productionBackendHealth: document.querySelector('#production-backend-health'),
   castingModel: document.querySelector('#casting-model'),
   castingPresetSpeaker: document.querySelector('#casting-preset-speaker'),
   castingSpeed: document.querySelector('#casting-speed'),
@@ -53,6 +55,17 @@ bindAppEvents({
   renderApp,
 });
 
+function applyBackendHealth(state, payload = {}) {
+  state.casting.backendHealth = {
+    running: typeof payload.casting?.running === 'boolean' ? payload.casting.running : null,
+    detail: payload.casting?.detail || '',
+  };
+  state.production.backendHealth = {
+    running: typeof payload.production?.running === 'boolean' ? payload.production.running : null,
+    detail: payload.production?.detail || '',
+  };
+}
+
 async function boot() {
   renderApp({ dom, state });
 
@@ -69,7 +82,24 @@ async function boot() {
   }
 
   try {
-    if (state.runtimeConfig?.backends?.textOnlyConfigured) {
+    applyBackendHealth(state, await httpClient.fetchBackendStatus());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to check backend status.';
+    state.casting.backendHealth = {
+      running: null,
+      detail: message,
+    };
+    state.production.backendHealth = {
+      running: null,
+      detail: message,
+    };
+  }
+
+  try {
+    if (
+      state.runtimeConfig?.backends?.textOnlyConfigured &&
+      state.casting.backendHealth.running !== false
+    ) {
       const speakersPayload = await httpClient.fetchCastingSpeakers();
       state.casting.speakers = speakersPayload.speakers || [];
       state.casting.presetSpeaker = state.casting.speakers[0] || '';

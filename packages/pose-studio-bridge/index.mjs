@@ -30,6 +30,17 @@ function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function formatElapsedMs(startedAtMs) {
+  return Math.round((performance.now() - startedAtMs) * 1000) / 1000;
+}
+
+function logBridge(event, details = undefined) {
+  const line = details
+    ? `[pose-studio bridge] ${event} ${JSON.stringify(details)}\n`
+    : `[pose-studio bridge] ${event}\n`;
+  process.stderr.write(line);
+}
+
 function createEmptyState() {
   return {
     version: 1,
@@ -227,7 +238,7 @@ async function withFileLock(stateFilePath, task) {
     try {
       const handle = await openFile(lockFilePath, 'wx');
       try {
-        return await task();
+        return await task({ lockWaitMs: Date.now() - startedAt });
       } finally {
         await handle.close();
         await unlink(lockFilePath).catch(() => {});
@@ -334,19 +345,30 @@ export function createPoseStudioBridgeStore({
     prompt = '',
     steps = [],
   } = {}) {
-    return withFileLock(stateFilePath, async () => {
+    const startedAtMs = performance.now();
+    return withFileLock(stateFilePath, async ({ lockWaitMs = 0 } = {}) => {
+      const readStartedAtMs = performance.now();
       const state = await readState(stateFilePath);
+      const readStateMs = formatElapsedMs(readStartedAtMs);
+
+      const buildCatalogStartedAtMs = performance.now();
       const catalog = buildCatalogForState(state, modelId);
+      const buildCatalogMs = formatElapsedMs(buildCatalogStartedAtMs);
+
+      const normalizeStepsStartedAtMs = performance.now();
       const gestureById = new Map(catalog.gestures.map((gesture) => [gesture.id, gesture]));
       const normalizedSteps = Array.isArray(steps)
         ? steps.map((step) => normalizeSequenceStep(step, gestureById))
         : [];
+      const normalizeStepsMs = formatElapsedMs(normalizeStepsStartedAtMs);
 
       if (!normalizedSteps.length) {
         throw createTypedError('EMPTY_SEQUENCE', 'Pose sequence requires at least one valid gesture step.');
       }
 
+      const trimStartedAtMs = performance.now();
       const { acceptedSteps, totalDurationMs, trimmed } = trimStepsToDurationLimit(normalizedSteps, MAX_SEQUENCE_DURATION_MS);
+      const trimStepsMs = formatElapsedMs(trimStartedAtMs);
       if (!acceptedSteps.length) {
         throw createTypedError('SEQUENCE_TOO_LONG', 'Pose sequence could not fit within the 60 second limit.');
       }
@@ -382,9 +404,12 @@ export function createPoseStudioBridgeStore({
         currentGestureId: acceptedSteps[0]?.gestureId || '',
         updatedAt: now,
       };
-      await writeState(stateFilePath, state);
 
-      return {
+      const writeStartedAtMs = performance.now();
+      await writeState(stateFilePath, state);
+      const writeStateMs = formatElapsedMs(writeStartedAtMs);
+
+      const result = {
         sequenceId,
         revision: nextRevision,
         modelId: catalog.modelId,
@@ -393,6 +418,21 @@ export function createPoseStudioBridgeStore({
         trimmed,
         steps: acceptedSteps,
       };
+
+      logBridge('stageSequence.timing', {
+        modelId: catalog.modelId,
+        sequenceId,
+        stepCount: acceptedSteps.length,
+        lockWaitMs,
+        readStateMs,
+        buildCatalogMs,
+        normalizeStepsMs,
+        trimStepsMs,
+        writeStateMs,
+        totalMs: formatElapsedMs(startedAtMs),
+      });
+
+      return result;
     });
   }
 

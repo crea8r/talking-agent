@@ -1,0 +1,296 @@
+<div class="section">
+  <h2>Two-Tab Voice Workflow</h2>
+  <p class="subtitle">Tab 1 builds the prompt asset from text alone. Tab 2 tests the real CosyVoice3 production path with that saved asset.</p>
+</div>
+
+<style>
+  .tt-root {
+    --tt-bg: rgba(255,255,255,.035);
+    --tt-border: rgba(255,255,255,.12);
+    --tt-input: rgba(9,12,18,.72);
+    --tt-accent-a: #ffd36e;
+    --tt-accent-b: #ff9e4a;
+  }
+  .tt-switch {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .tt-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .tt-tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.14);
+    background: rgba(255,255,255,.06);
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+  }
+  #tab-casting:checked ~ .tt-tabs label[for="tab-casting"],
+  #tab-production:checked ~ .tt-tabs label[for="tab-production"] {
+    background: linear-gradient(135deg, var(--tt-accent-a), var(--tt-accent-b));
+    color: #1d1408;
+    border-color: transparent;
+    font-weight: 600;
+  }
+  .tt-panel {
+    display: none;
+    border: 1px solid var(--tt-border);
+    border-radius: 18px;
+    background: var(--tt-bg);
+    padding: 16px;
+    min-height: 620px;
+  }
+  #tab-casting:checked ~ .tt-panels .tt-panel-casting,
+  #tab-production:checked ~ .tt-panels .tt-panel-production {
+    display: block;
+  }
+  .tt-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .tt-sub {
+    font-size: 13px;
+    opacity: .72;
+    margin-bottom: 16px;
+    line-height: 1.45;
+  }
+  .tt-field {
+    margin-bottom: 14px;
+  }
+  .tt-label {
+    display: block;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    opacity: .72;
+    margin-bottom: 8px;
+  }
+  .tt-input,
+  .tt-select,
+  .tt-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 12px;
+    background: var(--tt-input);
+    color: #f3f6fb;
+    padding: 12px 13px;
+    font: inherit;
+  }
+  .tt-textarea {
+    min-height: 104px;
+    resize: vertical;
+    line-height: 1.45;
+  }
+  .tt-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .tt-help {
+    font-size: 12px;
+    opacity: .7;
+    line-height: 1.45;
+    margin-top: 7px;
+  }
+  .tt-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .tt-button {
+    border: 0;
+    border-radius: 999px;
+    padding: 11px 16px;
+    font: inherit;
+    font-weight: 600;
+    cursor: default;
+  }
+  .tt-button.primary {
+    background: linear-gradient(135deg, var(--tt-accent-a), var(--tt-accent-b));
+    color: #1d1408;
+  }
+  .tt-button.secondary {
+    background: rgba(255,255,255,.1);
+    color: #f3f6fb;
+    border: 1px solid rgba(255,255,255,.12);
+  }
+  .tt-result {
+    border: 1px dashed rgba(255,255,255,.16);
+    border-radius: 14px;
+    padding: 14px;
+    background: rgba(255,255,255,.02);
+  }
+  .tt-audio {
+    width: 100%;
+    margin: 10px 0;
+    opacity: .88;
+  }
+  .tt-pill {
+    display: inline-block;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.08);
+    font-size: 12px;
+    margin-right: 6px;
+    margin-bottom: 6px;
+  }
+  @media (max-width: 800px) {
+    .tt-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="tt-root">
+  <input id="tab-casting" class="tt-switch" type="radio" name="workflow-tab" checked>
+  <input id="tab-production" class="tt-switch" type="radio" name="workflow-tab">
+
+  <div class="tt-tabs">
+    <label class="tt-tab" for="tab-casting">1. Text-Only Casting</label>
+    <label class="tt-tab" for="tab-production">2. CV3 Production Test</label>
+  </div>
+
+  <div class="tt-panels">
+    <div class="tt-panel tt-panel-casting">
+      <div class="tt-title">Tab 1: Build Prompt Asset</div>
+      <div class="tt-sub">Uses a text-only CosyVoice path to create a reusable prompt asset. The saved asset is a pair: <strong>prompt_wav + prompt_text transcript</strong>.</div>
+
+      <div class="tt-field">
+        <label class="tt-label">Model</label>
+        <select class="tt-select">
+          <option>CosyVoice-300M-Instruct</option>
+        </select>
+        <div class="tt-help">Fixed for the first version because this tab exists only to generate prompt assets from text alone.</div>
+      </div>
+
+      <div class="tt-grid">
+        <div class="tt-field">
+          <label class="tt-label">Preset Speaker</label>
+          <select class="tt-select">
+            <option>中文女</option>
+            <option>中文男</option>
+            <option>English-speaking woman</option>
+            <option>英文女</option>
+            <option>英文男</option>
+            <option>日语男</option>
+            <option>粤语女</option>
+            <option>韩语女</option>
+          </select>
+          <div class="tt-help">These values are aligned to the official examples and demo language/gender presets. The real implementation should still populate from <strong>list_available_spks()</strong> at runtime so the UI matches the exact installed model.</div>
+        </div>
+        <div class="tt-field">
+          <label class="tt-label">Speed</label>
+          <input class="tt-input" value="1.0">
+        </div>
+      </div>
+
+      <div class="tt-field">
+        <label class="tt-label">Character Prompt</label>
+        <textarea class="tt-textarea">young female voice, bright, playful, nimble, fairy-like, quick reactions, not squeaky, warm but mischievous</textarea>
+        <div class="tt-help">App-level description. Used to help you author the real instruct text below.</div>
+      </div>
+
+      <div class="tt-field">
+        <label class="tt-label">Instruct Text</label>
+        <textarea class="tt-textarea">Young female, bright, playful, nimble, warm but mischievous. Speak with lively energy and lightness.</textarea>
+        <div class="tt-help">Real model input for `CosyVoice-300M-Instruct`.</div>
+      </div>
+
+      <div class="tt-field">
+        <label class="tt-label">Prompt Text to Generate</label>
+        <textarea class="tt-textarea">I found it. I knew there was still magic left in this room.</textarea>
+        <div class="tt-help">This exact text is saved as the transcript attached to the generated prompt asset.</div>
+      </div>
+
+      <div class="tt-actions" style="margin-bottom:14px;">
+        <button class="tt-button primary">Generate Prompt Voice</button>
+      </div>
+
+      <div class="tt-result">
+        <div style="font-weight:600;">Generated prompt asset preview</div>
+        <audio class="tt-audio" controls></audio>
+        <div class="tt-actions">
+          <button class="tt-button secondary">Save as Prompt WAV</button>
+        </div>
+        <div class="tt-help">Saving stores both the WAV file and the exact transcript used to create it.</div>
+      </div>
+    </div>
+
+    <div class="tt-panel tt-panel-production">
+      <div class="tt-title">Tab 2: Test Production Path</div>
+      <div class="tt-sub">Uses `Fun-CosyVoice3` with the saved prompt asset from Tab 1. This tab matches the real production generation path.</div>
+
+      <div class="tt-grid">
+        <div class="tt-field">
+          <label class="tt-label">Model</label>
+          <select class="tt-select">
+            <option>Fun-CosyVoice3-0.5B</option>
+            <option>Fun-CosyVoice3-1.5B</option>
+          </select>
+        </div>
+        <div class="tt-field">
+          <label class="tt-label">Mode</label>
+          <select class="tt-select">
+            <option>instruct2</option>
+            <option>zero_shot</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="tt-field">
+        <label class="tt-label">Prompt Asset</label>
+        <input class="tt-input" type="file" accept=".wav,audio/wav">
+        <div class="tt-help">Upload the saved prompt WAV asset. In the real app this maps directly to CosyVoice3 <strong>prompt_wav</strong>.</div>
+        <div style="margin-top:8px;">
+          <span class="tt-pill">attached transcript: I found it. I knew there was still magic left in this room.</span>
+        </div>
+      </div>
+
+      <div class="tt-field">
+        <label class="tt-label">Production Text</label>
+        <textarea class="tt-textarea">There you are. I was starting to think the whole forest had forgotten how to listen.</textarea>
+      </div>
+
+      <div class="tt-field">
+        <label class="tt-label">Instruct Text</label>
+        <textarea class="tt-textarea">You are a helpful assistant. Young female, bright, playful, nimble, warm but mischievous. Speak with a lively but natural tone.&lt;|endofprompt|&gt;</textarea>
+        <div class="tt-help">Used in `instruct2`. For `zero_shot`, this area is replaced by the saved prompt transcript.</div>
+      </div>
+
+      <div class="tt-grid">
+        <div class="tt-field">
+          <label class="tt-label">Stream</label>
+          <select class="tt-select">
+            <option>true</option>
+            <option>false</option>
+          </select>
+        </div>
+        <div class="tt-field">
+          <label class="tt-label">Speed</label>
+          <input class="tt-input" value="1.0">
+        </div>
+      </div>
+
+      <div class="tt-actions" style="margin-bottom:14px;">
+        <button class="tt-button primary">Generate Production Voice</button>
+      </div>
+
+      <div class="tt-result">
+        <div style="font-weight:600;">Production preview</div>
+        <audio class="tt-audio" controls></audio>
+        <div class="tt-help">This is where you judge whether the saved prompt asset behaves well enough in the real CV3 path.</div>
+      </div>
+    </div>
+  </div>
+</div>

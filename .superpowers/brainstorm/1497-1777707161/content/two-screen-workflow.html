@@ -1,0 +1,272 @@
+<div class="section">
+  <h2>Two-Screen Voice Workflow</h2>
+  <p class="subtitle">Screen 1 casts a prompt asset from text alone. Screen 2 uses that saved asset to test the real production path with CosyVoice3.</p>
+</div>
+
+<style>
+  .tw-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .tw-tab {
+    padding: 10px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.14);
+    background: rgba(255,255,255,.06);
+    font-size: 13px;
+  }
+  .tw-tab.active {
+    background: linear-gradient(135deg, #ffd36e, #ff9e4a);
+    color: #1d1408;
+    border-color: transparent;
+    font-weight: 600;
+  }
+  .tw-screens {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  .tw-screen {
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 18px;
+    background: rgba(255,255,255,.035);
+    padding: 16px;
+    min-height: 620px;
+  }
+  .tw-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .tw-sub {
+    font-size: 13px;
+    opacity: .72;
+    margin-bottom: 16px;
+    line-height: 1.45;
+  }
+  .tw-field {
+    margin-bottom: 14px;
+  }
+  .tw-label {
+    display: block;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    opacity: .72;
+    margin-bottom: 8px;
+  }
+  .tw-input,
+  .tw-select,
+  .tw-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 12px;
+    background: rgba(9,12,18,.72);
+    color: #f3f6fb;
+    padding: 12px 13px;
+    font: inherit;
+  }
+  .tw-textarea {
+    min-height: 104px;
+    resize: vertical;
+    line-height: 1.45;
+  }
+  .tw-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .tw-help {
+    font-size: 12px;
+    opacity: .7;
+    line-height: 1.45;
+    margin-top: 7px;
+  }
+  .tw-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .tw-button {
+    border: 0;
+    border-radius: 999px;
+    padding: 11px 16px;
+    font: inherit;
+    font-weight: 600;
+    cursor: default;
+  }
+  .tw-button.primary {
+    background: linear-gradient(135deg, #ffd36e, #ff9e4a);
+    color: #1d1408;
+  }
+  .tw-button.secondary {
+    background: rgba(255,255,255,.1);
+    color: #f3f6fb;
+    border: 1px solid rgba(255,255,255,.12);
+  }
+  .tw-result {
+    border: 1px dashed rgba(255,255,255,.16);
+    border-radius: 14px;
+    padding: 14px;
+    background: rgba(255,255,255,.02);
+  }
+  .tw-audio {
+    width: 100%;
+    margin: 10px 0;
+    opacity: .88;
+  }
+  .tw-pill {
+    display: inline-block;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.08);
+    font-size: 12px;
+    margin-right: 6px;
+    margin-bottom: 6px;
+  }
+  @media (max-width: 1100px) {
+    .tw-screens {
+      grid-template-columns: 1fr;
+    }
+    .tw-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="tw-tabs">
+  <div class="tw-tab active">1. Text-Only Casting</div>
+  <div class="tw-tab">2. CV3 Production Test</div>
+</div>
+
+<div class="tw-screens">
+  <div class="tw-screen">
+    <div class="tw-title">Screen 1: Build Prompt Asset</div>
+    <div class="tw-sub">Uses an older text-only CosyVoice path to create a reusable prompt asset. Output is not just a WAV. It is a saved pair: <strong>prompt_wav + prompt_text transcript</strong>.</div>
+
+    <div class="tw-field">
+      <label class="tw-label">Model</label>
+      <select class="tw-select">
+        <option>CosyVoice-300M-Instruct</option>
+      </select>
+      <div class="tw-help">Fixed for the first version because this is the text-only casting screen.</div>
+    </div>
+
+    <div class="tw-grid">
+      <div class="tw-field">
+        <label class="tw-label">Preset Speaker</label>
+        <select class="tw-select">
+          <option>runtime: list_available_spks()</option>
+          <option>中文女</option>
+          <option>中文男</option>
+        </select>
+        <div class="tw-help">The real list is loaded at runtime from the model.</div>
+      </div>
+      <div class="tw-field">
+        <label class="tw-label">Speed</label>
+        <input class="tw-input" value="1.0">
+      </div>
+    </div>
+
+    <div class="tw-field">
+      <label class="tw-label">Character Prompt</label>
+      <textarea class="tw-textarea">young female voice, bright, playful, nimble, fairy-like, quick reactions, not squeaky, warm but mischievous</textarea>
+      <div class="tw-help">App-level description. Used to help you write the real instruct text below.</div>
+    </div>
+
+    <div class="tw-field">
+      <label class="tw-label">Instruct Text</label>
+      <textarea class="tw-textarea">Theo 'Crimson' style guidance replaced with your own role prompt. Young female, bright, playful, nimble, warm but mischievous. Speak with lively energy and lightness.</textarea>
+      <div class="tw-help">Real model input for `CosyVoice-300M-Instruct`.</div>
+    </div>
+
+    <div class="tw-field">
+      <label class="tw-label">Prompt Text to Generate</label>
+      <textarea class="tw-textarea">I found it. I knew there was still magic left in this room.</textarea>
+      <div class="tw-help">This exact text becomes the saved transcript attached to the prompt asset.</div>
+    </div>
+
+    <div class="tw-actions" style="margin-bottom:14px;">
+      <button class="tw-button primary">Generate Prompt Voice</button>
+    </div>
+
+    <div class="tw-result">
+      <div style="font-weight:600;">Generated prompt asset preview</div>
+      <audio class="tw-audio" controls></audio>
+      <div class="tw-actions">
+        <button class="tw-button secondary">Save as Prompt WAV</button>
+      </div>
+      <div class="tw-help">Saving stores two things together: the WAV file and the transcript `I found it. I knew there was still magic left in this room.`</div>
+    </div>
+  </div>
+
+  <div class="tw-screen">
+    <div class="tw-title">Screen 2: Test Production Path</div>
+    <div class="tw-sub">Uses `Fun-CosyVoice3` with the saved prompt asset from Screen 1. This is the screen that matches the intended production behavior.</div>
+
+    <div class="tw-grid">
+      <div class="tw-field">
+        <label class="tw-label">Model</label>
+        <select class="tw-select">
+          <option>Fun-CosyVoice3-0.5B</option>
+          <option>Fun-CosyVoice3-1.5B</option>
+        </select>
+      </div>
+      <div class="tw-field">
+        <label class="tw-label">Mode</label>
+        <select class="tw-select">
+          <option>instruct2</option>
+          <option>zero_shot</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="tw-field">
+      <label class="tw-label">Prompt Asset</label>
+      <select class="tw-select">
+        <option>red-fairy-prompt-v1.wav</option>
+      </select>
+      <div class="tw-help">Chosen from saved assets generated in Screen 1, or uploaded manually later.</div>
+      <div style="margin-top:8px;">
+        <span class="tw-pill">attached transcript: I found it. I knew there was still magic left in this room.</span>
+      </div>
+    </div>
+
+    <div class="tw-field">
+      <label class="tw-label">Production Text</label>
+      <textarea class="tw-textarea">There you are. I was starting to think the whole forest had forgotten how to listen.</textarea>
+    </div>
+
+    <div class="tw-field">
+      <label class="tw-label">Instruct Text</label>
+      <textarea class="tw-textarea">You are a helpful assistant. Young female, bright, playful, nimble, warm but mischievous. Speak with a lively but natural tone.<|endofprompt|></textarea>
+      <div class="tw-help">Used in `instruct2`. For `zero_shot`, this area is replaced by the saved prompt transcript.</div>
+    </div>
+
+    <div class="tw-grid">
+      <div class="tw-field">
+        <label class="tw-label">Stream</label>
+        <select class="tw-select">
+          <option>true</option>
+          <option>false</option>
+        </select>
+      </div>
+      <div class="tw-field">
+        <label class="tw-label">Speed</label>
+        <input class="tw-input" value="1.0">
+      </div>
+    </div>
+
+    <div class="tw-actions" style="margin-bottom:14px;">
+      <button class="tw-button primary">Generate Production Voice</button>
+    </div>
+
+    <div class="tw-result">
+      <div style="font-weight:600;">Production preview</div>
+      <audio class="tw-audio" controls></audio>
+      <div class="tw-help">This screen is where you judge whether the saved prompt asset actually behaves well in the real CV3 path.</div>
+    </div>
+  </div>
+</div>

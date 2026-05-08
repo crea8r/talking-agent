@@ -1,0 +1,115 @@
+<div class="section">
+  <h2>Minimal CosyVoice Casting UI</h2>
+  <p class="subtitle">Prompt-driven casting with only the real request inputs that matter for the first version.</p>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">Single Generate Flow</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:1.15fr 1fr;gap:18px;min-height:420px;">
+      <div style="display:grid;grid-template-rows:auto auto 1fr;gap:14px;">
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+          <div class="label">1. Character Prompt</div>
+          <div class="placeholder" style="height:136px;margin-top:10px;text-align:left;">
+            App-level field.
+            <br>Used to build CosyVoice's real <strong>instruct_text</strong>.
+            <br><br>
+            Example:
+            <br>young female voice, bright, playful, nimble, fairy-like, quick reactions, not squeaky, warm but mischievous
+          </div>
+        </div>
+
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+          <div class="label">2. Session Text</div>
+          <div class="placeholder" style="height:112px;margin-top:10px;text-align:left;">
+            Real CosyVoice field:
+            <br><strong>tts_text</strong>
+            <br><br>
+            Example:
+            <br>I found it. I knew there was still magic left in this room.
+          </div>
+        </div>
+
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+          <div class="label">3. Generate</div>
+          <div class="placeholder" style="height:88px;margin-top:10px;">
+            Generate Voice with CosyVoice
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-rows:auto auto 1fr;gap:14px;">
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+          <div class="label">Real CosyVoice Request Parameters</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
+            <div class="placeholder" style="height:86px;text-align:left;">
+              <strong>model</strong>
+              <br>Fun-CosyVoice3-0.5B
+              <br>Fun-CosyVoice3-1.5B
+            </div>
+            <div class="placeholder" style="height:86px;text-align:left;">
+              <strong>mode</strong>
+              <br>sft
+              <br>instruct2
+              <br>zero_shot
+            </div>
+            <div class="placeholder" style="height:86px;text-align:left;">
+              <strong>spk_id</strong>
+              <br>used by sft
+              <br>preset speaker id
+            </div>
+            <div class="placeholder" style="height:86px;text-align:left;">
+              <strong>instruct_text</strong>
+              <br>used by instruct2
+              <br>derived from character prompt
+            </div>
+            <div class="placeholder" style="height:86px;text-align:left;">
+              <strong>prompt_wav</strong>
+              <br>used by zero_shot
+              <br>optional later
+            </div>
+            <div class="placeholder" style="height:86px;text-align:left;">
+              <strong>zero_shot_spk_id</strong>
+              <br>saved reference id
+              <br>optional later
+            </div>
+            <div class="placeholder" style="height:86px;text-align:left;">
+              <strong>stream</strong>
+              <br>true / false
+            </div>
+            <div class="placeholder" style="height:86px;text-align:left;">
+              <strong>speed</strong>
+              <br>float
+              <br>for example 1.0
+            </div>
+            <div class="placeholder" style="height:86px;text-align:left;">
+              <strong>text_frontend</strong>
+              <br>true / false
+            </div>
+          </div>
+        </div>
+
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+          <div class="label">Mode Notes</div>
+          <div class="placeholder" style="height:150px;margin-top:10px;text-align:left;">
+            sft:
+            <br>tts_text + spk_id + stream + speed + text_frontend
+            <br><br>
+            instruct2:
+            <br>tts_text + instruct_text + prompt_wav or zero_shot_spk_id + stream + speed + text_frontend
+            <br><br>
+            zero_shot:
+            <br>tts_text + prompt_text + prompt_wav or zero_shot_spk_id + stream + speed + text_frontend
+          </div>
+        </div>
+
+        <div style="border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;background:rgba(255,255,255,.03);">
+          <div class="label">Result</div>
+          <div class="placeholder" style="height:92px;margin-top:10px;">
+            Audio player and generation log appear here
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

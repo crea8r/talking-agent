@@ -1,0 +1,8 @@
+{
+  "name": "@talking-agent/codex-exec",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs"
+  }
+}

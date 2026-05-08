@@ -3,6 +3,32 @@ import assert from 'node:assert/strict';
 
 import { createTtsClient } from './tts-client.mjs';
 
+test('health checks hit each backend health endpoint', async () => {
+  const fetchCalls = [];
+  const client = createTtsClient({
+    textOnlyBaseUrl: 'http://text-only.local',
+    productionBaseUrl: 'http://production.local',
+    fetchImpl: async (url) => {
+      fetchCalls.push(url);
+      return new Response(JSON.stringify({ ok: true, app: 'voice-backend' }), {
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      });
+    },
+  });
+
+  const [textOnlyHealth, productionHealth] = await Promise.all([
+    client.checkTextOnlyHealth(),
+    client.checkProductionHealth(),
+  ]);
+
+  assert.equal(textOnlyHealth.app, 'voice-backend');
+  assert.equal(productionHealth.app, 'voice-backend');
+  assert.deepEqual(fetchCalls, [
+    'http://text-only.local/healthz',
+    'http://production.local/healthz',
+  ]);
+});
+
 test('listTextOnlySpeakers normalizes string and object responses', async () => {
   const fetchCalls = [];
   const client = createTtsClient({

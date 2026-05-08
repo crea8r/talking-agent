@@ -544,6 +544,15 @@ body[data-panel-mode="manual"] .control-card.is-minimized {
   width: 100%;
 }
 
+.prompt-composer-controls {
+  position: absolute;
+  right: 0.7rem;
+  bottom: 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
 body[data-director-request-active="true"][data-panel-mode="pre-director"] .prompt-composer {
   opacity: 0.9;
 }
@@ -562,7 +571,7 @@ body[data-director-request-error="true"][data-panel-mode="pre-director"] .direct
   background: rgba(255, 255, 255, 0.9);
   color: var(--text);
   box-shadow: var(--shadow-soft);
-  padding-right: 4rem;
+  padding-right: 8.3rem;
 }
 
 body[data-director-request-active="true"][data-panel-mode="pre-director"] .director-prompt-input {
@@ -578,10 +587,23 @@ body[data-director-request-active="true"][data-panel-mode="pre-director"] .direc
   animation: directorPromptLoading 1.2s linear infinite;
 }
 
+.prompt-composer-elapsed {
+  display: inline-flex;
+  align-items: center;
+  min-width: 3.7rem;
+  height: 42px;
+  padding: 0 0.9rem;
+  border-radius: 14px;
+  background: rgba(236, 243, 252, 0.94);
+  border: 1px solid rgba(156, 180, 214, 0.52);
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: var(--shadow-soft);
+}
+
 .prompt-composer-send {
-  position: absolute;
-  right: 0.7rem;
-  bottom: 0.7rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
