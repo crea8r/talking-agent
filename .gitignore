@@ -3,4 +3,7 @@ node_modules
 npm-debug.log*
 
 apps/voice-cast/vendor/
+apps/voice-cast/tools/__pycache__/
 output/
+packages/production-voice/.cache/
+packages/production-voice/__pycache__/

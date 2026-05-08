@@ -1,0 +1,11 @@
+{
+  "name": "@talking-agent/production-voice",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./browser-layer": "./browser-layer.mjs",
+    "./client": "./client.mjs",
+    "./profile-store": "./profile-store.mjs",
+    "./server": "./server.mjs"
+  }
+}

@@ -11,6 +11,9 @@ export function createHttpClient() {
     async fetchRuntimeConfig() {
       return expectJson(await fetch('/api/runtime-config'));
     },
+    async fetchBackendStatus() {
+      return expectJson(await fetch('/api/backend-status'));
+    },
     async fetchCastingSpeakers() {
       return expectJson(await fetch('/api/casting/speakers'));
     },

@@ -19,6 +19,7 @@ export function createAvatarController({
 }) {
   const earlyBootIssues = [];
   const avatarLayer = createSafeAvatarLayer();
+  let queuedModelId = '';
 
   function createSafeAvatarLayer() {
     try {
@@ -32,7 +33,9 @@ export function createAvatarController({
           addLog(level, `[avatar] ${message}`, details);
         },
         onLookTargetChange(label) {
-          dom.lookTarget.textContent = label;
+          if (dom.lookTarget) {
+            dom.lookTarget.textContent = label;
+          }
         },
       });
     } catch (error) {
@@ -100,9 +103,13 @@ export function createAvatarController({
       addLog('error', `${issue.scope} bootstrap failed.`, issue.error);
     });
 
-    dom.sceneNote.textContent =
-      'Avatar renderer failed to initialize. Room and bridge controls still work.';
-    dom.activeAvatar.textContent = 'Avatar unavailable';
+    if (dom.sceneNote) {
+      dom.sceneNote.textContent =
+        'Avatar renderer failed to initialize. Voice session controls still work.';
+    }
+    if (dom.activeAvatar) {
+      dom.activeAvatar.textContent = 'Avatar unavailable';
+    }
   }
 
   async function loadModel() {
@@ -115,15 +122,26 @@ export function createAvatarController({
       const snapshot = avatarLayer.getSnapshot();
       state.preferences.gestureId = snapshot.gestureId;
       syncGestureOptions(snapshot.modelId, snapshot.gestureId);
-      dom.activeAvatar.textContent = model.label;
+      if (dom.activeAvatar) {
+        dom.activeAvatar.textContent = model.label;
+      }
       refreshSceneNote();
     } catch (error) {
       addLog('error', 'Avatar model failed to load.', formatError(error));
-      dom.activeAvatar.textContent = 'Avatar unavailable';
-      dom.sceneNote.textContent = 'Avatar model could not load. Room controls still work.';
+      if (dom.activeAvatar) {
+        dom.activeAvatar.textContent = 'Avatar unavailable';
+      }
+      if (dom.sceneNote) {
+        dom.sceneNote.textContent = 'Avatar model could not load. Room controls still work.';
+      }
     } finally {
       state.modelLoading = false;
       refreshActionButtons();
+
+      if (queuedModelId && queuedModelId !== model.id) {
+        queuedModelId = '';
+        await loadModel();
+      }
     }
   }
 
@@ -144,9 +162,11 @@ export function createAvatarController({
     onBundledModelChange(model.id);
 
     if (state.modelLoading) {
+      queuedModelId = model.id;
       return;
     }
 
+    queuedModelId = '';
     await loadModel();
   }
 
@@ -195,6 +215,10 @@ export function createAvatarController({
   }
 
   function refreshSceneNote() {
+    if (!dom.sceneNote) {
+      return;
+    }
+
     const stage = stageMap.get(state.preferences.stageId);
     const emote = emoteMap.get(state.preferences.emoteId);
     const modelId = avatarLayer.getSnapshot().modelId || state.preferences.bundledModelId;
@@ -205,11 +229,21 @@ export function createAvatarController({
   function syncAvatarSnapshot() {
     const snapshot = avatarLayer.getSnapshot();
     const gesture = resolveGesturePreset(snapshot.modelId, snapshot.gestureId);
-    dom.activeAvatar.textContent = snapshot.modelLabel || defaultModel.label;
-    dom.activeEmote.textContent = emoteMap.get(snapshot.emoteId)?.label || 'Neutral';
-    dom.activeGesture.textContent = gesture?.label || 'None';
-    dom.activeMouth.textContent = snapshot.mouthCue || 'rest';
-    dom.lookTarget.textContent = snapshot.lookTargetLabel || 'center';
+    if (dom.activeAvatar) {
+      dom.activeAvatar.textContent = snapshot.modelLabel || defaultModel.label;
+    }
+    if (dom.activeEmote) {
+      dom.activeEmote.textContent = emoteMap.get(snapshot.emoteId)?.label || 'Neutral';
+    }
+    if (dom.activeGesture) {
+      dom.activeGesture.textContent = gesture?.label || 'None';
+    }
+    if (dom.activeMouth) {
+      dom.activeMouth.textContent = snapshot.mouthCue || 'rest';
+    }
+    if (dom.lookTarget) {
+      dom.lookTarget.textContent = snapshot.lookTargetLabel || 'center';
+    }
   }
 
   function syncGestureOptions(modelId, activeGestureId) {

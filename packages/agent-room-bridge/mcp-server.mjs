@@ -33,9 +33,11 @@ function buildGestureCatalogDescription() {
 
 const PUBLISH_ACTIONS_DESCRIPTION = [
   'Publish one or more agent-selected actions for the active call.',
-  'Speech is inferred from `text`.',
-  'Animation is inferred from `gestureId` only.',
-  'Use only one of the following gesture choices when you want to animate:',
+  'Always send `inReplyToEventId` from the triggering `utt.final` event when replying to speech.',
+  'For speech actions, send user-facing `text`, an optional `subtitle`, and an optional `animationSequence` with coarse beat timings.',
+  'Animation can be set with `gestureId`, `emoteId`, `stageId`, or `animationSequence` beats.',
+  'The browser retimes animation beats to the actual speech length and handles lip sync locally.',
+  'Use only gesture choices from the avatar catalog when you want to animate:',
   buildGestureCatalogDescription(),
 ].join('\n');
 
@@ -88,8 +90,24 @@ const TOOL_DEFINITIONS = [
             required: [],
             properties: {
               text: { type: 'string' },
+              subtitle: { type: 'string' },
               gestureId: { type: 'string' },
+              emoteId: { type: 'string' },
+              stageId: { type: 'string' },
               mood: { type: 'string' },
+              animationSequence: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    gestureId: { type: 'string' },
+                    emoteId: { type: 'string' },
+                    stageId: { type: 'string' },
+                    atRatio: { type: 'number', minimum: 0, maximum: 1 },
+                  },
+                },
+              },
               reason: { type: 'string' },
               notes: { type: 'string' },
             },

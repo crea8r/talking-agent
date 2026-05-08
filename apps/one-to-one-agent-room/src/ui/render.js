@@ -1,6 +1,9 @@
 import { escapeHtml, formatTime, safeStringify } from '../lib/format.js';
 
 export function updateStatusCard(statusElement, detailElement, cardState, title, detail) {
+  if (!statusElement || !detailElement) {
+    return;
+  }
   statusElement.textContent = title;
   detailElement.textContent = detail;
   statusElement.closest('.status-card')?.setAttribute('data-state', cardState);
@@ -13,6 +16,10 @@ export function renderSelectOptions(selectElement, items, activeId) {
     const option = document.createElement('option');
     option.value = item.id;
     option.textContent = item.label;
+    if (option.style) {
+      option.style.color = '#08111d';
+      option.style.backgroundColor = '#f5f7ff';
+    }
     if (item.note) {
       option.title = item.note;
     }
@@ -60,56 +67,16 @@ export function renderRateLabels(rateElement, pitchElement, speechRate, speechPi
   pitchElement.textContent = `${speechPitch.toFixed(2)}x`;
 }
 
-export function renderLocalStage(container, room, trackSource) {
-  container.innerHTML = '';
-
-  if (!room) {
-    container.innerHTML = '<div class="empty-state">Start the room to preview local media.</div>';
-    return null;
-  }
-
-  const participant = room.localParticipant;
-  const cameraPublication = participant.getTrackPublication(trackSource.Camera);
-  const microphonePublication = participant.getTrackPublication(trackSource.Microphone);
-  const card = document.createElement('div');
-  card.className = 'participant-card';
-
-  const header = document.createElement('div');
-  header.className = 'participant-header';
-  header.innerHTML = `
-    <strong>${escapeHtml(participant.name || participant.identity)}</strong>
-    <span class="participant-meta">local participant</span>
-  `;
-
-  const media = document.createElement('div');
-  media.className = 'participant-stage';
-
-  let videoElement = null;
-  if (cameraPublication?.track) {
-    videoElement = document.createElement('video');
-    videoElement.muted = true;
-    videoElement.autoplay = true;
-    videoElement.playsInline = true;
-    videoElement.className = 'participant-video';
-    cameraPublication.track.attach(videoElement);
-    media.append(videoElement);
-  } else {
-    media.innerHTML = '<div class="empty-state">Camera is off.</div>';
-  }
-
-  const footer = document.createElement('div');
-  footer.className = 'participant-footer';
-  footer.innerHTML = `
-    <span class="role-tag role-human">${cameraPublication?.track ? 'camera on' : 'camera off'}</span>
-    <span class="role-tag role-human">${microphonePublication?.track ? 'mic on' : 'mic off'}</span>
-  `;
-
-  card.append(header, media, footer);
-  container.append(card);
-  return videoElement;
+export function renderSubtitleLane(textElement, modeElement, subtitle = {}) {
+  textElement.textContent = subtitle.text || '…';
+  modeElement.textContent = subtitle.mode || 'idle';
+  modeElement.dataset.mode = subtitle.mode || 'idle';
 }
 
 export function renderTranscriptList(container, session) {
+  if (!container) {
+    return;
+  }
   container.innerHTML = '';
 
   if (!session?.turns?.length) {
@@ -123,11 +90,9 @@ export function renderTranscriptList(container, session) {
     humanItem.dataset.role = 'human';
     humanItem.innerHTML = `
       <div class="turn-head">
-        <span class="role-tag role-human">${escapeHtml(turn.source)}</span>
         <span>${escapeHtml(formatTime(turn.createdAt))}</span>
       </div>
       <div class="turn-body">
-        <strong>${escapeHtml(turn.human.name || turn.human.identity || 'Human')}</strong>
         <p>${escapeHtml(turn.transcript)}</p>
       </div>
     `;
@@ -137,16 +102,19 @@ export function renderTranscriptList(container, session) {
       const agentItem = document.createElement('li');
       agentItem.className = 'turn-item';
       agentItem.dataset.role = 'agent';
+      const stateLabel = turn.agentReply.interruptedAt
+        ? 'interrupted'
+        : turn.agentReply.playedAt
+          ? 'played'
+          : 'ready';
       agentItem.innerHTML = `
         <div class="turn-head">
-          <span class="role-tag role-agent">${escapeHtml(turn.agentReply.agentLabel || 'agent')}</span>
           <span>${escapeHtml(formatTime(turn.agentReply.createdAt))}</span>
         </div>
         <div class="turn-body">
-          <strong>${escapeHtml(turn.agentReply.agentLabel || 'Codex OpenAI')}</strong>
-          <p>${escapeHtml(turn.agentReply.text)}</p>
+          <p>${escapeHtml(turn.agentReply.subtitle || turn.agentReply.text)}</p>
           <small>${escapeHtml(
-            `${turn.agentReply.emoteId} · ${turn.agentReply.gestureId}${turn.agentReply.playedAt ? ' · played' : ' · pending playback'}`,
+            `${turn.agentReply.emoteId || 'neutral'}${turn.agentReply.gestureId ? ` · ${turn.agentReply.gestureId}` : ''} · ${stateLabel}`,
           )}</small>
         </div>
       `;
@@ -157,14 +125,18 @@ export function renderTranscriptList(container, session) {
     const pendingItem = document.createElement('li');
     pendingItem.className = 'turn-item';
     pendingItem.dataset.role = 'agent';
+    const pendingMessage =
+      turn.status === 'interrupted'
+        ? 'This turn was interrupted before the reply finished.'
+        : turn.status === 'error'
+          ? turn.errorText || 'Codex failed to answer this turn.'
+          : 'Codex is thinking about a reply.';
     pendingItem.innerHTML = `
       <div class="turn-head">
-        <span class="role-tag role-agent">waiting</span>
         <span>${escapeHtml(formatTime(turn.createdAt))}</span>
       </div>
       <div class="turn-body">
-        <strong>Codex OpenAI</strong>
-        <p>${escapeHtml(turn.status === 'claimed' ? 'Claimed by the agent.' : 'Waiting for the agent.')}</p>
+        <p>${escapeHtml(pendingMessage)}</p>
       </div>
     `;
     container.append(pendingItem);
@@ -172,6 +144,9 @@ export function renderTranscriptList(container, session) {
 }
 
 export function renderLogs(container, logs) {
+  if (!container) {
+    return;
+  }
   container.innerHTML = '';
 
   logs.forEach((entry) => {
@@ -185,5 +160,8 @@ export function renderLogs(container, logs) {
 }
 
 export function renderDebugSnapshot(container, payload) {
+  if (!container) {
+    return;
+  }
   container.textContent = safeStringify(payload);
 }

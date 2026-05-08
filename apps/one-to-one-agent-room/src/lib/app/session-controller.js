@@ -1,18 +1,26 @@
 import {
-  getCallPrimaryAction,
   buildCallSessionKey,
   buildCallSessionPayload,
-  getAgentHeartbeatState,
+  getCallPrimaryAction,
   normalizeSessionForUi,
 } from './call-session.js';
+import {
+  pickDramaticGoodbyeGesture,
+  pickRandomGoodbyePhrase,
+} from './goodbye-sequence.js';
+import {
+  pickGreetingHelloGesture,
+  pickRandomHelloPhrase,
+} from './hello-sequence.js';
+
+const AMBIENT_KEYWORDS = {
+  idle: ['idle', 'between replies', 'resting', 'neutral speaking', 'waiting', 'calm'],
+  listening: ['listen', 'listening', 'observing', 'ambient attention', 'waiting'],
+  thinking: ['thinking', 'hesitation', 'problem solving', 'reflection'],
+};
 
 export function createSessionController({
   state,
-  roomLayer,
-  roomClass,
-  videoPresets,
-  logLevel,
-  screenNavigator,
   humanVoiceLayer,
   agentVoiceLayer,
   avatarSpeech,
@@ -26,20 +34,88 @@ export function createSessionController({
   collectFormState,
   fetchJson,
   postJson,
+  postFormData,
   addLog,
   formatError,
-  renderLocalStage,
-  renderRoomSnapshot,
-  renderBridgeSnapshot,
+  renderSessionSnapshot,
   renderTranscriptList,
+  renderSubtitles,
   renderDebugSnapshot,
   renderAgentStatus,
+  renderVoiceSampleState,
   refreshActionButtons,
+  syncVoiceSampleProfile,
+  persistState,
   updateRoomStatus,
+  timers = globalThis,
+  random = Math.random,
 }) {
   let prepareDebounceId = 0;
-  let prepareRequestId = 0;
-  let heartbeatUiTickId = 0;
+  let ambientTimerId = 0;
+  let speechBeatTimerIds = [];
+  let interruptionIssuedForUtterance = false;
+  let thinkingTimerId = 0;
+  let thinkingStartedAt = 0;
+  let activeEndCallPromise = null;
+  let pendingLocalHelloTimerId = 0;
+  let localHelloToken = 0;
+
+  function getLaunchContext() {
+    return state.launchContext && typeof state.launchContext === 'object'
+      ? state.launchContext
+      : {
+          mode: 'manual',
+          autoStart: false,
+          workspaceRoot: '',
+          workspaceKey: 'default',
+        };
+  }
+
+  function buildVoiceScopeQuery() {
+    const workspaceKey = `${getLaunchContext().workspaceKey || ''}`.trim();
+    return workspaceKey ? `?scope=${encodeURIComponent(workspaceKey)}` : '';
+  }
+
+  function buildWorkspaceSetupScopeQuery() {
+    return buildVoiceScopeQuery();
+  }
+
+  function getProductionVoiceState() {
+    if (!state.productionVoice) {
+      state.productionVoice = {
+        loading: false,
+        uploading: false,
+        backendConfigured: false,
+        backendRunning: false,
+        backendApp: '',
+        backendDetail: '',
+        defaultSpeakerId: '',
+        defaultSpeakerLabel: '',
+        validationMessage: '',
+        profile: null,
+      };
+    }
+
+    return state.productionVoice;
+  }
+
+  function getCodexState() {
+    if (!state.codex) {
+      state.codex = {
+        loading: false,
+        backendConfigured: false,
+        backendRunning: false,
+        backendApp: '',
+        backendDetail: '',
+        model: '',
+        reasoningEffort: '',
+        sessionRoot: '',
+        command: '',
+      };
+    }
+
+    return state.codex;
+  }
 
   function createUtteranceId() {
     return globalThis.crypto?.randomUUID?.()
@@ -47,7 +123,60 @@ export function createSessionController({
       : `utt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
-  function applyBridgePayload(payload) {
+  function setSubtitle(role, text, mode) {
+    state.subtitles[role] = {
+      mode,
+      text,
+    };
+    renderSubtitles();
+  }
+
+  function clearThinkingTimer() {
+    if (thinkingTimerId) {
+      timers.clearInterval?.(thinkingTimerId);
+      thinkingTimerId = 0;
+    }
+  }
+
+  function renderThinkingTimer() {
+    renderSessionSnapshot();
+    renderAgentStatus();
+  }
+
+  function stopAgentThinkingTimer() {
+    clearThinkingTimer();
+    thinkingStartedAt = 0;
+    state.agentThinkingActive = false;
+    state.agentThinkingElapsedTenths = 0;
+    renderThinkingTimer();
+  }
+
+  function tickAgentThinkingTimer() {
+    if (!state.agentThinkingActive || !thinkingStartedAt) {
+      return;
+    }
+
+    const nextTenths = Math.max(0, Math.floor((Date.now() - thinkingStartedAt) / 100));
+    if (nextTenths === state.agentThinkingElapsedTenths) {
+      return;
+    }
+
+    state.agentThinkingElapsedTenths = nextTenths;
+    renderThinkingTimer();
+  }
+
+  function startAgentThinkingTimer() {
+    clearThinkingTimer();
+    thinkingStartedAt = Date.now();
+    state.agentThinkingActive = true;
+    state.agentThinkingElapsedTenths = 0;
+    renderThinkingTimer();
+    thinkingTimerId = timers.setInterval?.(() => {
+      tickAgentThinkingTimer();
+    }, 100) || 0;
+  }
+
+  function applySessionPayload(payload) {
     if (payload?.session) {
       state.session = normalizeSessionForUi(payload.session);
     }
@@ -57,27 +186,58 @@ export function createSessionController({
     }
   }
 
-  function buildPendingActionsFromLegacyReplies(session) {
-    if (!session?.turns?.length) {
-      return [];
+  function applyProductionVoicePayload(payload) {
+    const productionVoice = getProductionVoiceState();
+    const backend = payload?.backend || {};
+
+    productionVoice.backendConfigured = backend.configured !== false;
+    productionVoice.backendRunning = backend.running === true;
+    productionVoice.backendApp = `${backend.app || ''}`.trim();
+    productionVoice.backendDetail = `${backend.detail || ''}`.trim();
+    productionVoice.defaultSpeakerId = `${backend.defaultSpeakerId || ''}`.trim();
+    productionVoice.defaultSpeakerLabel = `${backend.defaultSpeakerLabel || ''}`.trim();
+    productionVoice.validationMessage = '';
+    syncVoiceSampleProfile(payload?.profile || null);
+    productionVoice.profile = payload?.profile || null;
+
+    agentVoiceLayer.updateConfig?.({
+      ready: Boolean(state.productionVoice.backendRunning && state.productionVoice.profile?.referenceAvailable),
+      defaultCharacterId: resolveActiveCharacterId(),
+      locale: state.preferences.humanLocale || 'en-US',
+    });
+
+    persistState();
+    renderVoiceSampleState();
+    renderAgentStatus();
+    refreshActionButtons();
+    renderDebugSnapshot();
+  }
+
+  function applyCodexPayload(payload) {
+    const codex = getCodexState();
+    const backend = payload?.backend || {};
+
+    codex.backendConfigured = backend.configured !== false;
+    codex.backendRunning = backend.running === true;
+    codex.backendApp = `${backend.app || ''}`.trim();
+    codex.backendDetail = `${backend.detail || ''}`.trim();
+    codex.model = `${backend.model || ''}`.trim();
+    codex.reasoningEffort = `${backend.reasoningEffort || ''}`.trim();
+    codex.sessionRoot = `${backend.sessionRoot || ''}`.trim();
+    codex.command = `${backend.command || ''}`.trim();
+    renderSessionSnapshot();
+    renderAgentStatus();
+    refreshActionButtons();
+    renderDebugSnapshot();
+  }
+
+  function applyWorkspaceSetupPayload(payload) {
+    const setup = payload?.setup || null;
+    if (!setup?.activeModelId) {
+      return;
     }
 
-    return session.turns
-      .filter((turn) => turn.agentReply && !turn.agentReply.playedAt)
-      .sort(
-        (left, right) =>
-          Date.parse(left.agentReply.createdAt) - Date.parse(right.agentReply.createdAt),
-      )
-      .map((turn) => ({
-        actionId: turn.agentReply.id,
-        type: 'speech',
-        text: turn.agentReply.text,
-        gestureId: turn.agentReply.gestureId,
-        emoteId: turn.agentReply.emoteId,
-        stageId: turn.agentReply.stageId,
-        mood: turn.agentReply.mood,
-        legacyReplyId: turn.agentReply.id,
-      }));
+    state.preferences.bundledModelId = `${setup.activeModelId}`.trim() || state.preferences.bundledModelId;
   }
 
   function resolveActiveCharacterId() {
@@ -88,125 +248,473 @@ export function createSessionController({
     );
   }
 
-  async function syncAvatarCatalogForSession() {
-    if (!state.session?.id) {
+  function resolveCurrentGestureCatalog() {
+    const modelId = resolveActiveCharacterId();
+    return state.runtimeConfig?.avatar?.gestureCatalogByModel?.[modelId] || [];
+  }
+
+  function clearAmbientLoop() {
+    if (ambientTimerId) {
+      clearTimeout(ambientTimerId);
+      ambientTimerId = 0;
+    }
+  }
+
+  function clearSpeechBeats() {
+    speechBeatTimerIds.forEach((timerId) => clearTimeout(timerId));
+    speechBeatTimerIds = [];
+  }
+
+  function setStartupGreetingActive(active) {
+    state.startupGreetingActive = Boolean(active);
+    renderSessionSnapshot();
+    renderTranscriptList();
+    renderDebugSnapshot();
+    renderAgentStatus();
+    refreshActionButtons();
+  }
+
+  function clearScheduledLocalHello({ releaseLock = false } = {}) {
+    if (pendingLocalHelloTimerId) {
+      timers.clearTimeout?.(pendingLocalHelloTimerId);
+      pendingLocalHelloTimerId = 0;
+    }
+    localHelloToken += 1;
+    if (releaseLock) {
+      state.startupGreetingActive = false;
+      state.humanMicLevel = 0;
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      refreshActionButtons();
+    }
+  }
+
+  function canPlayLocalHello(expectedToken) {
+    return (
+      expectedToken === localHelloToken &&
+      state.activeCall &&
+      !state.endingCall &&
+      state.startupGreetingActive &&
+      !state.callEndingDimmed &&
+      !state.processingReplies &&
+      !state.currentTurnId &&
+      !state.activeReplyAbortController &&
+      !state.activeUtteranceId &&
+      !state.activeUtteranceText &&
+      !state.transcriptPreview &&
+      !avatarSpeech.getSnapshot().active
+    );
+  }
+
+  async function enableListeningAfterLocalHello(expectedToken) {
+    if (
+      expectedToken !== localHelloToken ||
+      !state.activeCall ||
+      state.endingCall ||
+      state.callEndingDimmed
+    ) {
       return;
     }
 
-    const modelId =
-      `${collectFormState().bundledModelId || state.preferences?.bundledModelId || ''}`.trim();
-    const catalog = state.runtimeConfig?.bridge?.avatarCatalogByModel?.[modelId];
-    if (!modelId || !catalog) {
+    humanVoiceLayer.updateConfig?.({ autoRestart: true });
+
+    try {
+      await humanVoiceLayer.startListening({ restart: true });
+    } catch (error) {
+      setStartupGreetingActive(false);
+      await endCall({ reason: 'speech recognition failed to start after local hello' });
+      updateRoomStatus(
+        'error',
+        'Speech recognition failed',
+        error instanceof Error ? error.message : 'Unable to start browser speech recognition.',
+      );
+      throw error;
+    }
+
+    setStartupGreetingActive(false);
+    state.humanMicLevel = 0;
+    updateRoomStatus('ready', 'Call live', 'Listening for your voice.');
+    setSubtitle('human', 'Listening…', 'listening');
+    setSubtitle('agent', 'Waiting for your first line.', 'ready');
+  }
+
+  async function playLocalHello(expectedToken) {
+    if (!canPlayLocalHello(expectedToken)) {
       return;
     }
 
-    const payload = await postJson(
-      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/avatar-catalog`,
+    const avatarSnapshot = avatarLayer.getSnapshot();
+    const currentGestureId = avatarSnapshot.gestureId || '';
+    const selectedGesture = pickGreetingHelloGesture(
+      avatarSnapshot.availableGestures,
+      currentGestureId,
+      random,
+    );
+    const helloText = pickRandomHelloPhrase(random);
+    const helloMood =
+      selectedGesture?.id === 'Cheer' || selectedGesture?.id === 'Peace'
+        ? 'playful'
+        : 'warm';
+
+    if (selectedGesture?.id) {
+      selectGesture(selectedGesture.id, { persist: false });
+    }
+    selectEmote(helloMood, { persist: false });
+
+    renderAgentStatus();
+    syncAmbientMotion();
+
+    await avatarSpeech
+      .speakText(helloText, {
+        withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
+        source: 'local-hello',
+        locale: collectFormState().humanLocale || 'en-US',
+        characterId: resolveActiveCharacterId(),
+        mood: helloMood,
+        onPlaybackStart: () => {
+          setSubtitle('agent', helloText, 'speaking');
+          renderAgentStatus();
+          syncAmbientMotion();
+        },
+        onPlaybackEnd: () => {
+          void enableListeningAfterLocalHello(expectedToken);
+        },
+      })
+      .catch((error) => {
+        addLog('error', 'Local hello playback failed.', formatError(error));
+        if (canPlayLocalHello(expectedToken)) {
+          void enableListeningAfterLocalHello(expectedToken);
+        }
+      })
+      .finally(() => {
+        if (state.activeCall && !state.endingCall && !state.processingReplies && !state.currentTurnId) {
+          renderAgentStatus();
+          syncAmbientMotion();
+        }
+      });
+  }
+
+  function scheduleLocalHello() {
+    clearScheduledLocalHello();
+    const nextToken = localHelloToken;
+    const delayMs = 1000 + Math.round(random() * 2000);
+    pendingLocalHelloTimerId = timers.setTimeout?.(() => {
+      pendingLocalHelloTimerId = 0;
+      void playLocalHello(nextToken);
+    }, delayMs) || 0;
+  }
+
+  function pickAmbientGesture(mode) {
+    const gestures = resolveCurrentGestureCatalog();
+    const keywords = AMBIENT_KEYWORDS[mode] || [];
+    const currentGesture = avatarLayer.getSnapshot().gestureId;
+    const matches = gestures.filter((gesture) =>
+      keywords.some(
+        (keyword) =>
+          gesture.intent === keyword ||
+          gesture.id === keyword ||
+          gesture.bestFor?.includes(keyword),
+      ),
+    );
+    const pool = matches.length ? matches : gestures;
+    const filteredPool = pool.filter((gesture) => gesture.id !== currentGesture);
+    const finalPool = filteredPool.length ? filteredPool : pool;
+    if (!finalPool.length) {
+      return '';
+    }
+
+    const index = Math.floor(Math.random() * finalPool.length);
+    return finalPool[index]?.id || '';
+  }
+
+  function syncAmbientMotion() {
+    clearAmbientLoop();
+
+    if (!state.activeCall) {
+      return;
+    }
+
+    if (avatarSpeech.getSnapshot().active || state.currentTurnId) {
+      return;
+    }
+
+    const humanSnapshot = state.humanVoiceSnapshot || humanVoiceLayer.getSnapshot();
+    const nextMode = state.processingReplies
+      ? 'thinking'
+      : humanSnapshot.listening
+        ? 'listening'
+        : 'idle';
+    const gestureId = pickAmbientGesture(nextMode);
+    if (gestureId) {
+      selectGesture(gestureId, { persist: false });
+    }
+
+    ambientTimerId = window.setTimeout(() => {
+      syncAmbientMotion();
+    }, nextMode === 'thinking' ? 2600 : 4200 + Math.round(Math.random() * 1800));
+  }
+
+  function buildSpeechBeatTimers(reply, durationMs) {
+    const beats = Array.isArray(reply.animationSequence) ? reply.animationSequence : [];
+    if (!beats.length) {
+      return () => {};
+    }
+
+    return () => {
+      clearSpeechBeats();
+      beats.forEach((beat) => {
+        const timerId = window.setTimeout(() => {
+          if (beat.stageId && stageMap.has(beat.stageId)) {
+            selectStage(beat.stageId, { persist: false });
+          }
+          if (beat.emoteId && emoteMap.has(beat.emoteId)) {
+            selectEmote(beat.emoteId, { persist: false });
+          }
+          if (beat.gestureId) {
+            selectGesture(beat.gestureId, { persist: false });
+          }
+        }, Math.max(0, Math.round((beat.atRatio || 0) * durationMs)));
+        speechBeatTimerIds.push(timerId);
+      });
+    };
+  }
+
+  function applySpeechScene(reply) {
+    if (reply.stageId && stageMap.has(reply.stageId)) {
+      selectStage(reply.stageId, { persist: false });
+    }
+
+    if (reply.emoteId && emoteMap.has(reply.emoteId)) {
+      selectEmote(reply.emoteId, { persist: false });
+    }
+
+    if (reply.gestureId) {
+      selectGesture(reply.gestureId, { persist: false });
+    }
+
+    if (reply.text && dom.lastAgentReply) {
+      dom.lastAgentReply.textContent = reply.text;
+      setSubtitle('agent', reply.subtitle || reply.text, 'speaking');
+      return;
+    }
+
+    if (reply.text) {
+      setSubtitle('agent', reply.subtitle || reply.text, 'speaking');
+    }
+  }
+
+  async function syncSessionSetup() {
+    if (!state.session?.id || !state.runtimeConfig) {
+      return;
+    }
+
+    agentVoiceLayer.updateConfig?.({
+      defaultCharacterId: resolveActiveCharacterId(),
+    });
+
+    const payload = buildCallSessionPayload(collectFormState(), state.runtimeConfig);
+    const merged = await postJson(
+      `/api/call/sessions/${encodeURIComponent(state.session.id)}/setup`,
       {
-        activeModelId: modelId,
-        avatarCatalogUri: catalog.uri,
-        avatarCatalogVersion: catalog.version,
+        metadata: payload.metadata,
       },
     );
+    applySessionPayload(merged);
+    renderSessionSnapshot();
+    renderDebugSnapshot();
+  }
 
-    applyBridgePayload(payload);
-    renderBridgeSnapshot();
+  async function loadWorkspaceSetup() {
+    const payload = await fetchJson(`/api/workspace-setup${buildWorkspaceSetupScopeQuery()}`);
+    applyWorkspaceSetupPayload(payload);
+    renderDebugSnapshot();
+    return payload;
+  }
+
+  async function syncWorkspaceSetup({
+    activeModelId = resolveActiveCharacterId(),
+    activeModelLabel = '',
+  } = {}) {
+    const payload = await postJson(`/api/workspace-setup${buildWorkspaceSetupScopeQuery()}`, {
+      activeModelId,
+      activeModelLabel,
+    });
+    applyWorkspaceSetupPayload(payload);
+    renderDebugSnapshot();
+    return payload;
+  }
+
+  async function resolveLinkedLaunch() {
+    const launch = getLaunchContext();
+    if (launch.mode !== 'linked-call' || !launch.launchId) {
+      return launch;
+    }
+
+    const payload = await fetchJson(`/api/launch/${encodeURIComponent(launch.launchId)}`);
+    const resolvedLaunch = {
+      ...launch,
+      ...(payload?.launch || {}),
+      mode: 'linked-call',
+      autoStart: launch.autoStart,
+      initialScreen: launch.initialScreen,
+    };
+    state.launchContext = resolvedLaunch;
+    renderDebugSnapshot();
+    return resolvedLaunch;
+  }
+
+  async function loadProductionVoiceState() {
+    const productionVoice = getProductionVoiceState();
+    productionVoice.loading = true;
+    renderVoiceSampleState();
+    refreshActionButtons();
+
+    try {
+      const payload = await fetchJson(`/api/production-voice/state${buildVoiceScopeQuery()}`);
+      applyProductionVoicePayload(payload);
+      if (state.session?.id) {
+        await syncSessionSetup();
+      }
+      return payload;
+    } catch (error) {
+      productionVoice.backendRunning = false;
+      productionVoice.backendDetail =
+        error instanceof Error ? error.message : 'Unable to load production voice state.';
+      renderVoiceSampleState();
+      renderAgentStatus();
+      refreshActionButtons();
+      throw error;
+    } finally {
+      productionVoice.loading = false;
+      renderVoiceSampleState();
+      renderDebugSnapshot();
+    }
+  }
+
+  async function loadCodexState() {
+    const codex = getCodexState();
+    codex.loading = true;
+    renderSessionSnapshot();
+    refreshActionButtons();
+
+    try {
+      const payload = await fetchJson('/api/codex/state');
+      applyCodexPayload(payload);
+      return payload;
+    } catch (error) {
+      codex.backendRunning = false;
+      codex.backendDetail =
+        error instanceof Error ? error.message : 'Unable to verify codex exec.';
+      renderSessionSnapshot();
+      renderAgentStatus();
+      refreshActionButtons();
+      throw error;
+    } finally {
+      codex.loading = false;
+      renderSessionSnapshot();
+      renderDebugSnapshot();
+    }
+  }
+
+  async function uploadVoiceSample(file) {
+    const productionVoice = getProductionVoiceState();
+    productionVoice.uploading = true;
+    productionVoice.validationMessage = '';
+    state.preferences.voiceSampleFileName = `${file?.name || ''}`.trim();
+    renderVoiceSampleState();
+    refreshActionButtons();
+
+    try {
+      const formData = new FormData();
+      formData.set('referenceWav', file);
+      const speakerId =
+        productionVoice.defaultSpeakerId || state.preferences.voiceSampleSpeakerId;
+      const speakerLabel =
+        productionVoice.defaultSpeakerLabel || state.preferences.voiceSampleSpeakerLabel;
+      if (speakerId) {
+        formData.set('meloBaseSpeakerId', speakerId);
+        formData.set('meloBaseSpeakerLabel', speakerLabel || speakerId);
+      }
+
+      const payload = await postFormData(
+        `/api/production-voice/profile${buildVoiceScopeQuery()}`,
+        formData,
+      );
+      applyProductionVoicePayload(payload);
+      if (state.session?.id) {
+        await syncSessionSetup();
+      }
+      addLog('info', 'Saved production voice sample.', {
+        fileName: file?.name || '',
+        speakerId: payload?.profile?.meloBaseSpeakerId || speakerId || '',
+      });
+      return payload;
+    } finally {
+      productionVoice.uploading = false;
+      renderVoiceSampleState();
+      refreshActionButtons();
+      renderDebugSnapshot();
+    }
+  }
+
+  function setVoiceSampleValidationMessage(message = '') {
+    const productionVoice = getProductionVoiceState();
+    productionVoice.validationMessage = `${message || ''}`.trim();
+    renderVoiceSampleState();
+    refreshActionButtons();
     renderDebugSnapshot();
   }
 
   function installSdkLogging() {
-    roomLayer.installSdkLogging(({ message, context }) => {
-      addLog('info', `LiveKit SDK · ${message}`, context);
-    }, logLevel);
+    // No room SDK transport is used in the direct Codex session flow.
   }
 
   async function ensureSessionReady() {
     if (!state.session?.id) {
-      throw new Error('Create the call before sending turns to the agent.');
+      throw new Error('Start the call before sending turns to the agent.');
     }
-  }
-
-  async function mintToken() {
-    const form = collectFormState();
-    const tokenResponse = await roomLayer.mintToken({
-      roomName: form.roomName,
-      identity: form.identity,
-      participantName: form.participantName,
-      metadata: JSON.stringify(
-        {
-          role: 'human',
-          app: 'one-to-one-agent-room',
-        },
-        null,
-        2,
-      ),
-    });
-
-    return tokenResponse.token;
   }
 
   async function prepareLobbySession({ force = false } = {}) {
-    if (state.room || !state.runtimeConfig) {
+    if (!state.runtimeConfig) {
       return state.session;
     }
 
     const form = collectFormState();
-    if (!form.livekitUrl || !form.roomName || !form.identity) {
-      state.session = null;
-      state.sessionKey = '';
-      state.sessionPreparing = false;
-      stopSessionPolling();
-      renderRoomSnapshot();
-      renderBridgeSnapshot();
-      renderTranscriptList();
-      renderDebugSnapshot();
-      return null;
-    }
-
-    const sessionKey = buildCallSessionKey(form, state.runtimeConfig);
+    const sessionKey = buildCallSessionKey(form, state.runtimeConfig, getLaunchContext());
     if (!force && state.session?.id && state.sessionKey === sessionKey) {
-      if (!state.sessionPollId) {
-        startSessionPolling();
-      }
       return state.session;
     }
 
-    const requestId = ++prepareRequestId;
     state.sessionPreparing = true;
-    renderRoomSnapshot();
-    renderBridgeSnapshot();
+    renderSessionSnapshot();
+    renderAgentStatus();
     renderDebugSnapshot();
 
     try {
       const sessionResponse = await postJson(
-        '/api/bridge/sessions',
-        buildCallSessionPayload(form, state.runtimeConfig),
+        '/api/call/sessions',
+        buildCallSessionPayload(form, state.runtimeConfig, getLaunchContext()),
       );
-
-      if (requestId !== prepareRequestId) {
-        return state.session;
-      }
-
-      applyBridgePayload(sessionResponse);
+      applySessionPayload(sessionResponse);
       state.sessionKey = sessionKey;
-      await syncAvatarCatalogForSession();
-      renderBridgeSnapshot();
+      await syncSessionSetup();
+      renderSessionSnapshot();
       renderTranscriptList();
       renderDebugSnapshot();
-      startSessionPolling();
-      addLog('info', 'Prepared call session.', {
+      addLog('info', 'Prepared direct Codex session.', {
         sessionId: state.session.id,
         title: state.session.title,
       });
       return state.session;
     } finally {
-      if (requestId === prepareRequestId) {
-        state.sessionPreparing = false;
-        renderRoomSnapshot();
-        renderBridgeSnapshot();
-        renderAgentStatus();
-        renderDebugSnapshot();
-      }
+      state.sessionPreparing = false;
+      renderSessionSnapshot();
+      renderAgentStatus();
+      renderDebugSnapshot();
+      refreshActionButtons();
     }
   }
 
@@ -232,477 +740,508 @@ export function createSessionController({
     prepareDebounceId = window.setTimeout(() => {
       prepareDebounceId = 0;
       void run();
-    }, 450);
+    }, 300);
   }
 
-  function openConnectPrompt() {
-    if (!dom.connectPromptDialog) {
+  async function refreshSession() {
+    if (!state.session?.id) {
       return;
     }
 
-    if (!dom.connectPromptDialog.open) {
-      dom.connectPromptDialog.showModal?.();
-    }
-
-    window.requestAnimationFrame(() => {
-      dom.connectPromptBody?.focus?.();
-      dom.connectPromptBody?.select?.();
-    });
+    const payload = await fetchJson(`/api/call/sessions/${encodeURIComponent(state.session.id)}`);
+    applySessionPayload(payload);
+    renderSessionSnapshot();
+    renderTranscriptList();
+    renderDebugSnapshot();
   }
 
-  async function probeLivekitBeforeConnect(livekitUrl) {
-    const probe = await fetchJson(`/api/probe-livekit?url=${encodeURIComponent(livekitUrl)}`);
-
-    if (!probe.reachable) {
-      throw new Error(
-        `No LiveKit server is reachable at ${livekitUrl}. Start LiveKit or change the URL. Probe target: ${probe.probeUrl}.`,
-      );
+  async function markReplyPlayed(turnId) {
+    if (!state.session?.id || !turnId) {
+      return;
     }
 
-    addLog('info', 'LiveKit endpoint is reachable.', {
-      probeUrl: probe.probeUrl,
-      status: probe.status,
-      statusText: probe.statusText,
-    });
+    const payload = await postJson(
+      `/api/call/sessions/${encodeURIComponent(state.session.id)}/turns/${encodeURIComponent(turnId)}/played`,
+      {},
+    );
+    applySessionPayload(payload);
   }
 
-  async function connectRoomWithTimeout(options, timeoutMs = 8000) {
-    const timeoutPromise = new Promise((_, reject) => {
-      window.setTimeout(() => {
-        reject(new Error(`LiveKit room connect timed out after ${timeoutMs} ms.`));
-      }, timeoutMs);
+  async function playTurnReply(turn) {
+    const reply = turn?.agentReply;
+    if (!reply) {
+      return;
+    }
+
+    state.currentTurnId = turn.id;
+    const playbackGeneration = state.playbackGeneration;
+    const renderProfile = agentVoiceLayer.resolveRenderProfile({
+      characterId: resolveActiveCharacterId(),
+      mood: reply.mood,
     });
-
-    return Promise.race([roomLayer.connectRoom(options), timeoutPromise]);
-  }
-
-  async function joinCall() {
-    await prepareLobbySession();
-    const form = collectFormState();
-    const heartbeat = getAgentHeartbeatState(state.session);
-    if (!form.livekitUrl) {
-      throw new Error('LiveKit URL is required.');
-    }
-
-    if (!form.roomName) {
-      throw new Error('Room name is required.');
-    }
-
-    if (!form.identity) {
-      throw new Error('Human identity is required.');
-    }
-
-    if (!state.session?.id) {
-      throw new Error('The bridge session is still preparing. Wait a moment and try again.');
-    }
-
-    if (!heartbeat.ready) {
-      throw new Error('Start Room is locked until the system sees a fresh agent heartbeat.');
-    }
-
-    if (state.room) {
-      await disconnectCall();
-    }
-
-    updateRoomStatus('loading', 'Connecting…', 'Minting a token and bridge session.');
-    await probeLivekitBeforeConnect(form.livekitUrl);
-
-    const token = await mintToken();
-    const room = new roomClass({
-      adaptiveStream: true,
-      dynacast: true,
-      videoCaptureDefaults: {
-        resolution: videoPresets.h720.resolution,
-      },
-    });
-
-    installRoomListeners(room);
-    state.room = room;
-    renderRoomSnapshot();
-    refreshActionButtons();
+    const timeline = avatarSpeech.buildMouthTimeline(reply.text, renderProfile.speechRate);
+    const startSpeechBeats = buildSpeechBeatTimers(reply, timeline.durationMs);
 
     try {
-      await connectRoomWithTimeout({
-        room,
-        livekitUrl: form.livekitUrl,
-        token,
-        enableCamera: form.enableCamera,
-        enableMicrophone: form.enableMicrophone,
+      await avatarSpeech.speakText(reply.text, {
+        withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
+        source: `codex-turn:${turn.id}`,
+        locale: collectFormState().humanLocale || 'en-US',
+        characterId: resolveActiveCharacterId(),
+        mood: reply.mood,
+        onPlaybackStart: () => {
+          stopAgentThinkingTimer();
+          applySpeechScene(reply);
+          startSpeechBeats();
+          renderAgentStatus();
+          syncAmbientMotion();
+        },
+      });
+    } finally {
+      clearSpeechBeats();
+    }
+
+    stopAgentThinkingTimer();
+
+    if (playbackGeneration === state.playbackGeneration) {
+      await markReplyPlayed(turn.id).catch((error) => {
+        addLog('error', 'Mark reply played failed.', formatError(error));
+      });
+    }
+
+    state.currentTurnId = null;
+    renderSessionSnapshot();
+    renderTranscriptList();
+    renderDebugSnapshot();
+    renderAgentStatus();
+    syncAmbientMotion();
+  }
+
+  async function interruptActiveReply(
+    reason = 'human started speaking',
+    { preserveThinkingTimer = false } = {},
+  ) {
+    if (!state.session?.id) {
+      return false;
+    }
+
+    const hadActiveWork = Boolean(
+      state.processingReplies ||
+        avatarSpeech.getSnapshot().active ||
+        state.currentTurnId ||
+        state.activeReplyAbortController,
+    );
+    if (!hadActiveWork) {
+      return false;
+    }
+
+    state.playbackGeneration += 1;
+    state.currentTurnId = null;
+    state.processingReplies = false;
+    if (!preserveThinkingTimer) {
+      stopAgentThinkingTimer();
+    }
+    clearSpeechBeats();
+    avatarSpeech.stop({ cancelVoice: true });
+
+    if (state.activeReplyAbortController) {
+      state.activeReplyAbortController.abort();
+      state.activeReplyAbortController = null;
+    }
+
+    try {
+      const payload = await postJson(
+        `/api/call/sessions/${encodeURIComponent(state.session.id)}/interrupt`,
+        { reason },
+      );
+      applySessionPayload(payload);
+    } catch (error) {
+      addLog('error', 'Interrupt agent failed.', formatError(error));
+    }
+
+    setSubtitle('agent', 'Interrupted. Listening…', 'interrupted');
+    renderSessionSnapshot();
+    renderTranscriptList();
+    renderDebugSnapshot();
+    renderAgentStatus();
+    syncAmbientMotion();
+    return true;
+  }
+
+  async function stopLiveAgentWork(reason = 'call ended by human') {
+    const hadActiveServerWork = Boolean(
+      state.processingReplies ||
+        state.currentTurnId ||
+        state.activeReplyAbortController,
+    );
+
+    clearAmbientLoop();
+    clearSpeechBeats();
+    clearScheduledLocalHello({ releaseLock: true });
+    interruptionIssuedForUtterance = false;
+    stopAgentThinkingTimer();
+    state.callEndingDimmed = false;
+    state.humanMicLevel = 0;
+    state.playbackGeneration += 1;
+    state.currentTurnId = null;
+    state.processingReplies = false;
+    state.activeUtteranceId = null;
+    state.activeUtteranceText = '';
+    state.transcriptPreview = '';
+    avatarSpeech.stop({ cancelVoice: true });
+
+    if (state.activeReplyAbortController) {
+      state.activeReplyAbortController.abort();
+      state.activeReplyAbortController = null;
+    }
+
+    if (!state.session?.id || !hadActiveServerWork) {
+      return;
+    }
+
+    try {
+      const payload = await postJson(
+        `/api/call/sessions/${encodeURIComponent(state.session.id)}/interrupt`,
+        { reason },
+      );
+      applySessionPayload(payload);
+    } catch (error) {
+      addLog('error', 'Interrupt agent failed while ending the call.', formatError(error));
+    }
+  }
+
+  async function playLocalGoodbye() {
+    const avatarSnapshot = avatarLayer.getSnapshot();
+    const currentGestureId = avatarSnapshot.gestureId || '';
+    const selectedGesture = pickDramaticGoodbyeGesture(
+      avatarSnapshot.availableGestures,
+      currentGestureId,
+      random,
+    );
+    const goodbyeText = pickRandomGoodbyePhrase(random);
+    let endDelayStarted = false;
+    let resolveEndDelay = () => {};
+    const endDelayPromise = new Promise((resolve) => {
+      resolveEndDelay = resolve;
+    });
+
+    function startEndDelay() {
+      if (endDelayStarted) {
+        return;
+      }
+
+      endDelayStarted = true;
+      state.callEndingDimmed = true;
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      refreshActionButtons();
+      timers.setTimeout?.(() => {
+        resolveEndDelay();
+      }, 3000);
+    }
+
+    setSubtitle('agent', goodbyeText, 'ending');
+    state.callEndingDimmed = false;
+
+    if (selectedGesture?.id) {
+      selectEmote('playful', { persist: false });
+      selectGesture(selectedGesture.id, { persist: false });
+    } else {
+      selectEmote('warm', { persist: false });
+    }
+
+    renderAgentStatus();
+    syncAmbientMotion();
+
+    const speechPromise = avatarSpeech
+      .speakText(goodbyeText, {
+        withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
+        source: 'local-goodbye',
+        locale: collectFormState().humanLocale || 'en-US',
+        characterId: resolveActiveCharacterId(),
+        mood: selectedGesture?.id === 'Cheer' || selectedGesture?.id === 'Peace' ? 'playful' : 'warm',
+        onPlaybackStart: () => {
+          setSubtitle('agent', goodbyeText, 'speaking');
+          renderAgentStatus();
+        },
+        onPlaybackEnd: () => {
+          startEndDelay();
+        },
+      })
+      .catch((error) => {
+        addLog('error', 'Local goodbye playback failed.', formatError(error));
+      })
+      .finally(() => {
+        startEndDelay();
       });
 
-      renderLocalStage();
-      renderRoomSnapshot();
-      await postJson(`/api/bridge/sessions/${encodeURIComponent(state.session.id)}/state`, {
-        state: 'live',
-      }).catch(() => {});
-      updateRoomStatus('ready', 'Connected', 'Room and bridge are ready.');
-      screenNavigator.show('setup');
-      addLog('info', 'Call created.', {
-        room: room.name,
-        identity: room.localParticipant.identity,
-        sessionId: state.session.id,
-      });
-    } catch (error) {
-      addLog('error', 'Call creation failed.', formatError(error));
-      await disconnectCall({ preserveRoomStatus: true });
-      updateRoomStatus(
-        'error',
-        'Connection failed',
-        error instanceof Error ? error.message : 'Unable to connect to the LiveKit room.',
+    await Promise.allSettled([speechPromise, endDelayPromise]);
+  }
+
+  async function startCall() {
+    const productionVoice = getProductionVoiceState();
+    const codex = getCodexState();
+
+    if (!productionVoice.profile?.referenceAvailable) {
+      throw new Error('Upload a WAV production voice sample before starting the call.');
+    }
+
+    if (!productionVoice.backendRunning) {
+      throw new Error(
+        productionVoice.backendDetail || 'Production voice backend is unavailable.',
       );
-      throw error;
+    }
+
+    if (!codex.backendRunning) {
+      throw new Error(codex.backendDetail || 'Codex exec is unavailable.');
+    }
+
+    await prepareLobbySession({ force: true });
+    await ensureSessionReady();
+    await syncSessionSetup();
+
+    const payload = await postJson(
+      `/api/call/sessions/${encodeURIComponent(state.session.id)}/state`,
+      { state: 'live' },
+    );
+    applySessionPayload(payload);
+    state.activeCall = true;
+    state.endingCall = false;
+    state.callEndingDimmed = false;
+    state.startupGreetingActive = true;
+    state.humanMicMuted = false;
+    state.humanMicLevel = 0;
+    humanVoiceLayer.updateConfig?.({ autoRestart: false });
+    state.playbackGeneration += 1;
+    interruptionIssuedForUtterance = false;
+
+    updateRoomStatus('ready', 'Call live', 'Agent is greeting you.');
+    setSubtitle('human', 'Muted for intro.', 'idle');
+    setSubtitle('agent', 'Joining…', 'ready');
+    renderSessionSnapshot();
+    renderTranscriptList();
+    renderDebugSnapshot();
+    renderAgentStatus();
+    refreshActionButtons();
+    syncAmbientMotion();
+
+    addLog('info', 'Voice call started.', {
+      sessionId: state.session.id,
+    });
+    scheduleLocalHello();
+  }
+
+  async function setMicrophoneMuted(muted = true) {
+    const nextMuted = Boolean(muted);
+
+    if (state.endingCall) {
+      return state.humanMicMuted;
+    }
+
+    if (!state.activeCall) {
+      state.humanMicMuted = nextMuted;
+      state.humanMicLevel = 0;
+      renderSessionSnapshot();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      refreshActionButtons();
+      return state.humanMicMuted;
+    }
+
+    if (state.humanMicMuted === nextMuted) {
+      return state.humanMicMuted;
+    }
+
+    if (nextMuted) {
+      humanVoiceLayer.updateConfig?.({ autoRestart: false });
+      humanVoiceLayer.stopListening({ suppressAutoRestart: true });
+      state.humanMicMuted = true;
+      state.humanMicLevel = 0;
+      setSubtitle('human', 'Muted.', 'idle');
+    } else {
+      try {
+        humanVoiceLayer.updateConfig?.({ autoRestart: true });
+        await humanVoiceLayer.startListening({ restart: true });
+        state.humanMicMuted = false;
+        state.humanMicLevel = 0;
+        setSubtitle('human', 'Listening…', 'listening');
+      } catch (error) {
+        state.humanMicMuted = true;
+        state.humanMicLevel = 0;
+        renderSessionSnapshot();
+        renderDebugSnapshot();
+        renderAgentStatus();
+        refreshActionButtons();
+        throw error;
+      }
+    }
+
+    renderSessionSnapshot();
+    renderDebugSnapshot();
+    renderAgentStatus();
+    refreshActionButtons();
+    return state.humanMicMuted;
+  }
+
+  async function toggleMicrophoneMuted() {
+    return setMicrophoneMuted(!state.humanMicMuted);
+  }
+
+  async function endCall({ reason = 'human ended call' } = {}) {
+    if (activeEndCallPromise) {
+      return activeEndCallPromise;
+    }
+
+    activeEndCallPromise = (async () => {
+      humanVoiceLayer.stopListening();
+      state.endingCall = true;
+      state.callEndingDimmed = false;
+      state.startupGreetingActive = false;
+      updateRoomStatus('loading', 'Ending call', 'Wrapping up the conversation.');
+      setSubtitle('human', 'Ending call…', 'idle');
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      refreshActionButtons();
+
+      await stopLiveAgentWork(reason);
+
+      if (state.activeCall) {
+        await playLocalGoodbye();
+      }
+
+      state.playbackGeneration += 1;
+      state.currentTurnId = null;
+      state.activeCall = false;
+      state.endingCall = false;
+      state.callEndingDimmed = false;
+      state.startupGreetingActive = false;
+      state.humanMicMuted = false;
+      state.humanMicLevel = 0;
+      humanVoiceLayer.updateConfig?.({ autoRestart: true });
+      state.activeUtteranceId = null;
+      state.activeUtteranceText = '';
+      state.transcriptPreview = '';
+      state.processingReplies = false;
+
+      if (state.session?.id) {
+        try {
+          const payload = await postJson(
+            `/api/call/sessions/${encodeURIComponent(state.session.id)}/end`,
+            {
+              reason,
+              skipAgentFinalize: true,
+            },
+          );
+          applySessionPayload(payload);
+        } catch (error) {
+          addLog('error', 'End call finalize failed.', formatError(error));
+        }
+      }
+
+      updateRoomStatus('idle', 'Call ended', 'The browser is no longer listening.');
+      setSubtitle('human', 'Call ended.', 'idle');
+      setSubtitle('agent', 'Agent is offline.', 'idle');
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      refreshActionButtons();
+    })();
+
+    try {
+      await activeEndCallPromise;
+    } finally {
+      activeEndCallPromise = null;
     }
   }
 
   async function handlePrimaryCallAction() {
-    const form = collectFormState();
+    const launch = getLaunchContext();
+    if (
+      launch.mode === 'linked-call' &&
+      (launch.callStatus === 'ended' || launch.callStatus === 'retry-needed')
+    ) {
+      throw new Error('This linked call has already ended.');
+    }
+
+    if (state.activeCall) {
+      await endCall();
+      return;
+    }
+
+    await startCall();
+  }
+
+  async function maybeStartLaunchCall() {
+    const launch = getLaunchContext();
+    if (
+      launch.mode !== 'linked-call' ||
+      !launch.autoStart ||
+      state.activeCall ||
+      launch.callStatus === 'ended' ||
+      launch.callStatus === 'retry-needed'
+    ) {
+      return false;
+    }
+
+    const humanVoiceSnapshot = state.humanVoiceSnapshot || humanVoiceLayer.getSnapshot();
     const action = getCallPrimaryAction({
-      session: state.session,
-      room: state.room,
+      activeCall: state.activeCall,
       sessionPreparing: state.sessionPreparing,
       modelLoading: state.modelLoading,
-      formReady: Boolean(form.livekitUrl && form.roomName && form.identity),
+      recognitionSupported: humanVoiceSnapshot.recognitionSupported,
+      setupReady: Boolean(state.preferences.bundledModelId),
+      productionVoiceReady: Boolean(
+        state.productionVoice.backendRunning && state.productionVoice.profile?.referenceAvailable,
+      ),
+      codexReady: Boolean(state.codex.backendRunning),
     });
 
-    if (action.mode === 'start-room') {
-      await joinCall();
-      return;
+    if (action.disabled) {
+      return false;
     }
 
-    openConnectPrompt();
-
-    if (!state.runtimeConfig) {
-      updateRoomStatus(
-        'loading',
-        'Loading project',
-        'Runtime config is still loading. Try Connect Agent again in a moment.',
-      );
-      addLog('warn', 'Connect Agent clicked before runtime config finished loading.');
-      return;
-    }
-
-    updateRoomStatus(
-      'loading',
-      'Agent setup',
-      'Opening the bridge steps and preparing a call session for the agent.',
-    );
-
-    try {
-      await prepareLobbySession({ force: true });
-      addLog('info', 'Opened agent connection steps.', {
-        sessionId: state.session?.id || null,
-      });
-    } catch (error) {
-      updateRoomStatus(
-        'error',
-        'Agent setup failed',
-        error instanceof Error ? error.message : 'Unable to prepare the call session.',
-      );
-      throw error;
-    }
-  }
-
-  async function disconnectCall({ preserveRoomStatus = false } = {}) {
-    stopSessionPolling();
-    humanVoiceLayer.stopListening();
-    avatarSpeech.stop({ cancelVoice: true });
-    const disconnectSessionId = state.session?.id || null;
-
-    if (state.room) {
-      try {
-        await roomLayer.disconnectRoom(state.room);
-      } catch (error) {
-        addLog('error', 'Room disconnect failed.', formatError(error));
-      }
-    }
-
-    state.room = null;
-    if (!preserveRoomStatus) {
-      state.session = null;
-      state.sessionKey = '';
-      renderBridgeSnapshot();
-      renderTranscriptList();
-    }
-    renderLocalStage();
-    renderRoomSnapshot();
-    if (!preserveRoomStatus) {
-      screenNavigator.show('setup');
-    } else {
-      dom.localIdentity.textContent = collectFormState().identity || 'none';
-      dom.remoteCount.textContent = '0';
-    }
-    refreshActionButtons();
-    renderAgentStatus();
-    renderDebugSnapshot();
-
-    if (preserveRoomStatus && state.session?.id) {
-      startSessionPolling();
-      return;
-    }
-
-    if (!preserveRoomStatus && disconnectSessionId) {
-      await postJson(`/api/bridge/sessions/${encodeURIComponent(disconnectSessionId)}/state`, {
-        state: 'ended',
-        reason: 'human disconnected room',
-      }).catch(() => {});
-    }
-
-    if (!preserveRoomStatus) {
-      scheduleLobbySessionPreparation({ force: true, immediate: true });
-    }
-  }
-
-  function installRoomListeners(room) {
-    roomLayer.attachRoomListeners(room, (event) => {
-      switch (event.type) {
-        case 'connected':
-          addLog('info', 'LiveKit room connected.', {
-            room: room.name,
-            identity: room.localParticipant.identity,
-          });
-          renderRoomSnapshot();
-          break;
-        case 'connection-state-changed':
-          addLog('info', 'Connection state changed.', {
-            connectionState: event.connectionState,
-          });
-          renderRoomSnapshot();
-          break;
-        case 'participant-connected':
-        case 'participant-disconnected':
-        case 'active-speakers-changed':
-          renderRoomSnapshot();
-          break;
-        case 'local-track-published':
-        case 'local-track-unpublished':
-          renderLocalStage();
-          renderRoomSnapshot();
-          break;
-        case 'disconnected':
-          addLog('warn', 'Room disconnected.', { reason: event.reason });
-          renderRoomSnapshot();
-          break;
-        case 'media-devices-error':
-          addLog('error', 'Media device error.', formatError(event.error));
-          break;
-        default:
-          break;
-      }
-
-      renderDebugSnapshot();
-    });
-  }
-
-  function startSessionPolling() {
-    stopSessionPolling();
-    if (!state.session?.id) {
-      return;
-    }
-
-    startHeartbeatFreshnessTicker();
-    state.sessionPollId = window.setInterval(() => {
-      void pollSession();
-    }, 1500);
-
-    void pollSession();
-  }
-
-  function stopSessionPolling() {
-    if (state.sessionPollId) {
-      clearInterval(state.sessionPollId);
-      state.sessionPollId = 0;
-    }
-    stopHeartbeatFreshnessTicker();
-  }
-
-  function startHeartbeatFreshnessTicker() {
-    stopHeartbeatFreshnessTicker();
-    heartbeatUiTickId = window.setInterval(() => {
-      renderRoomSnapshot();
-      renderBridgeSnapshot();
-      renderAgentStatus();
-    }, 1000);
-  }
-
-  function stopHeartbeatFreshnessTicker() {
-    if (heartbeatUiTickId) {
-      clearInterval(heartbeatUiTickId);
-      heartbeatUiTickId = 0;
-    }
-  }
-
-  async function pollSession() {
-    if (!state.session?.id) {
-      return;
-    }
-
-    try {
-      const payload = await fetchJson(`/api/bridge/sessions/${encodeURIComponent(state.session.id)}`);
-      applyBridgePayload(payload);
-      renderBridgeSnapshot();
-      renderTranscriptList();
-      renderDebugSnapshot();
-      await consumePendingActions(
-        payload.pendingActions ||
-          state.session?.pendingActions ||
-          buildPendingActionsFromLegacyReplies(state.session),
-      );
-    } catch (error) {
-      addLog('error', 'Bridge poll failed.', formatError(error));
-    }
-  }
-
-  async function consumePendingActions(pendingActions = []) {
-    if (state.processingReplies || !state.session || !pendingActions.length) {
-      return;
-    }
-
-    state.processingReplies = true;
-    renderAgentStatus();
-
-    try {
-      for (const action of pendingActions) {
-        if (!action) {
-          continue;
-        }
-
-        if (action.type === 'anim') {
-          if (action.stageId && stageMap.has(action.stageId)) {
-            selectStage(action.stageId, { persist: false });
-          }
-
-          if (action.emoteId && emoteMap.has(action.emoteId)) {
-            selectEmote(action.emoteId, { persist: false });
-          }
-
-          if (action.gestureId) {
-            selectGesture(action.gestureId, { persist: false });
-          }
-
-          const payload = await postJson(
-            `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/actions/${encodeURIComponent(action.actionId)}/completed`,
-            {},
-          );
-          applyBridgePayload(payload);
-          renderBridgeSnapshot();
-          renderTranscriptList();
-          renderDebugSnapshot();
-          continue;
-        }
-
-        if (action.type !== 'speech') {
-          continue;
-        }
-
-        const applySpeechScene = () => {
-          if (action.stageId && stageMap.has(action.stageId)) {
-            selectStage(action.stageId, { persist: false });
-          }
-
-          if (action.emoteId && emoteMap.has(action.emoteId)) {
-            selectEmote(action.emoteId, { persist: false });
-          }
-
-          if (action.gestureId) {
-            selectGesture(action.gestureId, { persist: false });
-          }
-
-          dom.lastAgentReply.textContent = action.text;
-        };
-
-        if (!action.legacyReplyId) {
-          const started = await postJson(
-            `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/actions/${encodeURIComponent(action.actionId)}/started`,
-            {},
-          );
-          applyBridgePayload(started);
-          renderBridgeSnapshot();
-          renderTranscriptList();
-          renderDebugSnapshot();
-        }
-
-        const withVoice = agentVoiceLayer.getSnapshot().speechSynthesisSupported;
-        await avatarSpeech.speakText(action.text, {
-          withVoice,
-          source: `bridge-action:${action.actionId}`,
-          locale: 'en-US',
-          preferredVoiceName: state.preferences.voiceName,
-          speechRate: state.preferences.speechRate,
-          speechPitch: state.preferences.speechPitch,
-          characterId: resolveActiveCharacterId(),
-          mood: action.mood,
-          onPlaybackStart: applySpeechScene,
-        });
-
-        const payload = await postJson(
-          action.legacyReplyId
-            ? `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/replies/${encodeURIComponent(action.legacyReplyId)}/played`
-            : `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/actions/${encodeURIComponent(action.actionId)}/finished`,
-          {},
-        );
-        applyBridgePayload(payload);
-        renderBridgeSnapshot();
-        renderTranscriptList();
-        renderDebugSnapshot();
-      }
-    } finally {
-      state.processingReplies = false;
-      renderAgentStatus();
-    }
+    await startCall();
+    return true;
   }
 
   async function beginUserUtterance(utteranceId = createUtteranceId()) {
     await ensureSessionReady();
-    const payload = await postJson(
-      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/utterances/start`,
-      {
-        utteranceId,
-      },
-    );
     state.activeUtteranceId = utteranceId;
     state.activeUtteranceText = '';
-    applyBridgePayload(payload);
-    renderBridgeSnapshot();
-    renderTranscriptList();
-    renderDebugSnapshot();
     return utteranceId;
   }
 
   async function syncInterimTranscript(text) {
-    if (!state.session?.id) {
+    if (!state.session?.id || !state.activeCall) {
       return;
     }
 
     const nextText = `${text || ''}`.trim();
+    if (nextText) {
+      clearScheduledLocalHello({ releaseLock: true });
+    }
+    state.transcriptPreview = nextText;
     if (!nextText) {
+      renderSubtitles();
       return;
     }
 
-    const utteranceId = state.activeUtteranceId || (await beginUserUtterance());
-    const previousText = `${state.activeUtteranceText || ''}`;
-    if (previousText && !nextText.startsWith(previousText)) {
-      state.activeUtteranceText = nextText;
-      return utteranceId;
+    if (!interruptionIssuedForUtterance) {
+      const interrupted = await interruptActiveReply();
+      if (interrupted) {
+        interruptionIssuedForUtterance = true;
+      }
     }
 
-    const delta = previousText ? nextText.slice(previousText.length) : nextText;
-    if (!delta) {
-      return utteranceId;
-    }
-
-    const payload = await postJson(
-      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/utterances/partial`,
-      {
-        utteranceId,
-        delta,
-      },
-    );
-
-    state.activeUtteranceId = utteranceId;
+    setSubtitle('human', nextText, 'listening');
+    state.activeUtteranceId ||= await beginUserUtterance();
     state.activeUtteranceText = nextText;
-    applyBridgePayload(payload);
     renderDebugSnapshot();
-    return utteranceId;
   }
 
   async function finalizeUserUtterance(transcript, source) {
@@ -712,64 +1251,146 @@ export function createSessionController({
       return;
     }
 
+    clearScheduledLocalHello({ releaseLock: true });
+
+    startAgentThinkingTimer();
+
+    if (!interruptionIssuedForUtterance) {
+      const interrupted = await interruptActiveReply(
+        source === 'typed' ? 'typed turn superseded agent reply' : 'human started speaking',
+        { preserveThinkingTimer: true },
+      );
+      if (interrupted) {
+        interruptionIssuedForUtterance = true;
+      }
+    }
+
     const utteranceId = state.activeUtteranceId || (await beginUserUtterance());
     const form = collectFormState();
-    const payload = await postJson(
-      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/utterances/final`,
-      {
-        utteranceId,
-        text: cleanedTranscript,
-        source,
-        humanIdentity: state.room?.localParticipant?.identity || form.identity,
-        humanName: state.room?.localParticipant?.name || form.participantName,
-      },
-    );
-
-    state.activeUtteranceId = null;
+    const requestController = new AbortController();
+    const playbackGeneration = state.playbackGeneration;
+    state.activeReplyAbortController = requestController;
+    state.activeUtteranceId = utteranceId;
     state.activeUtteranceText = '';
-    applyBridgePayload(payload);
-    renderBridgeSnapshot();
+    state.transcriptPreview = '';
+    state.processingReplies = true;
+    setSubtitle('human', cleanedTranscript, 'final');
+    setSubtitle('agent', 'Thinking…', 'thinking');
+    renderSessionSnapshot();
     renderTranscriptList();
     renderDebugSnapshot();
-    addLog('info', 'Queued human turn for the bridge.', {
+    renderAgentStatus();
+    addLog('info', 'Sent human turn directly to Codex.', {
       source,
       transcript: cleanedTranscript,
     });
-    await consumePendingActions(
-      payload.pendingActions ||
-        state.session?.pendingActions ||
-        buildPendingActionsFromLegacyReplies(state.session),
-    );
+    syncAmbientMotion();
+
+    try {
+      const payload = await postJson(
+        `/api/call/sessions/${encodeURIComponent(state.session.id)}/turns`,
+        {
+          text: cleanedTranscript,
+          source,
+          humanIdentity: form.humanIdentity,
+          humanName: form.participantName,
+        },
+        { signal: requestController.signal },
+      );
+
+      if (
+        state.activeReplyAbortController !== requestController ||
+        playbackGeneration !== state.playbackGeneration
+      ) {
+        return;
+      }
+
+      state.activeReplyAbortController = null;
+      state.processingReplies = false;
+      applySessionPayload(payload);
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+
+      if (payload.interrupted || !payload.turn?.agentReply) {
+        stopAgentThinkingTimer();
+        setSubtitle('agent', 'Interrupted. Listening…', 'interrupted');
+        syncAmbientMotion();
+        return;
+      }
+
+      await playTurnReply(payload.turn);
+    } catch (error) {
+      state.processingReplies = false;
+      stopAgentThinkingTimer();
+      if (state.activeReplyAbortController === requestController) {
+        state.activeReplyAbortController = null;
+      }
+
+      if (error?.name === 'AbortError') {
+        return;
+      }
+
+      setSubtitle('agent', 'Codex could not reply.', 'error');
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      addLog('error', 'Direct Codex turn failed.', formatError(error));
+      throw error;
+    } finally {
+      state.activeUtteranceId = null;
+      state.activeUtteranceText = '';
+      interruptionIssuedForUtterance = false;
+      syncAmbientMotion();
+    }
   }
 
   async function enqueueHumanTurn(transcript, source) {
     await finalizeUserUtterance(transcript, source);
   }
 
-  async function runDemoReply() {
-    await ensureSessionReady();
-    await postJson(
-      `/api/bridge/sessions/${encodeURIComponent(state.session.id)}/demo-reply`,
-      {},
-    );
-    await pollSession();
+  function sendBestEffortSessionClose(reason = 'call window closed') {
+    if (
+      getLaunchContext().mode !== 'linked-call' ||
+      !state.session?.id ||
+      !state.activeCall ||
+      typeof fetch !== 'function'
+    ) {
+      return;
+    }
+
+    const sessionBase = `/api/call/sessions/${encodeURIComponent(state.session.id)}`;
+    const payloads = [[`${sessionBase}/end`, { reason }]];
+
+    payloads.forEach(([url, body]) => {
+      void fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        keepalive: true,
+      }).catch(() => {});
+    });
   }
 
-  function destroy() {
+  function destroy({ reason = 'call window closed' } = {}) {
     if (prepareDebounceId) {
       clearTimeout(prepareDebounceId);
       prepareDebounceId = 0;
     }
-    stopSessionPolling();
+    sendBestEffortSessionClose(reason);
+    clearScheduledLocalHello({ releaseLock: true });
+    clearAmbientLoop();
+    clearSpeechBeats();
     humanVoiceLayer.stopListening();
     avatarSpeech.stop({ cancelVoice: true });
+    state.activeReplyAbortController?.abort?.();
     humanVoiceLayer.destroy();
     agentVoiceLayer.destroy();
     avatarLayer.destroy();
-
-    if (state.room) {
-      state.room.disconnect();
-    }
   }
 
   return {
@@ -777,17 +1398,24 @@ export function createSessionController({
     ensureSessionReady,
     prepareLobbySession,
     scheduleLobbySessionPreparation,
-    openConnectPrompt,
     handlePrimaryCallAction,
-    joinCall,
-    disconnectCall,
     beginUserUtterance,
     syncInterimTranscript,
     finalizeUserUtterance,
-    syncAvatarCatalogForSession,
-    pollSession,
+    syncSessionSetup,
+    syncWorkspaceSetup,
+    loadProductionVoiceState,
+    loadCodexState,
+    loadWorkspaceSetup,
+    resolveLinkedLaunch,
+    refreshSession,
     enqueueHumanTurn,
-    runDemoReply,
+    uploadVoiceSample,
+    setVoiceSampleValidationMessage,
+    interruptActiveReply,
+    toggleMicrophoneMuted,
+    endCall,
+    maybeStartLaunchCall,
     destroy,
   };
 }

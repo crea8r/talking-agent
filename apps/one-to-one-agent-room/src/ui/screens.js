@@ -1,4 +1,4 @@
-const VALID_SCREENS = new Set(['setup', 'agent-setup', 'diagnostics']);
+const VALID_SCREENS = new Set(['setup', 'call']);
 const DEFAULT_SCREEN = 'setup';
 
 function normalizeScreenId(value) {
@@ -9,7 +9,7 @@ function getHashScreenId() {
   return normalizeScreenId(window.location.hash.replace(/^#/, ''));
 }
 
-export function createScreenNavigator({ tabs, screens }) {
+export function createScreenNavigator({ tabs, screens, onChange = () => {} }) {
   const panelMap = new Map(
     screens
       .map((screen) => [screen.dataset.screen, screen])
@@ -43,6 +43,7 @@ export function createScreenNavigator({ tabs, screens }) {
     activeScreenId = nextScreenId;
     syncTabs(nextScreenId);
     syncPanels(nextScreenId);
+    onChange(nextScreenId);
 
     if (updateHash) {
       const nextHash = `#${nextScreenId}`;

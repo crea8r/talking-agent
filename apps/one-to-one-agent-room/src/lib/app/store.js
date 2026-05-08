@@ -1,4 +1,6 @@
-import { buildDefaultCallForm, shouldReplaceLegacyCallValue } from './call-session.js';
+import { buildDefaultCallForm } from './call-session.js';
+
+const DEFAULT_SCOPE_KEY = 'default';
 
 export function createAppStore({
   storageKey,
@@ -8,163 +10,207 @@ export function createAppStore({
   emotes,
   getGesturePresets,
   resolveGesturePreset,
-  clampNumber,
 }) {
-  const storedState = readStoredState(storageKey);
   const bootstrapDefaults = buildDefaultCallForm();
   const bundledModelMap = new Map(bundledModels.map((model) => [model.id, model]));
   const stageMap = new Map(stages.map((stage) => [stage.id, stage]));
   const emoteMap = new Map(emotes.map((emote) => [emote.id, emote]));
-  const defaultBundledModel = bundledModelMap.get(storedState.bundledModelId) ?? defaultModel;
+  const defaultBundledModel = bundledModelMap.get(defaultModel.id) ?? defaultModel;
   const defaultGestures = getGesturePresets(defaultBundledModel.id);
-  const defaultGestureId =
-    resolveGesturePreset(defaultBundledModel.id, storedState.gestureId)?.id ||
-    defaultGestures[0]?.id ||
-    'idle';
+  let activeScopeKey = DEFAULT_SCOPE_KEY;
 
   const state = {
     runtimeConfig: null,
-    room: null,
     session: null,
-    sessionPollId: 0,
     sessionKey: '',
     sessionPreparing: false,
+    activeCall: false,
+    endingCall: false,
+    callEndingDimmed: false,
+    startupGreetingActive: false,
+    humanMicMuted: false,
+    humanMicLevel: 0,
     logs: [],
-    localVideoElement: null,
-    transcriptPreview: 'none',
+    transcriptPreview: '',
     activeUtteranceId: null,
     activeUtteranceText: '',
     inspectorSnapshot: null,
     processingReplies: false,
+    agentThinkingActive: false,
+    agentThinkingElapsedTenths: 0,
     modelLoading: false,
     avatarSpeechSnapshot: null,
     humanVoiceSnapshot: null,
     agentVoiceSnapshot: null,
-    voiceOptions: [],
+    productionVoice: {
+      loading: false,
+      uploading: false,
+      backendConfigured: false,
+      backendRunning: false,
+      backendApp: '',
+      backendDetail: '',
+      defaultSpeakerId: '',
+      defaultSpeakerLabel: '',
+      validationMessage: '',
+      profile: null,
+    },
+    codex: {
+      loading: false,
+      backendConfigured: false,
+      backendRunning: false,
+      backendApp: '',
+      backendDetail: '',
+      model: '',
+      reasoningEffort: '',
+      sessionRoot: '',
+      command: '',
+    },
+    currentTurnId: null,
+    playbackGeneration: 0,
+    activeReplyAbortController: null,
+    callHistoryCollapsed: false,
+    subtitles: {
+      human: {
+        mode: 'idle',
+        text: 'Waiting for you to start the call.',
+      },
+      agent: {
+        mode: 'idle',
+        text: 'Agent is offline.',
+      },
+    },
     preferences: {
       bundledModelId: defaultBundledModel.id,
-      livekitUrl: `${storedState.livekitUrl || ''}`.trim() || bootstrapDefaults.livekitUrl,
-      roomName:
-        `${storedState.roomName || ''}`.trim() &&
-        !shouldReplaceLegacyCallValue('roomName', storedState.roomName)
-          ? `${storedState.roomName}`.trim()
-          : bootstrapDefaults.roomName,
-      identity:
-        `${storedState.identity || ''}`.trim() &&
-        !shouldReplaceLegacyCallValue('identity', storedState.identity)
-          ? `${storedState.identity}`.trim()
-          : bootstrapDefaults.identity,
-      participantName:
-        `${storedState.participantName || ''}`.trim() || bootstrapDefaults.participantName,
-      enableCamera: Object.hasOwn(storedState, 'enableCamera')
-        ? Boolean(storedState.enableCamera)
-        : bootstrapDefaults.enableCamera,
-      enableMicrophone: Object.hasOwn(storedState, 'enableMicrophone')
-        ? Boolean(storedState.enableMicrophone)
-        : bootstrapDefaults.enableMicrophone,
-      humanLocale: storedState.humanLocale || 'en-US',
-      voiceName: storedState.voiceName || '',
-      speechRate: clampNumber(storedState.speechRate, 0.75, 1.35, 1),
-      speechPitch: clampNumber(storedState.speechPitch, 0.75, 1.4, 1),
-      stageId: stageMap.has(storedState.stageId) ? storedState.stageId : stages[0].id,
-      emoteId: emoteMap.has(storedState.emoteId) ? storedState.emoteId : emotes[0].id,
-      gestureId: defaultGestureId,
+      humanIdentity: bootstrapDefaults.humanIdentity,
+      participantName: bootstrapDefaults.participantName,
+      humanLocale: bootstrapDefaults.humanLocale,
+      voiceSampleFileName: '',
+      voiceSampleProfileId: '',
+      voiceSampleStatus: bootstrapDefaults.voiceSampleStatus,
+      voiceSampleSpeakerId: '',
+      voiceSampleSpeakerLabel: '',
+      stageId: stages[0].id,
+      emoteId: emotes[0].id,
+      gestureId: defaultGestures[0]?.id || 'Pose',
     },
   };
+
+  function buildScopedStorageKey(scopeKey = DEFAULT_SCOPE_KEY) {
+    const cleanedScopeKey = `${scopeKey || ''}`.trim() || DEFAULT_SCOPE_KEY;
+    return cleanedScopeKey === DEFAULT_SCOPE_KEY
+      ? storageKey
+      : `${storageKey}::${cleanedScopeKey}`;
+  }
+
+  function readScopedState(scopeKey = DEFAULT_SCOPE_KEY) {
+    return readStoredState(buildScopedStorageKey(scopeKey));
+  }
+
+  function applyStoredState(storedState = {}) {
+    const preferredBundledModel =
+      bundledModelMap.get(storedState.bundledModelId) ?? defaultBundledModel;
+    const preferredGestures = getGesturePresets(preferredBundledModel.id);
+    const preferredGestureId =
+      resolveGesturePreset(preferredBundledModel.id, storedState.gestureId)?.id ||
+      preferredGestures[0]?.id ||
+      'Pose';
+
+    state.preferences.bundledModelId = preferredBundledModel.id;
+    state.preferences.humanIdentity =
+      `${storedState.humanIdentity || ''}`.trim() || bootstrapDefaults.humanIdentity;
+    state.preferences.participantName =
+      `${storedState.participantName || ''}`.trim() || bootstrapDefaults.participantName;
+    state.preferences.humanLocale = storedState.humanLocale || bootstrapDefaults.humanLocale;
+    state.preferences.voiceSampleFileName = storedState.voiceSampleFileName || '';
+    state.preferences.voiceSampleProfileId = storedState.voiceSampleProfileId || '';
+    state.preferences.voiceSampleStatus =
+      storedState.voiceSampleStatus || bootstrapDefaults.voiceSampleStatus;
+    state.preferences.voiceSampleSpeakerId = storedState.voiceSampleSpeakerId || '';
+    state.preferences.voiceSampleSpeakerLabel = storedState.voiceSampleSpeakerLabel || '';
+    state.preferences.stageId = stageMap.has(storedState.stageId) ? storedState.stageId : stages[0].id;
+    state.preferences.emoteId = emoteMap.has(storedState.emoteId) ? storedState.emoteId : emotes[0].id;
+    state.preferences.gestureId = preferredGestureId;
+    state.productionVoice.profile = null;
+    state.productionVoice.validationMessage = '';
+    state.productionVoice.defaultSpeakerId = storedState.voiceSampleSpeakerId || '';
+    state.productionVoice.defaultSpeakerLabel = storedState.voiceSampleSpeakerLabel || '';
+  }
 
   function persistState(dom) {
     const payload = {
       bundledModelId: state.preferences.bundledModelId,
-      livekitUrl: dom.livekitUrl.value,
-      roomName: dom.roomName.value,
-      identity: dom.identity.value,
-      participantName: dom.participantName.value,
-      enableCamera: dom.enableCamera.checked,
-      enableMicrophone: dom.enableMicrophone.checked,
-      humanLocale: dom.humanLocale.value,
-      voiceName: state.preferences.voiceName,
-      speechRate: state.preferences.speechRate,
-      speechPitch: state.preferences.speechPitch,
+      humanIdentity: state.preferences.humanIdentity,
+      participantName: state.preferences.participantName,
+      humanLocale: state.preferences.humanLocale,
+      voiceSampleFileName:
+        state.preferences.voiceSampleFileName || dom?.voiceSampleFileName?.textContent || '',
+      voiceSampleProfileId: state.preferences.voiceSampleProfileId,
+      voiceSampleStatus: state.preferences.voiceSampleStatus,
+      voiceSampleSpeakerId: state.preferences.voiceSampleSpeakerId,
+      voiceSampleSpeakerLabel: state.preferences.voiceSampleSpeakerLabel,
       stageId: state.preferences.stageId,
       emoteId: state.preferences.emoteId,
       gestureId: state.preferences.gestureId,
     };
 
     try {
-      window.localStorage.setItem(storageKey, JSON.stringify(payload));
+      window.localStorage.setItem(buildScopedStorageKey(activeScopeKey), JSON.stringify(payload));
     } catch {
       // Ignore storage failures in the spike app.
     }
+  }
+
+  function activateScope(scopeKey = DEFAULT_SCOPE_KEY) {
+    activeScopeKey = `${scopeKey || ''}`.trim() || DEFAULT_SCOPE_KEY;
+    applyStoredState(readScopedState(activeScopeKey));
+    return activeScopeKey;
   }
 
   function getSelectedBundledModel() {
     return bundledModelMap.get(state.preferences.bundledModelId) || defaultModel;
   }
 
-  function hydrateInputs(dom) {
-    dom.livekitUrl.value = state.preferences.livekitUrl;
-    dom.roomName.value = state.preferences.roomName;
-    dom.identity.value = state.preferences.identity;
-    dom.participantName.value = state.preferences.participantName;
-    dom.enableCamera.checked = state.preferences.enableCamera;
-    dom.enableMicrophone.checked = state.preferences.enableMicrophone;
-    dom.humanLocale.value = state.preferences.humanLocale;
-    dom.speechRate.value = String(state.preferences.speechRate);
-    dom.speechPitch.value = String(state.preferences.speechPitch);
+  function syncVoiceSampleProfile(profile) {
+    state.productionVoice.profile = profile;
+    state.preferences.voiceSampleFileName = `${profile?.referenceOriginalFileName || ''}`.trim();
+    state.preferences.voiceSampleProfileId = `${profile?.id || ''}`.trim();
+    state.preferences.voiceSampleStatus = profile?.referenceAvailable ? 'ready' : 'missing';
+    state.preferences.voiceSampleSpeakerId = `${profile?.meloBaseSpeakerId || ''}`.trim();
+    state.preferences.voiceSampleSpeakerLabel = `${profile?.meloBaseSpeakerLabel || ''}`.trim();
   }
 
-  function ensureDefaults(dom) {
-    const defaults = buildDefaultCallForm({
-      runtimeConfig: state.runtimeConfig,
-    });
-    const genericDefaults = buildDefaultCallForm();
+  function hydrateInputs(dom) {
+    dom.voiceSampleFile.value = '';
+    dom.voiceSampleFileName.textContent = state.preferences.voiceSampleFileName || 'Choose WAV';
+    dom.voiceSampleStatus.textContent =
+      state.preferences.voiceSampleStatus === 'ready'
+        ? 'Ready'
+        : 'missing voice reference, a 3+s wav file';
+    dom.voiceSampleStatus.dataset.tone =
+      state.preferences.voiceSampleStatus === 'ready' ? 'muted' : 'danger';
+  }
 
-    if (!dom.livekitUrl.value.trim()) {
-      dom.livekitUrl.value = defaults.livekitUrl;
-    }
-
-    if (
-      !dom.roomName.value.trim() ||
-      shouldReplaceLegacyCallValue('roomName', dom.roomName.value) ||
-      dom.roomName.value.trim() === genericDefaults.roomName
-    ) {
-      dom.roomName.value = defaults.roomName;
-    }
-
-    if (
-      !dom.identity.value.trim() ||
-      shouldReplaceLegacyCallValue('identity', dom.identity.value)
-    ) {
-      dom.identity.value = defaults.identity;
-    }
-
-    if (!dom.participantName.value.trim()) {
-      dom.participantName.value = defaults.participantName;
-    }
-
-    if (!Object.hasOwn(storedState, 'enableCamera')) {
-      dom.enableCamera.checked = defaults.enableCamera;
-    }
-
-    if (!Object.hasOwn(storedState, 'enableMicrophone')) {
-      dom.enableMicrophone.checked = defaults.enableMicrophone;
-    }
-
-    dom.mcpCommand.value = state.runtimeConfig?.bridge?.mcpServerCommand || '';
-    dom.stateFile.textContent = state.runtimeConfig?.bridge?.stateFilePath || 'none';
+  function ensureDefaults() {
+    state.preferences.humanIdentity ||= bootstrapDefaults.humanIdentity;
+    state.preferences.participantName ||= bootstrapDefaults.participantName;
   }
 
   function collectFormState(dom) {
     return {
-      livekitUrl: dom.livekitUrl.value.trim(),
-      roomName: dom.roomName.value.trim(),
-      identity: dom.identity.value.trim(),
-      participantName: dom.participantName.value.trim(),
-      enableCamera: dom.enableCamera.checked,
-      enableMicrophone: dom.enableMicrophone.checked,
+      humanIdentity: state.preferences.humanIdentity,
+      participantName: state.preferences.participantName,
       bundledModelId: state.preferences.bundledModelId,
+      humanLocale: state.preferences.humanLocale,
+      voiceSampleFileName:
+        state.preferences.voiceSampleFileName || dom?.voiceSampleFileName?.textContent || '',
+      voiceSampleProfileId: state.preferences.voiceSampleProfileId,
+      voiceSampleStatus: state.preferences.voiceSampleStatus,
+      voiceSampleSpeakerId: state.preferences.voiceSampleSpeakerId,
+      voiceSampleSpeakerLabel: state.preferences.voiceSampleSpeakerLabel,
     };
   }
+
+  applyStoredState(readScopedState(activeScopeKey));
 
   return {
     state,
@@ -177,6 +223,8 @@ export function createAppStore({
     hydrateInputs,
     ensureDefaults,
     collectFormState,
+    syncVoiceSampleProfile,
+    activateScope,
   };
 }
 

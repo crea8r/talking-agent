@@ -1,3 +1,5 @@
+import { createProductionVoiceClient } from '../../../packages/production-voice/client.mjs';
+
 function ensureBaseUrl(value, envVarName) {
   const trimmed = `${value || ''}`.trim().replace(/\/+$/g, '');
   if (!trimmed) {
@@ -68,6 +70,19 @@ export function createTtsClient({
     throw new Error('createTtsClient requires a fetch implementation.');
   }
 
+  const productionVoiceClient = createProductionVoiceClient({
+    fetchImpl,
+    baseUrl: productionBaseUrl,
+    baseUrlEnvVarName: 'VOICE_CAST_PRODUCTION_BASE_URL',
+  });
+
+  async function checkTextOnlyHealth() {
+    const baseUrl = ensureBaseUrl(textOnlyBaseUrl, 'VOICE_CAST_TEXT_ONLY_BASE_URL');
+    const response = await fetchImpl(`${baseUrl}/healthz`);
+    await expectOk(response);
+    return response.json();
+  }
+
   async function listTextOnlySpeakers() {
     const baseUrl = ensureBaseUrl(textOnlyBaseUrl, 'VOICE_CAST_TEXT_ONLY_BASE_URL');
     const response = await fetchImpl(`${baseUrl}/speakers`);
@@ -88,11 +103,12 @@ export function createTtsClient({
     return normalizeAudioResponse(response);
   }
 
+  async function checkProductionHealth() {
+    return productionVoiceClient.checkHealth();
+  }
+
   async function listProductionSpeakers() {
-    const baseUrl = ensureBaseUrl(productionBaseUrl, 'VOICE_CAST_PRODUCTION_BASE_URL');
-    const response = await fetchImpl(`${baseUrl}/speakers`);
-    await expectOk(response);
-    return normalizeSpeakers(await response.json());
+    return productionVoiceClient.listSpeakers();
   }
 
   async function generateProductionTurn({
@@ -100,23 +116,18 @@ export function createTtsClient({
     meloBaseSpeakerId,
     referenceWavPath,
   }) {
-    const baseUrl = ensureBaseUrl(productionBaseUrl, 'VOICE_CAST_PRODUCTION_BASE_URL');
-    const response = await fetchImpl(`${baseUrl}/generate`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json; charset=utf-8',
-      },
-      body: JSON.stringify({
-        replyText,
+    return productionVoiceClient.synthesize({
+      text: replyText,
+      setup: {
         meloBaseSpeakerId,
         referenceWavPath,
-      }),
+      },
     });
-    await expectOk(response);
-    return normalizeAudioResponse(response);
   }
 
   return {
+    checkProductionHealth,
+    checkTextOnlyHealth,
     generateProductionTurn,
     generateTextOnly,
     listTextOnlySpeakers,

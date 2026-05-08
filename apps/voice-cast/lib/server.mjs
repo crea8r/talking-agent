@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { performance } from 'node:perf_hooks';
 
+import { pickRandomProductionReply } from './production-replies.mjs';
+
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
   ['.html', 'text/html; charset=utf-8'],
@@ -111,6 +113,34 @@ function buildProductionReplyAudioUrl(replyAudioPath = '') {
   return fileName ? `/api/production-test/replies/${encodeURIComponent(fileName)}` : '';
 }
 
+async function checkBackendHealth({ configured, check }) {
+  if (!configured) {
+    return {
+      configured: false,
+      running: false,
+      detail: 'Not configured.',
+      app: '',
+    };
+  }
+
+  try {
+    const payload = await check();
+    return {
+      configured: true,
+      running: true,
+      detail: '',
+      app: `${payload?.app || ''}`.trim(),
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      running: false,
+      detail: error instanceof Error ? error.message : 'Health check failed.',
+      app: '',
+    };
+  }
+}
+
 function toPublicTurn(turn = {}) {
   return {
     id: turn.id,
@@ -130,6 +160,7 @@ export function createVoiceCastRequestHandler({
   promptAssetStore,
   productionTestStore,
   ttsClient,
+  replyProvider = null,
   runtimeConfig = {},
   pickProductionReply = null,
   sleepImpl = null,
@@ -146,6 +177,13 @@ export function createVoiceCastRequestHandler({
   if (!ttsClient) {
     throw new Error('createVoiceCastRequestHandler requires ttsClient.');
   }
+
+  const pickReply = typeof pickProductionReply === 'function'
+    ? pickProductionReply
+    : pickRandomProductionReply;
+  const codexReplyProvider = replyProvider && typeof replyProvider.generateReply === 'function'
+    ? replyProvider
+    : null;
 
   return async function handleRequest(request) {
     const requestUrl = new URL(request.url);
@@ -178,6 +216,49 @@ export function createVoiceCastRequestHandler({
         });
       }
 
+      if (request.method === 'GET' && requestUrl.pathname === '/api/backend-status') {
+        const textOnlyConfigured = runtimeConfig?.backends?.textOnlyConfigured !== false;
+        const productionConfigured = runtimeConfig?.backends?.productionConfigured !== false;
+        const codexConfigured = Boolean(codexReplyProvider);
+        const [casting, productionVoice, productionAgent] = await Promise.all([
+          checkBackendHealth({
+            configured: textOnlyConfigured,
+            check: () => ttsClient.checkTextOnlyHealth(),
+          }),
+          checkBackendHealth({
+            configured: productionConfigured,
+            check: () => ttsClient.checkProductionHealth(),
+          }),
+          checkBackendHealth({
+            configured: codexConfigured,
+            check: () => codexReplyProvider?.checkHealth?.(),
+          }),
+        ]);
+
+        const production = codexConfigured
+          ? {
+            configured: productionVoice.configured && productionAgent.configured,
+            running: productionVoice.running && productionAgent.running,
+            detail: !productionVoice.running
+              ? `Voice backend: ${productionVoice.detail}`
+              : !productionAgent.running
+                ? `Codex reply backend: ${productionAgent.detail}`
+                : '',
+            app: 'production-pipeline',
+            components: {
+              voice: productionVoice,
+              codex: productionAgent,
+            },
+          }
+          : productionVoice;
+
+        return jsonResponse(200, {
+          ok: true,
+          casting,
+          production,
+        });
+      }
+
       if (request.method === 'GET' && requestUrl.pathname === '/api/casting/speakers') {
         const speakers = await ttsClient.listTextOnlySpeakers();
         return jsonResponse(200, { ok: true, speakers });
@@ -206,10 +287,13 @@ export function createVoiceCastRequestHandler({
       }
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/production-test/state') {
-        const [savedState, speakers] = await Promise.all([
-          productionTestStore.loadState(),
-          ttsClient.listProductionSpeakers(),
-        ]);
+        const savedState = await productionTestStore.loadState();
+        let speakers = [];
+        try {
+          speakers = await ttsClient.listProductionSpeakers();
+        } catch {
+          speakers = [];
+        }
         return jsonResponse(200, {
           ok: true,
           profile: savedState.profile,
@@ -243,16 +327,29 @@ export function createVoiceCastRequestHandler({
           throw new Error('A transcript is required.');
         }
 
-        const profile = await productionTestStore.loadProfile();
+        const savedState = await productionTestStore.loadState();
+        const profile = savedState.profile;
         if (!profile) {
           throw new Error('An active production profile is required.');
         }
 
         const startedAt = performance.now();
-        const replyText =
-          typeof pickProductionReply === 'function'
-            ? pickProductionReply()
-            : 'All set.';
+        const replyText = normalizeString(await (
+          codexReplyProvider
+            ? codexReplyProvider.generateReply({
+              transcript,
+              history: savedState.history,
+              profile,
+            })
+            : pickReply({
+              transcript,
+              history: savedState.history,
+              profile,
+            })
+        ));
+        if (!replyText) {
+          throw new Error('The reply generator returned an empty reply.');
+        }
         await sleep(100, sleepImpl);
         const result = await ttsClient.generateProductionTurn({
           replyText,
@@ -267,6 +364,9 @@ export function createVoiceCastRequestHandler({
           generationTimeMs,
           replyAudioBuffer,
           replyAudioMimeType: result.mimeType || 'audio/wav',
+          pipeline: codexReplyProvider
+            ? 'browser-stt -> codex -> melotts -> openvoice-v2'
+            : 'browser-stt -> melotts -> openvoice-v2',
         });
 
         return jsonResponse(200, {
@@ -329,6 +429,7 @@ export function createVoiceCastServer({
   promptAssetStore,
   productionTestStore,
   ttsClient,
+  replyProvider = null,
   runtimeConfig = {},
   pickProductionReply = null,
   sleepImpl = null,
@@ -338,6 +439,7 @@ export function createVoiceCastServer({
     promptAssetStore,
     productionTestStore,
     ttsClient,
+    replyProvider,
     runtimeConfig,
     pickProductionReply,
     sleepImpl,

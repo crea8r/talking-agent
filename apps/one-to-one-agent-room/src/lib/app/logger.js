@@ -2,6 +2,9 @@ import { renderLogs as renderLogsView } from '../../ui/render.js';
 
 export function createLogger({ state, dom }) {
   function renderLogs() {
+    if (!dom.logList) {
+      return;
+    }
     renderLogsView(dom.logList, state.logs);
   }
 

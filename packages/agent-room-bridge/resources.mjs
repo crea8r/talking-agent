@@ -65,10 +65,15 @@ export function createBridgeCapabilitiesPayload() {
       cursor: 'opaque increasing integer string',
     },
     voiceRendering: {
-      speechActionFields: ['mood'],
+      speechActionFields: ['subtitle', 'mood', 'animationSequence'],
       supportedMoods: VOICE_MOOD_IDS,
       notes:
-        'Speech actions only need text plus an optional mood. The renderer derives the active character from the current avatar model and applies fixed mood presets to rate and pitch.',
+        'Speech actions should include user-facing text and may include subtitle text plus coarse animation beats. The browser derives the active character, retimes animationSequence beats to actual TTS duration, and applies local lip sync.',
+    },
+    animationPlanning: {
+      beatFields: ['gestureId', 'emoteId', 'stageId', 'atRatio'],
+      notes:
+        'Use a short animationSequence for speech beats instead of frame-level timing. atRatio is a 0..1 position within the spoken line.',
     },
   };
 }
@@ -181,7 +186,9 @@ export function getBridgePrompt(name) {
             'Use `join_call` to attach to the active call.',
             'Read `avatar://catalog` or the model-specific catalog returned by `join_call` once, then cache it by version.',
             'Keep the receive loop on `wait_for_events`.',
-            'Send gesture and speech output with `publish_actions`. For animation, use `gestureId` only. For speech actions, send text and optionally mood.',
+            'Reply to finalized human speech by calling `publish_actions` with the triggering `utt.final` event id as `inReplyToEventId`.',
+            'For speech actions, send concise spoken text, an optional subtitle, and an optional animationSequence of coarse gesture beats.',
+            'Let the browser handle exact playback timing, lip sync, idle animation, and interruption.',
             'Use `leave_call` when you are done or when the call should end.',
           ].join('\n'),
         },

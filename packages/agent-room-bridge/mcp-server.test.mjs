@@ -147,9 +147,15 @@ test('tools/list exposes the singleton-call protocol', async () => {
     assert.equal(Object.hasOwn(actionItem.properties, 'characterId'), false);
     assert.equal(Object.hasOwn(actionItem.properties, 'type'), false);
     assert.equal(Object.hasOwn(actionItem.properties, 'voiceMode'), false);
-    assert.equal(Object.hasOwn(actionItem.properties, 'emoteId'), false);
-    assert.equal(Object.hasOwn(actionItem.properties, 'stageId'), false);
-    assert.match(publishActions.description, /Animation is inferred from `gestureId` only\./);
+    assert.equal(Object.hasOwn(actionItem.properties, 'subtitle'), true);
+    assert.equal(Object.hasOwn(actionItem.properties, 'gestureId'), true);
+    assert.equal(Object.hasOwn(actionItem.properties, 'emoteId'), true);
+    assert.equal(Object.hasOwn(actionItem.properties, 'stageId'), true);
+    assert.equal(Object.hasOwn(actionItem.properties, 'animationSequence'), true);
+    assert.match(
+      publishActions.description,
+      /Animation can be set with `gestureId`, `emoteId`, `stageId`, or `animationSequence` beats\./,
+    );
     assert.match(publishActions.description, /gestureId: Pose \| name: Pose/);
     assert.match(publishActions.description, /gestureId: Thinking \| name: Thinking/);
   });

@@ -240,6 +240,35 @@ label {
   color: var(--muted);
 }
 
+.backend-health {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 32px;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(15, 23, 37, 0.78);
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.backend-health[data-state='running'] {
+  border-color: rgba(111, 212, 147, 0.35);
+  color: #8fe3aa;
+}
+
+.backend-health[data-state='down'],
+.backend-health[data-state='not-configured'] {
+  border-color: rgba(255, 138, 122, 0.35);
+  color: var(--danger);
+}
+
+.backend-health[data-state='checking'] {
+  border-color: rgba(245, 199, 107, 0.28);
+  color: var(--accent);
+}
+
 .error {
   color: var(--danger);
   min-height: 1.25rem;

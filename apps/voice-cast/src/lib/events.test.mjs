@@ -26,6 +26,33 @@ class FakeElement extends EventTarget {
   }
 }
 
+class FakeAudioElement extends FakeElement {
+  constructor() {
+    super();
+    this.src = '';
+    this.autoplay = false;
+    this.preload = '';
+    this.muted = false;
+    this.currentTime = 0;
+    this.playCount = 0;
+    this.pauseCount = 0;
+    this.loadCount = 0;
+  }
+
+  play() {
+    this.playCount += 1;
+    return Promise.resolve();
+  }
+
+  pause() {
+    this.pauseCount += 1;
+  }
+
+  load() {
+    this.loadCount += 1;
+  }
+}
+
 class FakeRecognition {
   constructor() {
     this.onstart = null;
@@ -94,7 +121,7 @@ function createDom() {
     startListening: new FakeElement(),
     replayLatestReply: new FakeElement(),
     productionHistoryList: new FakeElement(),
-    productionLatestAudio: new FakeElement(),
+    productionLatestAudio: new FakeAudioElement(),
   };
 }
 
@@ -173,6 +200,7 @@ test('start listening reports an error when browser speech recognition is unavai
 
   dom.startListening.dispatchEvent(new Event('click'));
   assert.match(state.production.error, /speech recognition/i);
+  assert.equal(state.production.listenerEnabled, false);
   assert.equal(state.production.listening, false);
 });
 
@@ -216,7 +244,7 @@ test('speech recognition result submits a production turn and stores the latest 
     },
     playAudioUrl(_, url) {
       playedUrl = url;
-      return Promise.resolve();
+      return Promise.resolve(true);
     },
   });
 
@@ -227,7 +255,159 @@ test('speech recognition result submits a production turn and stores the latest 
   await flush();
 
   assert.equal(state.production.transcript, 'hello there');
+  assert.equal(state.production.listenerEnabled, true);
   assert.equal(state.production.latestTurn.replyText, 'Fixed production reply.');
   assert.equal(state.production.history.length, 1);
   assert.equal(playedUrl, '/api/production-test/replies/turn-1.wav');
+});
+
+test('listening toggle turns the loop off and discards unfinished speech', async () => {
+  const dom = createDom();
+  const state = createVoiceCastState();
+  state.production.profile = {
+    referenceOriginalFileName: 'reference.wav',
+    referenceStoredPath: '/tmp/reference.wav',
+    meloBaseSpeakerId: 'EN-US',
+  };
+  const recognition = new FakeRecognition();
+  let submitCalls = 0;
+
+  bindAppEvents({
+    dom,
+    state,
+    httpClient: {
+      async submitProductionTurn() {
+        submitCalls += 1;
+        return {
+          turn: null,
+          history: [],
+        };
+      },
+    },
+    renderApp() {},
+    createSpeechRecognition() {
+      return recognition;
+    },
+  });
+
+  dom.startListening.dispatchEvent(new Event('click'));
+  recognition.emitResult('do not send this');
+  dom.startListening.dispatchEvent(new Event('click'));
+  recognition.emitEnd();
+  await flush();
+
+  assert.equal(state.production.listenerEnabled, false);
+  assert.equal(state.production.listening, false);
+  assert.equal(recognition.stopped, true);
+  assert.equal(submitCalls, 0);
+});
+
+test('speech recognition primes and auto-plays the reply as soon as the turn completes', async () => {
+  const dom = createDom();
+  const state = createVoiceCastState();
+  state.production.profile = {
+    referenceOriginalFileName: 'reference.wav',
+    referenceStoredPath: '/tmp/reference.wav',
+    meloBaseSpeakerId: 'EN-US',
+  };
+  const recognition = new FakeRecognition();
+
+  bindAppEvents({
+    dom,
+    state,
+    httpClient: {
+      async submitProductionTurn(payload) {
+        return {
+          turn: {
+            userTranscript: payload.transcript,
+            replyText: 'Auto-play check.',
+            generationTimeMs: 950,
+            replyAudioUrl: '/api/production-test/replies/turn-2.wav',
+          },
+          history: [
+            {
+              userTranscript: payload.transcript,
+              replyText: 'Auto-play check.',
+              generationTimeMs: 950,
+              replyAudioUrl: '/api/production-test/replies/turn-2.wav',
+            },
+          ],
+        };
+      },
+    },
+    renderApp() {},
+    createSpeechRecognition() {
+      return recognition;
+    },
+  });
+
+  dom.startListening.dispatchEvent(new Event('click'));
+  recognition.emitResult('play it now');
+  recognition.emitSpeechEnd();
+  recognition.emitEnd();
+  await flush();
+  await flush();
+
+  assert.equal(dom.productionLatestAudio.autoplay, true);
+  assert.equal(dom.productionLatestAudio.preload, 'auto');
+  assert.equal(dom.productionLatestAudio.hidden, false);
+  assert.equal(dom.productionLatestAudio.src, '/api/production-test/replies/turn-2.wav');
+  assert.equal(dom.productionLatestAudio.playCount >= 2, true);
+  assert.equal(dom.productionLatestAudio.loadCount >= 1, true);
+});
+
+test('listening toggle re-arms recognition after reply playback ends', async () => {
+  const dom = createDom();
+  const state = createVoiceCastState();
+  state.production.profile = {
+    referenceOriginalFileName: 'reference.wav',
+    referenceStoredPath: '/tmp/reference.wav',
+    meloBaseSpeakerId: 'EN-US',
+  };
+  const recognitions = [new FakeRecognition(), new FakeRecognition()];
+  let recognitionIndex = 0;
+
+  bindAppEvents({
+    dom,
+    state,
+    httpClient: {
+      async submitProductionTurn(payload) {
+        return {
+          turn: {
+            userTranscript: payload.transcript,
+            replyText: 'Loop reply.',
+            generationTimeMs: 875,
+            replyAudioUrl: '/api/production-test/replies/turn-3.wav',
+          },
+          history: [
+            {
+              userTranscript: payload.transcript,
+              replyText: 'Loop reply.',
+              generationTimeMs: 875,
+              replyAudioUrl: '/api/production-test/replies/turn-3.wav',
+            },
+          ],
+        };
+      },
+    },
+    renderApp() {},
+    createSpeechRecognition() {
+      return recognitions[recognitionIndex++];
+    },
+  });
+
+  dom.startListening.dispatchEvent(new Event('click'));
+  recognitions[0].emitResult('keep going');
+  recognitions[0].emitSpeechEnd();
+  recognitions[0].emitEnd();
+  await flush();
+  await flush();
+
+  assert.equal(state.production.replyPlaying, true);
+  dom.productionLatestAudio.dispatchEvent(new Event('ended'));
+
+  assert.equal(state.production.replyPlaying, false);
+  assert.equal(state.production.listenerEnabled, true);
+  assert.equal(recognitions[1].started, true);
+  assert.equal(state.production.listening, true);
 });

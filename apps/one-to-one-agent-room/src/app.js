@@ -1,14 +1,6 @@
-import {
-  LogLevel,
-  Room,
-  RoomEvent,
-  Track,
-  VideoPresets,
-  setLogExtension,
-} from '/vendor/livekit-client.mjs';
-import { createRoomLayerClient } from '/vendor/room-layer-client.mjs';
-import { createVoiceLayer } from '/vendor/voice-layer-browser.js';
+import { createVoiceLayer } from '/vendor/voice-layer-browser/index.js';
 import { createAvatarSpeechController } from '/vendor/avatar-speech-browser.js';
+import { createProductionVoiceLayer } from '/vendor/production-voice/browser-layer.mjs';
 import {
   BUNDLED_MODELS,
   DEFAULT_MODEL,
@@ -17,30 +9,26 @@ import {
   STAGES,
   createAvatarLayer,
   getGesturePresets,
-  pickVoiceForModel,
   resolveGesturePreset,
 } from '/vendor/avatar-layer-browser.js';
-import { clampNumber, formatError } from './lib/format.js';
+import { formatError } from './lib/format.js';
 import { dom } from './ui/dom.js';
+import { createAvatarDock } from './ui/avatar-dock.js';
 import { renderSelectOptions } from './ui/render.js';
 import { createScreenNavigator } from './ui/screens.js';
 import { createAppStore } from './lib/app/store.js';
-import { fetchJson, fetchRuntimeConfig, postJson } from './lib/app/http.js';
+import { fetchJson, fetchRuntimeConfig, postFormData, postJson } from './lib/app/http.js';
 import { createLogger } from './lib/app/logger.js';
 import { createPresenter } from './lib/app/presenter.js';
 import { createAvatarController } from './lib/app/avatar-controller.js';
 import { createSessionController } from './lib/app/session-controller.js';
+import { createSetupPreviewController } from './lib/app/setup-preview.js';
 import { bindAppEvents } from './lib/app/events.js';
+import { resolveLaunchContext } from './lib/app/launch-context.js';
 
 const STORAGE_KEY = 'one-to-one-agent-room.state';
-
-const roomLayer = createRoomLayerClient({
-  sdk: {
-    LogLevel,
-    Room,
-    RoomEvent,
-    setLogExtension,
-  },
+const initialLaunchContext = resolveLaunchContext({
+  locationHref: window.location.href,
 });
 
 const store = createAppStore({
@@ -51,19 +39,28 @@ const store = createAppStore({
   emotes: EMOTES,
   getGesturePresets,
   resolveGesturePreset,
-  clampNumber,
 });
+store.activateScope(initialLaunchContext.workspaceKey);
 
 const { state, bundledModelMap, stageMap, emoteMap } = store;
-
+state.launchContext = initialLaunchContext;
+const avatarDock = createAvatarDock({
+  setupHost: dom.setupAvatarHost,
+  callHost: dom.callAvatarHost,
+  previewShell: dom.avatarPreviewShell,
+});
 const screenNavigator = createScreenNavigator({
   tabs: dom.screenTabs,
   screens: dom.screens,
+  onChange(screenId) {
+    avatarDock.sync(screenId);
+  },
 });
 
 const logger = createLogger({ state, dom });
 let presenter;
 let sessionController;
+let setupPreviewController;
 
 const avatarController = createAvatarController({
   dom,
@@ -80,19 +77,26 @@ const avatarController = createAvatarController({
   formatError,
   addLog: logger.addLog,
   refreshActionButtons: () => presenter?.refreshActionButtons?.(),
-  onBundledModelChange(modelId) {
-    syncRecommendedVoiceForModel(modelId, { force: true });
-  },
+  onBundledModelChange() {},
 });
 
-const agentVoiceLayer = createVoiceLayer({
+const agentVoiceLayer = createProductionVoiceLayer({
   locale: 'en-US',
-  autoRestart: false,
-  speakReplies: true,
-  preferredVoiceName: state.preferences.voiceName,
-  speechRate: state.preferences.speechRate,
-  speechPitch: state.preferences.speechPitch,
-  getReply: async (transcript) => transcript,
+  initialConfig: {
+    locale: 'en-US',
+    speakReplies: true,
+    defaultCharacterId: state.preferences.bundledModelId,
+    ready: false,
+  },
+  synthesizeSpeech: async ({ text }) => {
+    const scopeQuery = state.launchContext?.workspaceKey
+      ? `?scope=${encodeURIComponent(state.launchContext.workspaceKey)}`
+      : '';
+    const payload = await postJson(`/api/production-voice/synthesize${scopeQuery}`, {
+      text,
+    });
+    return payload;
+  },
 });
 
 const humanVoiceLayer = createVoiceLayer({
@@ -121,7 +125,6 @@ const avatarSpeech = createAvatarSpeechController({
 presenter = createPresenter({
   dom,
   state,
-  trackSource: Track.Source,
   collectFormState: () => store.collectFormState(dom),
   humanVoiceLayer,
   agentVoiceLayer,
@@ -131,11 +134,6 @@ presenter = createPresenter({
 
 sessionController = createSessionController({
   state,
-  roomLayer,
-  roomClass: Room,
-  videoPresets: VideoPresets,
-  logLevel: LogLevel.info,
-  screenNavigator,
   humanVoiceLayer,
   agentVoiceLayer,
   avatarSpeech,
@@ -149,27 +147,54 @@ sessionController = createSessionController({
   collectFormState: () => store.collectFormState(dom),
   fetchJson,
   postJson,
+  postFormData,
   addLog: logger.addLog,
   formatError,
-  renderLocalStage: presenter.renderLocalStage,
-  renderRoomSnapshot: presenter.renderRoomSnapshot,
-  renderBridgeSnapshot: presenter.renderBridgeSnapshot,
+  renderSessionSnapshot: presenter.renderSessionSnapshot,
   renderTranscriptList: presenter.renderTranscriptList,
+  renderSubtitles: presenter.renderSubtitles,
   renderDebugSnapshot: presenter.renderDebugSnapshot,
   renderAgentStatus: presenter.renderAgentStatus,
+  renderVoiceSampleState: presenter.renderVoiceSampleState,
   refreshActionButtons: presenter.refreshActionButtons,
+  syncVoiceSampleProfile: store.syncVoiceSampleProfile,
+  persistState: () => store.persistState(dom),
   updateRoomStatus: presenter.updateRoomStatus,
+});
+
+setupPreviewController = createSetupPreviewController({
+  state,
+  avatarLayer: avatarController.avatarLayer,
+  avatarSpeech,
+  addLog: logger.addLog,
+  formatError,
+  renderVoiceSampleState: presenter.renderVoiceSampleState,
+  refreshActionButtons: presenter.refreshActionButtons,
 });
 
 humanVoiceLayer.setHandlers({
   onStateChange(snapshot) {
     state.humanVoiceSnapshot = snapshot;
+    if (!state.activeCall || state.humanMicMuted || state.startupGreetingActive || !snapshot.listening) {
+      state.humanMicLevel = 0;
+    }
     presenter.renderHumanStatus();
+    presenter.renderCallSnapshot();
     presenter.refreshActionButtons();
     presenter.renderDebugSnapshot();
   },
+  onLevel(level) {
+    state.humanMicLevel =
+      state.activeCall &&
+      !state.humanMicMuted &&
+      !state.startupGreetingActive &&
+      !state.agentThinkingActive
+        ? Number(level) || 0
+        : 0;
+    presenter.renderCallSnapshot();
+  },
   onTranscript({ text, isFinal }) {
-    state.transcriptPreview = text || 'none';
+    state.transcriptPreview = text || '';
     if (!isFinal) {
       void sessionController.syncInterimTranscript(text);
     }
@@ -186,15 +211,6 @@ agentVoiceLayer.setHandlers({
     presenter.renderAgentStatus();
     presenter.renderDebugSnapshot();
   },
-  onVoices(voices) {
-    state.voiceOptions = voices;
-    syncRecommendedVoiceForModel(state.preferences.bundledModelId, {
-      force:
-        !state.preferences.voiceName ||
-        !voices.some((voice) => voice.name === state.preferences.voiceName),
-    });
-    presenter.renderVoiceOptions();
-  },
   onLog(entry) {
     logger.addLog(entry.level, `[voice] ${entry.message}`, entry.details);
   },
@@ -204,8 +220,36 @@ initialize();
 
 function initialize() {
   avatarController.flushEarlyBootIssues();
+  applyLaunchContext(state.launchContext);
   store.hydrateInputs(dom);
-  presenter.updateRateLabels();
+  renderSetupControls();
+  avatarController.refreshSceneNote();
+  avatarController.syncAvatarSnapshot();
+  presenter.renderVoiceSampleState();
+  presenter.renderTranscriptList();
+  presenter.renderHumanStatus();
+  presenter.renderSubtitles();
+  presenter.renderAgentStatus();
+  presenter.renderCallSnapshot();
+  bindAppEvents({
+    dom,
+    state,
+    screenNavigator,
+    humanVoiceLayer,
+    avatarController,
+    sessionController,
+    setupPreviewController,
+    presenter,
+    persistState: () => store.persistState(dom),
+    addLog: logger.addLog,
+    formatError,
+  });
+  sessionController.installSdkLogging();
+  logger.addLog('info', 'App booting.');
+  void boot();
+}
+
+function renderSetupControls() {
   renderSelectOptions(dom.bundledModelSelect, BUNDLED_MODELS, state.preferences.bundledModelId);
   renderSelectOptions(dom.stageSelect, STAGES, state.preferences.stageId);
   renderSelectOptions(dom.emoteSelect, EMOTES, state.preferences.emoteId);
@@ -215,113 +259,87 @@ function initialize() {
     resolveGesturePreset(state.preferences.bundledModelId, state.preferences.gestureId)?.id ||
       GESTURES[0].id,
   );
-  avatarController.refreshSceneNote();
-  avatarController.syncAvatarSnapshot();
-  presenter.renderVoiceOptions();
-  presenter.renderTranscriptList();
-  presenter.renderHumanStatus();
-  presenter.renderAgentStatus();
-  presenter.renderCallSnapshot();
-  bindAppEvents({
-    dom,
-    state,
-    humanVoiceLayer,
-    avatarController,
-    sessionController,
-    presenter,
-    persistState: () => store.persistState(dom),
-    syncAgentVoiceConfig,
-    addLog: logger.addLog,
-    formatError,
+}
+
+function applyLaunchContext(launchContext) {
+  state.launchContext = launchContext;
+  dom.shell.dataset.launchMode = launchContext.mode;
+  document.body.dataset.launchMode = launchContext.mode;
+  screenNavigator.show(launchContext.initialScreen, {
+    updateHash: !window.location.hash || !['#setup', '#call'].includes(window.location.hash),
   });
-  sessionController.installSdkLogging();
-  logger.addLog('info', 'App booting.');
-  syncAgentVoiceConfig();
-  void boot();
+  presenter.renderLaunchContext();
 }
 
 async function boot() {
   presenter.updateRoomStatus('loading', 'Loading…', 'Preparing runtime config.');
-  dom.localStage.innerHTML = '<div class="empty-state">Loading runtime config…</div>';
 
   try {
     state.runtimeConfig = await fetchRuntimeConfig();
-    store.ensureDefaults(dom);
+    state.launchContext = resolveLaunchContext({
+      locationHref: window.location.href,
+      runtimeConfig: state.runtimeConfig,
+    });
+    const resolvedLaunchContext = await sessionController.resolveLinkedLaunch();
+    state.runtimeConfig.launch = resolvedLaunchContext;
+    store.activateScope(resolvedLaunchContext.workspaceKey);
+    applyLaunchContext(resolvedLaunchContext);
+    store.ensureDefaults();
+    store.hydrateInputs(dom);
+    await sessionController.loadWorkspaceSetup();
+    renderSetupControls();
     store.persistState(dom);
+
+    if (resolvedLaunchContext.callStatus === 'ended' || resolvedLaunchContext.callStatus === 'retry-needed') {
+      await avatarController.loadModel();
+      presenter.updateRoomStatus(
+        resolvedLaunchContext.callStatus === 'retry-needed' ? 'warn' : 'idle',
+        'Call ended',
+        resolvedLaunchContext.callStatus === 'retry-needed'
+          ? 'This call ended but summary write-back needs retry.'
+          : 'This call has already finished.',
+      );
+      state.subtitles.human = {
+        mode: 'idle',
+        text: 'Call ended.',
+      };
+      state.subtitles.agent = {
+        mode: resolvedLaunchContext.callStatus === 'retry-needed' ? 'warn' : 'ended',
+        text: resolvedLaunchContext.endedSummary || 'No summary saved for this call.',
+      };
+      presenter.renderSessionSnapshot();
+      presenter.renderCallSnapshot();
+      presenter.renderSubtitles();
+      presenter.refreshActionButtons();
+      presenter.renderDebugSnapshot();
+      logger.addLog('info', 'Opened an ended linked call.', {
+        launchId: resolvedLaunchContext.launchId,
+        status: resolvedLaunchContext.callStatus,
+      });
+      return;
+    }
+
     await Promise.all([
       avatarController.loadModel(),
-      sessionController.prepareLobbySession({ force: true }),
+      sessionController.loadProductionVoiceState(),
+      sessionController.loadCodexState(),
     ]);
-    presenter.renderRoomSnapshot();
-    presenter.renderBridgeSnapshot();
+    presenter.renderSessionSnapshot();
     presenter.renderCallSnapshot();
     presenter.refreshActionButtons();
     presenter.renderDebugSnapshot();
+    presenter.renderLaunchContext();
     logger.addLog('info', 'Runtime ready.', {
       appName: state.runtimeConfig.appName,
       appMode: state.runtimeConfig.appMode,
     });
+    await sessionController.maybeStartLaunchCall();
   } catch (error) {
     presenter.updateRoomStatus(
       'error',
       'Bootstrap failed',
-      error instanceof Error ? error.message : 'Unable to prepare the room.',
+      error instanceof Error ? error.message : 'Unable to prepare the call.',
     );
     logger.addLog('error', 'Bootstrap failed.', formatError(error));
   }
-}
-
-function syncAgentVoiceConfig() {
-  const voiceCharacters = Object.fromEntries(
-    BUNDLED_MODELS.map((model) => [
-      model.id,
-      {
-        voiceName: pickVoiceForModel(model.id, state.voiceOptions) || state.preferences.voiceName,
-        baseRate: state.preferences.speechRate,
-        basePitch: state.preferences.speechPitch,
-      },
-    ]),
-  );
-
-  agentVoiceLayer.updateConfig({
-    locale: 'en-US',
-    autoRestart: false,
-    preferredVoiceName: state.preferences.voiceName,
-    speechRate: state.preferences.speechRate,
-    speechPitch: state.preferences.speechPitch,
-    defaultCharacterId: 'default',
-    voiceCharacters: {
-      default: {
-        voiceName: state.preferences.voiceName,
-        baseRate: state.preferences.speechRate,
-        basePitch: state.preferences.speechPitch,
-      },
-      ...voiceCharacters,
-    },
-    speakReplies: true,
-    getReply: async (transcript) => transcript,
-  });
-}
-
-function syncRecommendedVoiceForModel(modelId, { force = false } = {}) {
-  const recommendedVoice = pickVoiceForModel(modelId, state.voiceOptions);
-  if (!recommendedVoice) {
-    return;
-  }
-
-  const voiceStillAvailable = state.voiceOptions.some(
-    (voice) => voice.name === state.preferences.voiceName,
-  );
-  if (!force && state.preferences.voiceName && voiceStillAvailable) {
-    return;
-  }
-
-  if (state.preferences.voiceName === recommendedVoice) {
-    return;
-  }
-
-  state.preferences.voiceName = recommendedVoice;
-  syncAgentVoiceConfig();
-  presenter?.renderVoiceOptions?.();
-  store.persistState(dom);
 }

@@ -30,6 +30,7 @@ This repo will evolve through six small apps before the final product shell.
 - Expected stack: chosen room layer + voice loop + avatar module.
 - Main unknown: whether the integrated 1:1 experience is stable and believable.
 - Why this is separate: this is the first full-system integration point.
+- Current spike simplification: the browser now exposes a session-first voice UI instead of visible room setup. The agent hears the human, replies through the MCP bridge, and drives avatar speech plus animation locally.
 
 ## 5. `group-room-with-agent`
 

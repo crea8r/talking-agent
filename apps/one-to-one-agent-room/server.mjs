@@ -1,26 +1,29 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import {
-  createRoomLayerRuntimeConfig,
-  createRoomLayerToken,
-  loadRoomLayerDefaults,
-  validateRoomLayerTokenRequest,
-} from '../../packages/room-layer/server.mjs';
-import { createAgentRoomBridgeStore } from '../../packages/agent-room-bridge/index.mjs';
-import {
-  buildAvatarCatalogUri,
-  buildAvatarCatalogVersion,
-} from '../../packages/agent-room-bridge/resources.mjs';
+
 import {
   BUNDLED_MODELS,
   DEFAULT_MODEL,
   EMOTES,
   GESTURES,
-  getGesturePresets,
   STAGES,
+  getGesturePresets,
 } from '../../packages/avatar-layer-browser/index.js';
+import {
+  createForkedCallExecutor,
+  createIsolatedCodexExecutor,
+} from '../../packages/codex-exec/index.mjs';
+import { createCallRecordStore } from '../../packages/call-record-store/index.mjs';
+import { createProductionVoiceClient } from '../../packages/production-voice/client.mjs';
+import { createProductionVoiceProfileStore } from '../../packages/production-voice/profile-store.mjs';
+import { createWorkspaceSetupStore } from '../../packages/workspace-setup-store/index.mjs';
+
+import { createDirectCodexAgent } from './lib/server/direct-codex-agent.mjs';
+import { createDirectSessionRuntime } from './lib/server/direct-session-runtime.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,10 +37,10 @@ const NODE_MODULES_DIR = path.join(REPO_ROOT, 'node_modules');
 const PACKAGES_DIR = path.join(REPO_ROOT, 'packages');
 const MODELS_DIR = path.join(PACKAGES_DIR, 'avatar-layer-browser', 'models');
 const ANIMATIONS_DIR = path.join(PACKAGES_DIR, 'avatar-layer-browser', 'animations');
-const ROOM_LAYER_DIR = path.join(PACKAGES_DIR, 'room-layer');
 const VOICE_LAYER_DIR = path.join(PACKAGES_DIR, 'voice-layer-browser');
 const AVATAR_LAYER_DIR = path.join(PACKAGES_DIR, 'avatar-layer-browser');
 const AVATAR_SPEECH_DIR = path.join(PACKAGES_DIR, 'avatar-speech-browser');
+const PRODUCTION_VOICE_DIR = path.join(PACKAGES_DIR, 'production-voice');
 const LIVEKIT_CLIENT_DIST = path.join(
   NODE_MODULES_DIR,
   'livekit-client',
@@ -50,11 +53,94 @@ const LIVEKIT_CLIENT_MAP = path.join(
   'dist',
   'livekit-client.esm.mjs.map',
 );
-const BRIDGE_STATE_PATH = path.join(REPO_ROOT, 'output', 'one-to-one-agent-room-bridge.json');
-const MCP_SERVER_PATH = path.join(PACKAGES_DIR, 'agent-room-bridge', 'mcp-server.mjs');
-const ROOM_LAYER_DEFAULTS = loadRoomLayerDefaults(process.env);
-const bridgeStore = createAgentRoomBridgeStore({
-  stateFilePath: BRIDGE_STATE_PATH,
+const PRODUCTION_VOICE_STATE_DIR = path.join(
+  REPO_ROOT,
+  'output',
+  'one-to-one-agent-room-production-voice',
+);
+const WORKSPACE_SETUP_STATE_DIR = path.join(
+  REPO_ROOT,
+  'output',
+  'one-to-one-agent-room-setup',
+);
+const CALL_RECORD_STATE_DIR = path.join(
+  REPO_ROOT,
+  'output',
+  'one-to-one-agent-room-calls',
+);
+const CODEX_SESSION_ROOT = path.join(
+  REPO_ROOT,
+  'output',
+  'one-to-one-agent-room-codex',
+);
+const DEFAULT_PRODUCTION_VOICE_BASE_URL = 'http://127.0.0.1:50003';
+const PRODUCTION_VOICE_BASE_URL =
+  process.env.ONE_TO_ONE_AGENT_ROOM_PRODUCTION_VOICE_BASE_URL ||
+  process.env.VOICE_CAST_PRODUCTION_BASE_URL ||
+  DEFAULT_PRODUCTION_VOICE_BASE_URL;
+const PRODUCTION_VOICE_DEFAULT_SPEAKER_ID =
+  process.env.ONE_TO_ONE_AGENT_ROOM_PRODUCTION_VOICE_SPEAKER_ID || 'EN-US';
+const CODEX_COMMAND = process.env.ONE_TO_ONE_AGENT_ROOM_CODEX_COMMAND || 'codex';
+const CODEX_SOURCE_HOME =
+  process.env.ONE_TO_ONE_AGENT_ROOM_SOURCE_CODEX_HOME ||
+  process.env.CODEX_HOME ||
+  path.join(process.env.HOME || os.homedir(), '.codex');
+const CODEX_MODEL = process.env.ONE_TO_ONE_AGENT_ROOM_CODEX_MODEL || 'gpt-5.4';
+const CODEX_REASONING_EFFORT =
+  process.env.ONE_TO_ONE_AGENT_ROOM_CODEX_REASONING_EFFORT || 'low';
+const CODEX_TIMEOUT_MS = Number.parseInt(
+  process.env.ONE_TO_ONE_AGENT_ROOM_CODEX_TIMEOUT_MS || '45000',
+  10,
+);
+
+const MODELS_BY_ID = new Map(BUNDLED_MODELS.map((model) => [model.id, model]));
+const GESTURE_CATALOG_BY_MODEL = Object.fromEntries(
+  BUNDLED_MODELS.map((model) => [model.id, getGesturePresets(model.id)]),
+);
+
+const productionVoiceClient = createProductionVoiceClient({
+  baseUrl: PRODUCTION_VOICE_BASE_URL,
+  baseUrlEnvVarName: 'ONE_TO_ONE_AGENT_ROOM_PRODUCTION_VOICE_BASE_URL',
+});
+const productionVoiceProfileStore = createProductionVoiceProfileStore({
+  rootDir: PRODUCTION_VOICE_STATE_DIR,
+});
+const workspaceSetupStore = createWorkspaceSetupStore({
+  rootDir: WORKSPACE_SETUP_STATE_DIR,
+});
+const callRecordStore = createCallRecordStore({
+  rootDir: CALL_RECORD_STATE_DIR,
+});
+const isolatedCodexExecutor = createIsolatedCodexExecutor({
+  rootDir: CODEX_SESSION_ROOT,
+  sourceCodexHome: CODEX_SOURCE_HOME,
+  codexCommand: CODEX_COMMAND,
+  model: CODEX_MODEL,
+  reasoningEffort: CODEX_REASONING_EFFORT,
+  timeoutMs: Number.isFinite(CODEX_TIMEOUT_MS) ? CODEX_TIMEOUT_MS : 45_000,
+});
+const forkedCallExecutor = createForkedCallExecutor({
+  rootDir: CODEX_SESSION_ROOT,
+  sourceCodexHome: CODEX_SOURCE_HOME,
+  codexCommand: CODEX_COMMAND,
+  timeoutMs: Number.isFinite(CODEX_TIMEOUT_MS) ? CODEX_TIMEOUT_MS : 45_000,
+});
+const directCodexAgent = createDirectCodexAgent({
+  executor: isolatedCodexExecutor,
+  linkedCallExecutor: {
+    startCallPrompt: forkedCallExecutor.startCallPrompt,
+    runCallPrompt: forkedCallExecutor.runCallPrompt,
+    writeBackSummary: forkedCallExecutor.writeBackSummary,
+    destroyCallSession: forkedCallExecutor.destroyCallSession,
+  },
+});
+const sessionRuntime = createDirectSessionRuntime({
+  agentRunner: directCodexAgent,
+  callRecordStore,
+  modelsById: MODELS_BY_ID,
+  gestureCatalogByModel: GESTURE_CATALOG_BY_MODEL,
+  defaultModelId: DEFAULT_MODEL.id,
+  projectTitle: CODEX_PROJECT_NAME,
 });
 
 const MIME_TYPES = new Map([
@@ -73,9 +159,6 @@ const STATIC_ROUTES = new Map([
   ['/', path.join(SRC_DIR, 'index.html')],
   ['/app.js', path.join(SRC_DIR, 'app.js')],
   ['/styles.css', path.join(SRC_DIR, 'styles.css')],
-  ['/vendor/room-layer-client.mjs', path.join(ROOM_LAYER_DIR, 'client.mjs')],
-  ['/vendor/voice-layer-browser.js', path.join(VOICE_LAYER_DIR, 'index.js')],
-  ['/vendor/render-profiles.js', path.join(VOICE_LAYER_DIR, 'render-profiles.js')],
   ['/vendor/avatar-layer-browser.js', path.join(AVATAR_LAYER_DIR, 'index.js')],
   ['/vendor/animation-manifest.js', path.join(AVATAR_LAYER_DIR, 'animation-manifest.js')],
   ['/vendor/avatar-speech-browser.js', path.join(AVATAR_SPEECH_DIR, 'index.js')],
@@ -101,6 +184,14 @@ const PREFIX_ROUTES = [
     rootDir: ANIMATIONS_DIR,
   },
   {
+    prefix: '/vendor/voice-layer-browser/',
+    rootDir: VOICE_LAYER_DIR,
+  },
+  {
+    prefix: '/vendor/production-voice/',
+    rootDir: PRODUCTION_VOICE_DIR,
+  },
+  {
     prefix: '/vendor/three/',
     rootDir: path.join(NODE_MODULES_DIR, 'three'),
   },
@@ -113,57 +204,6 @@ const PREFIX_ROUTES = [
     rootDir: path.join(NODE_MODULES_DIR, '@pixiv', 'three-vrm-animation', 'lib'),
   },
 ];
-
-function renderMcpBootstrapCommand() {
-  return `AGENT_ROOM_BRIDGE_STATE_PATH="${BRIDGE_STATE_PATH}" node "${MCP_SERVER_PATH}"`;
-}
-
-function toHttpProbeUrl(livekitUrl) {
-  const parsed = new URL(livekitUrl);
-  const protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
-  parsed.protocol = protocol;
-
-  if (!parsed.pathname || parsed.pathname === '') {
-    parsed.pathname = '/';
-  }
-
-  return parsed.toString();
-}
-
-async function probeLivekitUrl(livekitUrl) {
-  const cleanedUrl = `${livekitUrl || ''}`.trim();
-  if (!cleanedUrl) {
-    throw new Error('LiveKit URL is required.');
-  }
-
-  let probeUrl;
-  try {
-    probeUrl = toHttpProbeUrl(cleanedUrl);
-  } catch {
-    throw new Error(`LiveKit URL is invalid: ${cleanedUrl}`);
-  }
-
-  try {
-    const response = await fetch(probeUrl, {
-      method: 'GET',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(1200),
-    });
-
-    return {
-      reachable: true,
-      probeUrl,
-      status: response.status,
-      statusText: response.statusText,
-    };
-  } catch (error) {
-    return {
-      reachable: false,
-      probeUrl,
-      error: error instanceof Error ? error.message : 'Unknown probe failure.',
-    };
-  }
-}
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
@@ -179,22 +219,6 @@ function sendText(res, statusCode, text) {
     'content-type': 'text/plain; charset=utf-8',
   });
   res.end(text);
-}
-
-async function sendBridgeSessionPayload(res, session, statusCode = 200) {
-  const pendingActions = await bridgeStore.listPendingActions({
-    sessionId: session.id,
-  });
-  const inspector = await bridgeStore.getInspectorSnapshot({
-    sessionId: session.id,
-  });
-
-  sendJson(res, statusCode, {
-    ok: true,
-    session,
-    pendingActions: pendingActions.actions,
-    inspector,
-  });
 }
 
 async function serveStatic(res, filePath) {
@@ -233,7 +257,6 @@ function resolvePrefixedPath(urlPathname) {
 
 async function readJsonBody(req) {
   const chunks = [];
-
   for await (const chunk of req) {
     chunks.push(chunk);
   }
@@ -250,27 +273,149 @@ async function readJsonBody(req) {
   }
 }
 
-function createDemoReplyText(transcript) {
-  const cleaned = `${transcript || ''}`.trim();
-  const lower = cleaned.toLowerCase();
+async function readFormDataBody(req, url) {
+  const request = new Request(url, {
+    method: req.method,
+    headers: req.headers,
+    body: Readable.toWeb(req),
+    duplex: 'half',
+  });
 
-  if (lower.includes('hello') || lower.includes('hi')) {
-    return 'Hello. The one-to-one room is active, the avatar is listening, and the MCP bridge is ready for Codex.';
+  return request.formData();
+}
+
+function pickDefaultProductionSpeaker(speakers = []) {
+  const configured = `${PRODUCTION_VOICE_DEFAULT_SPEAKER_ID || ''}`.trim();
+  if (configured && speakers.includes(configured)) {
+    return configured;
   }
 
-  if (lower.includes('status')) {
-    return 'Room transport is local LiveKit, the human turn is persisted in the bridge state file, and the avatar speech layer is ready to play my reply.';
+  if (speakers.includes('EN-US')) {
+    return 'EN-US';
   }
 
-  if (lower.includes('mcp')) {
-    return 'This spike exposes human turns through an MCP server so Codex can claim them and submit structured replies back into the room session.';
+  if (speakers.length > 0) {
+    return speakers[0];
   }
 
-  if (lower.endsWith('?')) {
-    return `My short answer is: ${cleaned.replace(/\?+$/g, '')}. This is the local demo agent path, so the real Codex reasoning loop can replace me later.`;
+  return configured;
+}
+
+async function buildProductionVoiceState() {
+  return buildProductionVoiceStateForScope({});
+}
+
+function resolveVoiceScopeKey(url) {
+  return `${url.searchParams.get('scope') || ''}`.trim();
+}
+
+async function buildWorkspaceSetupState({ scopeKey = '' } = {}) {
+  return {
+    ok: true,
+    setup: await workspaceSetupStore.loadSetup({ scopeKey }),
+  };
+}
+
+async function buildLaunchState({ launchId = '' } = {}) {
+  const record = await callRecordStore.loadRecord({ launchId });
+  if (!record) {
+    return null;
   }
 
-  return `I heard: ${cleaned}. The bridge has the turn, the avatar package can speak the response, and the app shell stays thin around those reusable pieces.`;
+  return {
+    ok: true,
+    launch: {
+      launchId: `${record.launchId || ''}`.trim(),
+      originalSessionId: `${record.originalSessionId || ''}`.trim(),
+      callSessionId: `${record.callSessionId || ''}`.trim(),
+      workspaceRoot: `${record.workspaceRoot || ''}`.trim(),
+      workspaceKey: `${record.scopeKey || ''}`.trim(),
+      displayTitle: `${record.displayTitle || ''}`.trim(),
+      callStatus: `${record.status || ''}`.trim(),
+      endedSummary: `${record.summary || ''}`.trim(),
+      linkedSessionId: `${record.originalSessionId || ''}`.trim(),
+    },
+  };
+}
+
+async function buildProductionVoiceStateForScope({ scopeKey = '' } = {}) {
+  const profile = await productionVoiceProfileStore.getProfileSummary({ scopeKey });
+
+  try {
+    const health = await productionVoiceClient.checkHealth();
+    const speakers = await productionVoiceClient.listSpeakers().catch(() => []);
+    const defaultSpeakerId = pickDefaultProductionSpeaker(speakers);
+
+    return {
+      ok: true,
+      backend: {
+        configured: true,
+        running: true,
+        app: `${health?.app || 'production-voice'}`.trim(),
+        detail: '',
+        speakers,
+        defaultSpeakerId,
+        defaultSpeakerLabel: defaultSpeakerId || '',
+      },
+      profile,
+    };
+  } catch (error) {
+    const speakers = [];
+    const defaultSpeakerId = pickDefaultProductionSpeaker(speakers);
+
+    return {
+      ok: true,
+      backend: {
+        configured: true,
+        running: false,
+        app: 'production-voice',
+        detail: error instanceof Error ? error.message : 'Production voice health check failed.',
+        speakers,
+        defaultSpeakerId,
+        defaultSpeakerLabel: defaultSpeakerId || '',
+      },
+      profile,
+    };
+  }
+}
+
+async function buildCodexState() {
+  try {
+    const health = await directCodexAgent.checkHealth();
+    return {
+      ok: true,
+      backend: {
+        configured: true,
+        running: true,
+        app: `${health?.app || 'codex-exec'}`.trim(),
+        detail: `${health?.detail || ''}`.trim(),
+        model: CODEX_MODEL,
+        reasoningEffort: CODEX_REASONING_EFFORT,
+        sessionRoot: CODEX_SESSION_ROOT,
+        command: CODEX_COMMAND,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: true,
+      backend: {
+        configured: true,
+        running: false,
+        app: 'codex-exec',
+        detail: error instanceof Error ? error.message : 'Unable to verify codex exec.',
+        model: CODEX_MODEL,
+        reasoningEffort: CODEX_REASONING_EFFORT,
+        sessionRoot: CODEX_SESSION_ROOT,
+        command: CODEX_COMMAND,
+      },
+    };
+  }
+}
+
+function isWavFile(file) {
+  const type = `${file?.type || ''}`.toLowerCase();
+  const name = `${file?.name || ''}`.toLowerCase();
+  return type.includes('wav') || name.endsWith('.wav');
 }
 
 function serializeGesture(gesture) {
@@ -311,19 +456,17 @@ const server = createServer(async (req, res) => {
       host: HOST,
       port: PORT,
       app: 'one-to-one-agent-room',
-      bridgeStatePath: BRIDGE_STATE_PATH,
+      codexSessionRoot: CODEX_SESSION_ROOT,
+      productionVoiceStateDir: PRODUCTION_VOICE_STATE_DIR,
     });
     return;
   }
 
   if (req.method === 'GET' && url.pathname === '/api/runtime-config') {
     sendJson(res, 200, {
-      ...createRoomLayerRuntimeConfig({
-        defaults: ROOM_LAYER_DEFAULTS,
-        appName: 'one-to-one-agent-room',
-        appMode: 'app4-mcp-codex-bridge-spike',
-        port: PORT,
-      }),
+      ok: true,
+      appName: 'one-to-one-agent-room',
+      appMode: 'app4-direct-codex-session',
       codexProjectName: CODEX_PROJECT_NAME,
       codexProjectPath: REPO_ROOT,
       avatar: {
@@ -335,118 +478,204 @@ const server = createServer(async (req, res) => {
         gestureIds: GESTURES.map((gesture) => gesture.id),
         gestureCatalog: GESTURES.map(serializeGesture),
         gestureIdsByModel: Object.fromEntries(
-          BUNDLED_MODELS.map((model) => [model.id, getGesturePresets(model.id).map((gesture) => gesture.id)]),
-        ),
-        gestureCatalogByModel: Object.fromEntries(
-          BUNDLED_MODELS.map((model) => [model.id, getGesturePresets(model.id).map(serializeGesture)]),
-        ),
-      },
-      bridge: {
-        stateFilePath: BRIDGE_STATE_PATH,
-        mcpServerPath: MCP_SERVER_PATH,
-        mcpServerCommand: renderMcpBootstrapCommand(),
-        tools: [
-          'join_call',
-          'wait_for_events',
-          'publish_actions',
-          'leave_call',
-          'get_recent_turns',
-        ],
-        avatarCatalogByModel: Object.fromEntries(
           BUNDLED_MODELS.map((model) => [
             model.id,
-            {
-              uri: buildAvatarCatalogUri(model.id),
-              version: buildAvatarCatalogVersion(model.id),
-            },
+            getGesturePresets(model.id).map((gesture) => gesture.id),
           ]),
         ),
-        demoReplyAvailable: true,
+        gestureCatalogByModel: Object.fromEntries(
+          BUNDLED_MODELS.map((model) => [
+            model.id,
+            getGesturePresets(model.id).map(serializeGesture),
+          ]),
+        ),
+      },
+      codex: {
+        sessionRoot: CODEX_SESSION_ROOT,
+        command: CODEX_COMMAND,
+        model: CODEX_MODEL,
+        reasoningEffort: CODEX_REASONING_EFFORT,
+        sessionRoute: '/api/call/sessions',
+        stateRoute: '/api/codex/state',
+        turnFields: ['spokenText', 'subtitle', 'mood', 'animationSequence'],
+      },
+      workspaceSetup: {
+        route: '/api/workspace-setup',
+      },
+      launch: {
+        resolveRouteTemplate: '/api/launch/:launchId',
+      },
+      productionVoice: {
+        baseUrl: PRODUCTION_VOICE_BASE_URL,
+        required: true,
+        inputAccept: '.wav,audio/wav',
+        setupRoute: '/api/production-voice/profile',
+        stateRoute: '/api/production-voice/state',
+        synthesizeRoute: '/api/production-voice/synthesize',
+        backendEnvVars: [
+          'ONE_TO_ONE_AGENT_ROOM_PRODUCTION_VOICE_BASE_URL',
+          'VOICE_CAST_PRODUCTION_BASE_URL',
+        ],
       },
     });
     return;
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/probe-livekit') {
+  if (req.method === 'GET' && url.pathname === '/api/codex/state') {
+    sendJson(res, 200, await buildCodexState());
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/workspace-setup') {
+    sendJson(res, 200, await buildWorkspaceSetupState({
+      scopeKey: resolveVoiceScopeKey(url),
+    }));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/workspace-setup') {
     try {
-      const livekitUrl = url.searchParams.get('url') || '';
-      const result = await probeLivekitUrl(livekitUrl);
+      const body = await readJsonBody(req);
+      const scopeKey = resolveVoiceScopeKey(url);
+      const setup = await workspaceSetupStore.saveSetup({
+        scopeKey,
+        activeModelId: body.activeModelId,
+        activeModelLabel: body.activeModelLabel,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        setup,
+      });
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to save workspace setup.',
+      });
+    }
+    return;
+  }
+
+  const launchMatch = url.pathname.match(/^\/api\/launch\/([^/]+)$/);
+  if (req.method === 'GET' && launchMatch) {
+    const payload = await buildLaunchState({
+      launchId: decodeURIComponent(launchMatch[1]),
+    });
+    if (!payload) {
+      sendJson(res, 404, {
+        ok: false,
+        error: 'Unknown launch.',
+      });
+      return;
+    }
+
+    sendJson(res, 200, payload);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/production-voice/state') {
+    sendJson(res, 200, await buildProductionVoiceStateForScope({
+      scopeKey: resolveVoiceScopeKey(url),
+    }));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/production-voice/profile') {
+    try {
+      const scopeKey = resolveVoiceScopeKey(url);
+      const statePayload = await buildProductionVoiceStateForScope({ scopeKey });
+      const formData = await readFormDataBody(req, url.toString());
+      const referenceWav = formData.get('referenceWav');
+
+      if (!(referenceWav instanceof File)) {
+        throw new Error('A WAV voice sample is required.');
+      }
+
+      if (!isWavFile(referenceWav)) {
+        throw new Error('The production voice sample must be a WAV file.');
+      }
+
+      const speakerId =
+        `${formData.get('meloBaseSpeakerId') || ''}`.trim() ||
+        statePayload.backend.defaultSpeakerId;
+      if (!speakerId) {
+        throw new Error('No production voice base speaker is available.');
+      }
+
+      await productionVoiceProfileStore.saveProfile({
+        scopeKey,
+        referenceOriginalFileName: referenceWav.name,
+        referenceMimeType: referenceWav.type || 'audio/wav',
+        referenceBuffer: Buffer.from(await referenceWav.arrayBuffer()),
+        meloBaseSpeakerId: speakerId,
+        meloBaseSpeakerLabel:
+          `${formData.get('meloBaseSpeakerLabel') || ''}`.trim() || speakerId,
+      });
+
+      sendJson(res, 200, await buildProductionVoiceStateForScope({ scopeKey }));
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to save production voice sample.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/production-voice/synthesize') {
+    try {
+      const scopeKey = resolveVoiceScopeKey(url);
+      const body = await readJsonBody(req);
+      const text = `${body.text || ''}`.trim();
+      if (!text) {
+        throw new Error('Speech text is required.');
+      }
+
+      const profile = await productionVoiceProfileStore.loadProfile({ scopeKey });
+      if (!profile) {
+        throw new Error('Upload a production voice sample before starting the call.');
+      }
+
+      const result = await productionVoiceClient.synthesize({
+        text,
+        setup: {
+          meloBaseSpeakerId: profile.meloBaseSpeakerId,
+          referenceWavPath: profile.referenceStoredPath,
+        },
+      });
+
       sendJson(res, 200, {
         ok: true,
         ...result,
+        profile: await productionVoiceProfileStore.getProfileSummary({ scopeKey }),
       });
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
-        error: error instanceof Error ? error.message : 'Unable to probe LiveKit URL.',
+        error: error instanceof Error ? error.message : 'Unable to synthesize production voice audio.',
       });
     }
     return;
   }
 
-  if (req.method === 'POST' && url.pathname === '/api/token') {
+  if (req.method === 'POST' && url.pathname === '/api/call/sessions') {
     try {
       const body = await readJsonBody(req);
-      const tokenRequest = validateRoomLayerTokenRequest(body, ROOM_LAYER_DEFAULTS);
-      const result = createRoomLayerToken(tokenRequest);
-
-      sendJson(res, 200, {
-        ok: true,
-        token: result.token,
-        claims: result.claims,
-        transport: {
-          livekitUrl:
-            `${body.livekitUrl || ROOM_LAYER_DEFAULTS.livekitUrl}`.trim() ||
-            ROOM_LAYER_DEFAULTS.livekitUrl,
-          roomName: tokenRequest.roomName,
-        },
-      });
+      const payload = await sessionRuntime.createSession(body);
+      sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
-        error: error instanceof Error ? error.message : 'Unable to mint token.',
+        error: error instanceof Error ? error.message : 'Unable to create a call session.',
       });
     }
     return;
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/bridge/status') {
-    sendJson(res, 200, {
-      ok: true,
-      ...(await bridgeStore.getBridgeStatus()),
-    });
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/bridge/sessions') {
-    sendJson(res, 200, {
-      ok: true,
-      sessions: await bridgeStore.listSessions(),
-    });
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/bridge/sessions') {
-    try {
-      const body = await readJsonBody(req);
-      const session = await bridgeStore.createSession(body);
-      await sendBridgeSessionPayload(res, session);
-    } catch (error) {
-      sendJson(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Unable to create session.',
-      });
-    }
-    return;
-  }
-
-  const sessionMatch = url.pathname.match(/^\/api\/bridge\/sessions\/([^/]+)$/);
+  const sessionMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)$/);
   if (req.method === 'GET' && sessionMatch) {
     try {
-      const session = await bridgeStore.getSession(decodeURIComponent(sessionMatch[1]), {
-        touch: true,
-      });
-      await sendBridgeSessionPayload(res, session);
+      const payload = await sessionRuntime.getSession(decodeURIComponent(sessionMatch[1]));
+      sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 404, {
         ok: false,
@@ -456,247 +685,115 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const avatarCatalogMatch = url.pathname.match(/^\/api\/bridge\/sessions\/([^/]+)\/avatar-catalog$/);
-  if (req.method === 'POST' && avatarCatalogMatch) {
+  const setupMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)\/setup$/);
+  if (req.method === 'POST' && setupMatch) {
     try {
       const body = await readJsonBody(req);
-      const session = await bridgeStore.syncAvatarCatalog({
-        sessionId: decodeURIComponent(avatarCatalogMatch[1]),
-        activeModelId: body.activeModelId,
-        catalogUri: body.avatarCatalogUri,
-        catalogVersion: body.avatarCatalogVersion,
+      const payload = await sessionRuntime.syncSetup({
+        sessionId: decodeURIComponent(setupMatch[1]),
+        metadata: body.metadata,
       });
-      await sendBridgeSessionPayload(res, session);
+      sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
-        error: error instanceof Error ? error.message : 'Unable to sync avatar catalog.',
+        error: error instanceof Error ? error.message : 'Unable to sync call setup.',
       });
     }
     return;
   }
 
-  const sessionStateMatch = url.pathname.match(/^\/api\/bridge\/sessions\/([^/]+)\/state$/);
-  if (req.method === 'POST' && sessionStateMatch) {
+  const stateMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)\/state$/);
+  if (req.method === 'POST' && stateMatch) {
     try {
       const body = await readJsonBody(req);
-      const session = await bridgeStore.setCallState({
-        sessionId: decodeURIComponent(sessionStateMatch[1]),
+      const payload = await sessionRuntime.setCallState({
+        sessionId: decodeURIComponent(stateMatch[1]),
         state: body.state,
         reason: body.reason,
       });
-      await sendBridgeSessionPayload(res, session);
+      sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
-        error: error instanceof Error ? error.message : 'Unable to update call state.',
+        error: error instanceof Error ? error.message : 'Unable to update the call state.',
       });
     }
     return;
   }
 
-  const utteranceStartMatch = url.pathname.match(
-    /^\/api\/bridge\/sessions\/([^/]+)\/utterances\/start$/,
-  );
-  if (req.method === 'POST' && utteranceStartMatch) {
+  const endMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)\/end$/);
+  if (req.method === 'POST' && endMatch) {
     try {
       const body = await readJsonBody(req);
-      const session = await bridgeStore.appendUserUtteranceStart({
-        sessionId: decodeURIComponent(utteranceStartMatch[1]),
-        utteranceId: body.utteranceId,
+      const payload = await sessionRuntime.endSession({
+        sessionId: decodeURIComponent(endMatch[1]),
+        reason: body.reason,
+        skipAgentFinalize: body.skipAgentFinalize === true,
       });
-      await sendBridgeSessionPayload(res, session);
+      sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
-        error: error instanceof Error ? error.message : 'Unable to start utterance.',
+        error: error instanceof Error ? error.message : 'Unable to finalize the call.',
       });
     }
     return;
   }
 
-  const utterancePartialMatch = url.pathname.match(
-    /^\/api\/bridge\/sessions\/([^/]+)\/utterances\/partial$/,
-  );
-  if (req.method === 'POST' && utterancePartialMatch) {
+  const interruptMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)\/interrupt$/);
+  if (req.method === 'POST' && interruptMatch) {
     try {
       const body = await readJsonBody(req);
-      const session = await bridgeStore.appendUserUtterancePartial({
-        sessionId: decodeURIComponent(utterancePartialMatch[1]),
-        utteranceId: body.utteranceId,
-        delta: body.delta,
+      const payload = await sessionRuntime.interrupt({
+        sessionId: decodeURIComponent(interruptMatch[1]),
+        reason: body.reason,
       });
-      await sendBridgeSessionPayload(res, session);
+      sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
-        error: error instanceof Error ? error.message : 'Unable to append utterance partial.',
+        error: error instanceof Error ? error.message : 'Unable to interrupt the active reply.',
       });
     }
     return;
   }
 
-  const utteranceFinalMatch = url.pathname.match(
-    /^\/api\/bridge\/sessions\/([^/]+)\/utterances\/final$/,
-  );
-  if (req.method === 'POST' && utteranceFinalMatch) {
+  const turnMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)\/turns$/);
+  if (req.method === 'POST' && turnMatch) {
     try {
       const body = await readJsonBody(req);
-      const session = await bridgeStore.appendUserUtteranceFinal({
-        sessionId: decodeURIComponent(utteranceFinalMatch[1]),
-        utteranceId: body.utteranceId,
+      const payload = await sessionRuntime.submitHumanTurn({
+        sessionId: decodeURIComponent(turnMatch[1]),
         text: body.text,
         source: body.source,
         humanIdentity: body.humanIdentity,
         humanName: body.humanName,
       });
-      await sendBridgeSessionPayload(res, session);
+      sendJson(res, 200, payload);
     } catch (error) {
-      sendJson(res, 400, {
+      sendJson(res, 500, {
         ok: false,
-        error: error instanceof Error ? error.message : 'Unable to finalize utterance.',
+        error: error instanceof Error ? error.message : 'Unable to process the human turn.',
       });
     }
     return;
   }
 
-  const humanTurnMatch = url.pathname.match(/^\/api\/bridge\/sessions\/([^/]+)\/human-turn$/);
-  if (req.method === 'POST' && humanTurnMatch) {
-    try {
-      const body = await readJsonBody(req);
-      const session = await bridgeStore.enqueueHumanTurn({
-        sessionId: decodeURIComponent(humanTurnMatch[1]),
-        ...body,
-      });
-      await sendBridgeSessionPayload(res, session);
-    } catch (error) {
-      sendJson(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Unable to enqueue turn.',
-      });
-    }
-    return;
-  }
-
-  const playedReplyMatch = url.pathname.match(
-    /^\/api\/bridge\/sessions\/([^/]+)\/replies\/([^/]+)\/played$/,
+  const replyPlayedMatch = url.pathname.match(
+    /^\/api\/call\/sessions\/([^/]+)\/turns\/([^/]+)\/played$/,
   );
-  if (req.method === 'POST' && playedReplyMatch) {
+  if (req.method === 'POST' && replyPlayedMatch) {
     try {
-      const session = await bridgeStore.markReplyPlayed({
-        sessionId: decodeURIComponent(playedReplyMatch[1]),
-        replyId: decodeURIComponent(playedReplyMatch[2]),
+      const payload = await sessionRuntime.markReplyPlayed({
+        sessionId: decodeURIComponent(replyPlayedMatch[1]),
+        turnId: decodeURIComponent(replyPlayedMatch[2]),
       });
-      await sendBridgeSessionPayload(res, session);
+      sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
-        error: error instanceof Error ? error.message : 'Unable to mark reply played.',
-      });
-    }
-    return;
-  }
-
-  const actionStartedMatch = url.pathname.match(
-    /^\/api\/bridge\/sessions\/([^/]+)\/actions\/([^/]+)\/started$/,
-  );
-  if (req.method === 'POST' && actionStartedMatch) {
-    try {
-      const session = await bridgeStore.markActionPlaybackStarted({
-        sessionId: decodeURIComponent(actionStartedMatch[1]),
-        actionId: decodeURIComponent(actionStartedMatch[2]),
-      });
-      await sendBridgeSessionPayload(res, session);
-    } catch (error) {
-      sendJson(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Unable to mark action started.',
-      });
-    }
-    return;
-  }
-
-  const actionFinishedMatch = url.pathname.match(
-    /^\/api\/bridge\/sessions\/([^/]+)\/actions\/([^/]+)\/finished$/,
-  );
-  if (req.method === 'POST' && actionFinishedMatch) {
-    try {
-      const session = await bridgeStore.markActionPlaybackFinished({
-        sessionId: decodeURIComponent(actionFinishedMatch[1]),
-        actionId: decodeURIComponent(actionFinishedMatch[2]),
-      });
-      await sendBridgeSessionPayload(res, session);
-    } catch (error) {
-      sendJson(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Unable to mark action finished.',
-      });
-    }
-    return;
-  }
-
-  const actionCompletedMatch = url.pathname.match(
-    /^\/api\/bridge\/sessions\/([^/]+)\/actions\/([^/]+)\/completed$/,
-  );
-  if (req.method === 'POST' && actionCompletedMatch) {
-    try {
-      const session = await bridgeStore.markActionCompleted({
-        sessionId: decodeURIComponent(actionCompletedMatch[1]),
-        actionId: decodeURIComponent(actionCompletedMatch[2]),
-      });
-      await sendBridgeSessionPayload(res, session);
-    } catch (error) {
-      sendJson(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Unable to mark action completed.',
-      });
-    }
-    return;
-  }
-
-  const demoReplyMatch = url.pathname.match(/^\/api\/bridge\/sessions\/([^/]+)\/demo-reply$/);
-  if (req.method === 'POST' && demoReplyMatch) {
-    try {
-      const sessionId = decodeURIComponent(demoReplyMatch[1]);
-      const claim = await bridgeStore.claimNextTurn({
-        sessionId,
-        agentId: 'local-demo-agent',
-        agentLabel: 'Local Demo Agent',
-      });
-
-      if (!claim.turn) {
-        if (claim.session) {
-          await sendBridgeSessionPayload(res, claim.session);
-        } else {
-          sendJson(res, 200, {
-            ok: true,
-            session: null,
-            message: 'No pending turns.',
-          });
-        }
-        return;
-      }
-
-      const session = await bridgeStore.submitAgentReply({
-        sessionId,
-        turnId: claim.turn.id,
-        agentId: 'local-demo-agent',
-        agentLabel: 'Local Demo Agent',
-        reply: createDemoReplyText(claim.turn.transcript),
-        emoteId: claim.turn.transcript.trim().endsWith('?') ? 'focused' : 'warm',
-        gestureId:
-          claim.turn.transcript.toLowerCase().includes('hello') ||
-          claim.turn.transcript.toLowerCase().includes('hi')
-            ? 'greet'
-            : 'explain',
-        notes: 'Injected by the local fallback route for spike verification.',
-      });
-
-      await sendBridgeSessionPayload(res, session);
-    } catch (error) {
-      sendJson(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Unable to create demo reply.',
+        error: error instanceof Error ? error.message : 'Unable to mark the reply as played.',
       });
     }
     return;

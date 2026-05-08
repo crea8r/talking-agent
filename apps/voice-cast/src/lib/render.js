@@ -1,10 +1,56 @@
 import { audioResultToDataUrl, formatTiming } from './format.js';
 
+function buildBackendHealthDisplay({
+  configured,
+  running,
+  detail,
+  runningLabel,
+  downLabel,
+  notConfiguredLabel,
+}) {
+  if (configured === false) {
+    return {
+      label: notConfiguredLabel,
+      state: 'not-configured',
+      title: detail || notConfiguredLabel,
+    };
+  }
+
+  if (running === true) {
+    return {
+      label: runningLabel,
+      state: 'running',
+      title: runningLabel,
+    };
+  }
+
+  if (running === false) {
+    return {
+      label: downLabel,
+      state: 'down',
+      title: detail || downLabel,
+    };
+  }
+
+  return {
+    label: 'Checking server…',
+    state: 'checking',
+    title: detail || 'Checking server…',
+  };
+}
+
 function buildCastingSpeakerUi(state) {
   if (state.runtimeConfig?.backends?.textOnlyConfigured === false) {
     return {
       disabled: true,
       options: ['Text-only backend not configured'],
+    };
+  }
+
+  if (state.casting.backendHealth.running === false) {
+    return {
+      disabled: true,
+      options: ['Text-only server is down'],
     };
   }
 
@@ -33,6 +79,13 @@ function buildProductionSpeakerUi(state) {
     return {
       disabled: true,
       options: ['Production backend not configured'],
+    };
+  }
+
+  if (state.production.backendHealth.running === false) {
+    return {
+      disabled: true,
+      options: ['Production pipeline is down'],
     };
   }
 
@@ -69,6 +122,10 @@ function buildCastingStatusText(state) {
     return 'Text-only backend not configured.';
   }
 
+  if (state.casting.backendHealth.running === false) {
+    return 'Text-only server is down.';
+  }
+
   if (state.casting.speakersLoading) {
     return 'Loading speakers…';
   }
@@ -83,6 +140,12 @@ function buildCastingStatusText(state) {
 function buildProductionStatusText(state) {
   if (state.production.submittingTurn) {
     return 'Generating production reply…';
+  }
+
+  if (state.production.replyPlaying) {
+    return state.production.listenerEnabled
+      ? 'Playing reply. Listening resumes after playback.'
+      : 'Playing reply.';
   }
 
   if (state.production.listening) {
@@ -101,6 +164,10 @@ function buildProductionStatusText(state) {
     return 'Production backend not configured.';
   }
 
+  if (state.production.backendHealth.running === false) {
+    return 'Production pipeline is down.';
+  }
+
   if (!state.production.sttSupported) {
     return 'Browser speech recognition is not available.';
   }
@@ -109,7 +176,11 @@ function buildProductionStatusText(state) {
     return 'Save a reference WAV and base speaker to begin.';
   }
 
-  return 'Ready';
+  if (state.production.listenerEnabled) {
+    return 'Listening is on. Waiting for speech…';
+  }
+
+  return 'Listening is off.';
 }
 
 function buildProductionSetupSummary(profile) {
@@ -160,10 +231,27 @@ export function buildViewModel(state) {
   const castingSpeakerUi = buildCastingSpeakerUi(state);
   const productionSpeakerUi = buildProductionSpeakerUi(state);
   const latestTurn = state.production.latestTurn;
+  const castingBackendHealth = buildBackendHealthDisplay({
+    configured: state.runtimeConfig?.backends?.textOnlyConfigured,
+    running: state.casting.backendHealth.running,
+    detail: state.casting.backendHealth.detail,
+    runningLabel: 'Text-only server running',
+    downLabel: 'Text-only server down',
+    notConfiguredLabel: 'Text-only server not configured',
+  });
+  const productionBackendHealth = buildBackendHealthDisplay({
+    configured: state.runtimeConfig?.backends?.productionConfigured,
+    running: state.production.backendHealth.running,
+    detail: state.production.backendHealth.detail,
+    runningLabel: 'Production pipeline running',
+    downLabel: 'Production pipeline down',
+    notConfiguredLabel: 'Production pipeline not configured',
+  });
 
   return {
     activeTab: state.activeTab,
     casting: {
+      backendHealth: castingBackendHealth,
       generateDisabled: castingSpeakerUi.disabled,
       resultVisible: Boolean(state.casting.result),
       saveVisible: Boolean(state.casting.result),
@@ -179,18 +267,25 @@ export function buildViewModel(state) {
         '',
     },
     production: {
+      backendHealth: productionBackendHealth,
       speakerOptions: productionSpeakerUi.options,
       speakerSelectDisabled: productionSpeakerUi.disabled,
+      listenerToggleLabel: state.production.listenerEnabled
+        ? 'Turn Listening Off'
+        : 'Turn Listening On',
+      listenerTogglePressed: state.production.listenerEnabled,
+      listenerToggleDisabled: state.production.listenerEnabled
+        ? false
+        : (
+          state.runtimeConfig?.backends?.productionConfigured === false ||
+          state.production.backendHealth.running === false ||
+          !state.production.sttSupported ||
+          !state.production.profile
+        ),
       canSaveProfile:
         !productionSpeakerUi.disabled &&
         Boolean(state.production.selectedSpeakerId) &&
         Boolean(state.production.selectedReferenceFile || state.production.profile),
-      canStartListening:
-        state.runtimeConfig?.backends?.productionConfigured !== false &&
-        state.production.sttSupported &&
-        Boolean(state.production.profile) &&
-        !state.production.listening &&
-        !state.production.submittingTurn,
       latestTurnVisible: Boolean(latestTurn || state.production.transcript),
       replayLatestVisible: Boolean(latestTurn?.replyAudioUrl),
       setupSummary: buildProductionSetupSummary(state.production.profile),
@@ -211,6 +306,16 @@ function setValue(element, value) {
     return;
   }
   element.value = `${value}`;
+}
+
+function renderBackendHealth(element, backendHealth) {
+  if (!element || !backendHealth) {
+    return;
+  }
+
+  element.textContent = backendHealth.label;
+  element.dataset.state = backendHealth.state;
+  element.title = backendHealth.title || '';
 }
 
 function replaceSelectOptions(selectElement, options, selectedValue, disabled) {
@@ -256,6 +361,7 @@ export function renderApp({ dom, state }) {
   );
 
   dom.generateCasting.disabled = viewModel.casting.generateDisabled;
+  renderBackendHealth(dom.castingBackendHealth, viewModel.casting.backendHealth);
   dom.castingStatus.textContent = viewModel.casting.statusText;
   dom.castingError.textContent = state.casting.error || '';
   dom.castingResult.hidden = !viewModel.casting.resultVisible;
@@ -283,8 +389,11 @@ export function renderApp({ dom, state }) {
     state.production.profile?.referenceOriginalFileName ||
     'No file selected';
   dom.saveProductionProfile.disabled = !viewModel.production.canSaveProfile;
-  dom.startListening.disabled = !viewModel.production.canStartListening;
+  dom.startListening.disabled = viewModel.production.listenerToggleDisabled;
+  dom.startListening.textContent = viewModel.production.listenerToggleLabel;
+  dom.startListening.setAttribute('aria-pressed', String(viewModel.production.listenerTogglePressed));
   dom.replayLatestReply.hidden = !viewModel.production.replayLatestVisible;
+  renderBackendHealth(dom.productionBackendHealth, viewModel.production.backendHealth);
   dom.productionStatus.textContent = viewModel.production.statusText;
   dom.productionError.textContent = state.production.error || '';
   dom.productionTranscript.textContent = viewModel.production.transcriptText || '—';
@@ -294,9 +403,13 @@ export function renderApp({ dom, state }) {
 
   if (state.production.latestTurn?.replyAudioUrl) {
     dom.productionLatestAudio.hidden = false;
-    dom.productionLatestAudio.src = state.production.latestTurn.replyAudioUrl;
+    if (dom.productionLatestAudio.dataset.replyAudioUrl !== state.production.latestTurn.replyAudioUrl) {
+      dom.productionLatestAudio.src = state.production.latestTurn.replyAudioUrl;
+      dom.productionLatestAudio.dataset.replyAudioUrl = state.production.latestTurn.replyAudioUrl;
+    }
   } else {
     dom.productionLatestAudio.hidden = true;
+    delete dom.productionLatestAudio.dataset.replyAudioUrl;
     dom.productionLatestAudio.removeAttribute('src');
   }
 }

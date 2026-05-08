@@ -18,6 +18,9 @@ export function createVoiceLayer(initialConfig = {}) {
     analyser: null,
     analyserData: null,
     rafId: null,
+    recognitionRestartTimerId: null,
+    manualRecognitionStop: false,
+    recognitionRestartHandledByTurn: false,
     activeTurn: null,
     lastTurn: null,
     lastTranscript: '',
@@ -149,6 +152,15 @@ export function createVoiceLayer(initialConfig = {}) {
       message,
       details: details ?? null,
     });
+  }
+
+  function clearRecognitionRestartTimer() {
+    if (!state.recognitionRestartTimerId) {
+      return;
+    }
+
+    clearTimeout(state.recognitionRestartTimerId);
+    state.recognitionRestartTimerId = null;
   }
 
   function setLastError(error) {
@@ -455,10 +467,14 @@ export function createVoiceLayer(initialConfig = {}) {
     return turn;
   }
 
-  function stopListening({ updateStatus = true } = {}) {
+  function stopListening({ updateStatus = true, suppressAutoRestart = false } = {}) {
     if (!state.recognition) {
       return;
     }
+
+    clearRecognitionRestartTimer();
+    state.manualRecognitionStop = !suppressAutoRestart;
+    state.recognitionRestartHandledByTurn = suppressAutoRestart;
 
     try {
       state.recognition.stop();
@@ -514,7 +530,7 @@ export function createVoiceLayer(initialConfig = {}) {
         const startedAt = state.activeTurn?.startedAt || now();
         state.activeTurn = null;
         emitLog('info', 'Final transcript received.', { transcript: finalTranscript });
-        stopListening({ updateStatus: false });
+        stopListening({ updateStatus: false, suppressAutoRestart: true });
         processTurn(finalTranscript, 'voice', startedAt).catch((error) => {
           setLastError(error);
           emitLog('error', 'Voice turn processing failed.', state.lastError);
@@ -536,6 +552,37 @@ export function createVoiceLayer(initialConfig = {}) {
       state.listening = false;
       emitLog('info', 'Speech recognition ended.');
       emitStateChange();
+
+      const manualStop = state.manualRecognitionStop;
+      const handledByTurn = state.recognitionRestartHandledByTurn;
+      state.manualRecognitionStop = false;
+      state.recognitionRestartHandledByTurn = false;
+
+      const fatalRecognitionErrors = new Set([
+        'not-allowed',
+        'service-not-allowed',
+        'audio-capture',
+      ]);
+      const lastErrorMessage = `${state.lastError?.message || ''}`.trim();
+      const shouldAutoRestart =
+        state.config.autoRestart &&
+        !manualStop &&
+        !handledByTurn &&
+        !state.speaking &&
+        !fatalRecognitionErrors.has(lastErrorMessage);
+
+      if (!shouldAutoRestart) {
+        return;
+      }
+
+      clearRecognitionRestartTimer();
+      state.recognitionRestartTimerId = window.setTimeout(() => {
+        state.recognitionRestartTimerId = null;
+        startListening({ restart: true }).catch((error) => {
+          setLastError(error);
+          emitLog('error', 'Recognition auto-restart failed.', state.lastError);
+        });
+      }, 150);
     };
 
     return recognition;
@@ -547,6 +594,9 @@ export function createVoiceLayer(initialConfig = {}) {
     }
 
     state.lastError = null;
+    clearRecognitionRestartTimer();
+    state.manualRecognitionStop = false;
+    state.recognitionRestartHandledByTurn = false;
 
     if (state.speaking) {
       cancelSpeech();
@@ -600,6 +650,7 @@ export function createVoiceLayer(initialConfig = {}) {
 
   function destroy() {
     cancelSpeech();
+    clearRecognitionRestartTimer();
     stopListening({ updateStatus: false });
 
     if (state.rafId) {
