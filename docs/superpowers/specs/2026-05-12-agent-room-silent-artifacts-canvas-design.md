@@ -214,6 +214,63 @@ Rules:
 
 This keeps prompts small and avoids polluting future reasoning with unreadable or overly long payloads the agent already produced.
 
+## Capability Advertisement
+
+The agent must learn this feature through the same contract surfaces it already uses for call behavior. Silent artifacts and canvas history should not rely on an out-of-band product description.
+
+### Direct reply contract
+
+Update the direct call reply contract so the prompt explicitly advertises `artifacts[]` as a first-class output channel.
+
+The contract text should teach:
+
+- `spokenText` is the speech output.
+- `subtitle` is the user-facing subtitle for spoken output.
+- `artifacts[]` is optional.
+- `historyText` artifacts are visible in call history and must not be spoken.
+- `canvasEvent` artifacts update the presentation layer and are persisted in history.
+- `canvasEvent.entryMode` controls whether an update creates a new history entry or stays grouped under the current one.
+
+This is the most important layer because it directly affects what the model believes it is allowed to return.
+
+### Session metadata contract
+
+Advertise the capability in the call session metadata alongside the existing Codex contract.
+
+Suggested additions:
+
+- include `artifacts` in the list of accepted turn reply fields
+- add `silentArtifacts: true`
+- add `canvasPresentation: true`
+- add `canvasContentKinds: ['image', 'diagram']`
+- add a short policy note that artifact bodies are history-visible and not spoken by default
+
+This allows the runtime and future tooling to reason about the feature without parsing the full natural-language prompt.
+
+### Server validation and persistence
+
+The runtime must validate and persist artifact outputs as a real supported capability.
+
+Rules:
+
+- malformed artifacts are rejected or downgraded to unavailable-state history shells
+- valid artifacts are stored in session state
+- artifact ordering is preserved relative to the reply that emitted them
+
+If the server silently drops artifacts, the agent will quickly learn not to rely on them.
+
+### MCP and bridge parity
+
+For the direct-call path, prompt-contract support is sufficient for phase 1.
+
+For the bridge path, add the same capability later to:
+
+- bridge bootstrap instructions
+- tool descriptions
+- tool input schema or a dedicated presentation action channel
+
+This keeps phase 1 scoped while making the parity work explicit.
+
 ## UI Design
 
 ### History panel
@@ -267,6 +324,8 @@ Viewer responsibilities:
 Phase 1 needs additive changes in these areas:
 
 - Reply schema parsing and validation
+- Direct reply contract advertisement
+- Session metadata capability advertisement
 - Session runtime persistence for artifacts
 - History rendering in the browser
 - Popup presentation viewer
@@ -345,4 +404,3 @@ Add tests for:
 - Canvas updates use a mixed strategy:
   - major updates create a new history item
   - minor updates stay grouped under the current item
-
