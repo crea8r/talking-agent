@@ -51,15 +51,21 @@ function createManualTimers() {
   };
 }
 
-function createHarness({ random = () => 0 } = {}) {
+function createHarness({
+  random = () => 0,
+  playbackEndBeforeSpeechStops = false,
+} = {}) {
   const speechDeferred = createDeferred();
   const manualTimers = createManualTimers();
   const postCalls = [];
   const spokenTexts = [];
   const selectedGestures = [];
   const selectedEmotes = [];
+  const roomStatuses = [];
   let speechActive = false;
   let listening = false;
+  let activeSpeechOptions = null;
+  let stopCount = 0;
   const state = {
     runtimeConfig: null,
     session: {
@@ -195,17 +201,34 @@ function createHarness({ random = () => 0 } = {}) {
       async speakText(text, options = {}) {
         spokenTexts.push(text);
         speechActive = true;
+        activeSpeechOptions = options;
         options.onPlaybackStart?.();
         try {
           await speechDeferred.promise;
-          speechActive = false;
-          options.onPlaybackEnd?.();
+          if (playbackEndBeforeSpeechStops) {
+            options.onPlaybackEnd?.();
+            speechActive = false;
+            activeSpeechOptions = null;
+          } else {
+            speechActive = false;
+            activeSpeechOptions = null;
+            options.onPlaybackEnd?.();
+          }
         } finally {
           speechActive = false;
+          activeSpeechOptions = null;
         }
       },
       stop() {
+        stopCount += 1;
+        if (!speechActive) {
+          return;
+        }
         speechActive = false;
+        const currentOptions = activeSpeechOptions;
+        activeSpeechOptions = null;
+        currentOptions?.onPlaybackEnd?.();
+        speechDeferred.resolve();
       },
     },
     avatarLayer: {
@@ -261,7 +284,9 @@ function createHarness({ random = () => 0 } = {}) {
     refreshActionButtons() {},
     syncVoiceSampleProfile() {},
     persistState() {},
-    updateRoomStatus() {},
+    updateRoomStatus(stateValue, title, detail) {
+      roomStatuses.push({ stateValue, title, detail });
+    },
     timers: manualTimers,
     random,
   });
@@ -275,8 +300,12 @@ function createHarness({ random = () => 0 } = {}) {
     spokenTexts,
     selectedGestures,
     selectedEmotes,
+    roomStatuses,
     getListening() {
       return listening;
+    },
+    stopCount() {
+      return stopCount;
     },
   };
 }
@@ -293,8 +322,15 @@ test('starting a call schedules and plays a local hello without a Codex turn', a
   assert.equal(harness.state.activeCall, true);
   assert.equal(harness.state.startupGreetingActive, true);
   assert.equal(harness.getListening(), false);
-  assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(1000), true);
+  assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(0), true);
+  assert.equal(harness.controller.shouldAcceptVoiceInput(), false);
+  assert.equal(harness.controller.shouldAcceptVoiceInput({ allowDuringStartupGreeting: true }), false);
   assert.deepEqual(harness.spokenTexts, []);
+  assert.deepEqual(harness.roomStatuses.at(-1), {
+    stateValue: 'loading',
+    title: 'Connecting call',
+    detail: 'Waiting for the agent greeting to start.',
+  });
 
   harness.manualTimers.flushNextTimeout();
   await Promise.resolve();
@@ -306,25 +342,62 @@ test('starting a call schedules and plays a local hello without a Codex turn', a
   assert.equal(harness.selectedGestures.length > 0, true);
   assert.equal(harness.state.startupGreetingActive, true);
   assert.equal(harness.getListening(), false);
+  assert.deepEqual(harness.roomStatuses.at(-1), {
+    stateValue: 'ready',
+    title: 'Call live',
+    detail: 'Agent is greeting you.',
+  });
 
   harness.speechDeferred.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
 
   assert.equal(harness.state.startupGreetingActive, false);
   assert.equal(harness.getListening(), true);
+  assert.deepEqual(harness.roomStatuses.at(-1), {
+    stateValue: 'ready',
+    title: 'Call live',
+    detail: 'Listening for your voice.',
+  });
 });
 
-test('starting a call cancels the scheduled hello when the human begins speaking first', async () => {
-  const harness = createHarness({ random: () => 0.6 });
+test('startup hello keeps the microphone closed until playback completes', async () => {
+  const harness = createHarness({ random: () => 0.4 });
 
   await harness.controller.handlePrimaryCallAction();
-  await harness.controller.syncInterimTranscript('Hey there');
-
-  assert.equal(harness.state.transcriptPreview, 'Hey there');
+  assert.equal(harness.getListening(), false);
 
   harness.manualTimers.flushNextTimeout();
   await Promise.resolve();
 
-  assert.deepEqual(harness.spokenTexts, []);
+  assert.equal(harness.spokenTexts.length, 1);
+  assert.equal(harness.state.startupGreetingActive, true);
+  assert.equal(harness.getListening(), false);
+  assert.equal(harness.stopCount(), 0);
+});
+
+test('startup hello still resumes listening when playback end fires before avatar speech clears active', async () => {
+  const harness = createHarness({
+    random: () => 0.2,
+    playbackEndBeforeSpeechStops: true,
+  });
+
+  await harness.controller.handlePrimaryCallAction();
+  harness.manualTimers.flushNextTimeout();
+  await Promise.resolve();
+
+  assert.equal(harness.state.startupGreetingActive, true);
+  assert.equal(harness.getListening(), false);
+
+  harness.speechDeferred.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(harness.state.startupGreetingActive, false);
+  assert.equal(harness.getListening(), true);
+  assert.equal(harness.state.subtitles.human.text, 'Listening…');
 });

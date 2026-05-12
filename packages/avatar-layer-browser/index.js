@@ -429,6 +429,30 @@ export function resolveGesturePreset(
 
 export const MOUTH_CUES = ['rest', 'aa', 'ih', 'ou', 'ee', 'oh'];
 
+export const DEFAULT_AVATAR_FEATURE_FLAGS = Object.freeze({
+  smoothGestureTransitions: true,
+});
+
+export function normalizeAvatarFeatureFlags(featureFlags = {}) {
+  return {
+    smoothGestureTransitions: featureFlags?.smoothGestureTransitions !== false,
+  };
+}
+
+export function resolveGestureTransitionConfig({
+  nextFadeIn = 0.24,
+  featureFlags = DEFAULT_AVATAR_FEATURE_FLAGS,
+} = {}) {
+  const normalizedFlags = normalizeAvatarFeatureFlags(featureFlags);
+  const smoothGestureTransitions = normalizedFlags.smoothGestureTransitions !== false;
+
+  return {
+    fadeIn: smoothGestureTransitions ? Math.max(nextFadeIn, 0.36) : nextFadeIn,
+    useCrossFade: smoothGestureTransitions,
+    warp: smoothGestureTransitions,
+  };
+}
+
 const STAGE_MAP = new Map(STAGES.map((stage) => [stage.id, stage]));
 const EMOTE_MAP = new Map(EMOTES.map((emote) => [emote.id, emote]));
 
@@ -457,6 +481,7 @@ export function createAvatarLayer({
   initialEmoteId = EMOTES[0].id,
   initialGestureId = GESTURES[0].id,
   initialEnergy = 1,
+  featureFlags = DEFAULT_AVATAR_FEATURE_FLAGS,
   pointerMode = 'look',
   preserveDrawingBuffer = false,
   onLog = null,
@@ -480,6 +505,8 @@ export function createAvatarLayer({
     lookTargetLabel: 'center',
     isLoadingModel: false,
     poseSampleTimeMs: null,
+    displayMode: 'mesh',
+    featureFlags: normalizeAvatarFeatureFlags(featureFlags),
   };
 
   const runtime = createRendererRuntime({
@@ -639,6 +666,14 @@ export function createAvatarLayer({
     return getSnapshot();
   }
 
+  function setFeatureFlags(nextFeatureFlags = {}) {
+    state.featureFlags = {
+      ...state.featureFlags,
+      ...normalizeAvatarFeatureFlags(nextFeatureFlags),
+    };
+    return getSnapshot();
+  }
+
   function setMouthCue(mouthCue) {
     state.currentMouthCue = MOUTH_CUES.includes(mouthCue) ? mouthCue : 'rest';
     return getSnapshot();
@@ -669,6 +704,67 @@ export function createAvatarLayer({
     runtime.look.pointerTarget.set(0, 0);
   }
 
+  function setDisplayMode(mode = 'mesh') {
+    state.displayMode = ['mesh', 'skeleton', 'bones'].includes(mode) ? mode : 'mesh';
+    runtime.applyDisplayMode(state.displayMode);
+    return getSnapshot();
+  }
+
+  function setOrbitSnapDegrees(degrees = 0) {
+    runtime.setOrbitSnapDegrees(degrees);
+    return getSnapshot();
+  }
+
+  function captureHumanoidSkeleton() {
+    if (!runtime.currentVRM?.humanoid) {
+      return null;
+    }
+
+    const skeleton = {};
+    const includedNodes = new Map();
+
+    Object.values(VRMHumanBoneName).forEach((boneName) => {
+      const node = runtime.currentVRM.humanoid.getRawBoneNode(boneName);
+      if (node) {
+        includedNodes.set(node, boneName);
+      }
+    });
+
+    includedNodes.forEach((boneName, node) => {
+      skeleton[boneName] = {
+        name: node.name || boneName,
+        translation: node.position.toArray(),
+        children: node.children.map((childNode) => includedNodes.get(childNode)).filter(Boolean),
+      };
+    });
+
+    return skeleton;
+  }
+
+  function playPreviewClip(clip, options = {}) {
+    runtime.playPreviewClip(clip, options);
+    return getSnapshot();
+  }
+
+  function pausePreviewClip() {
+    runtime.pausePreviewClip();
+    return getSnapshot();
+  }
+
+  function resumePreviewClip() {
+    runtime.resumePreviewClip();
+    return getSnapshot();
+  }
+
+  function stopPreviewClip() {
+    runtime.stopPreviewClip();
+    return getSnapshot();
+  }
+
+  function getPreviewPlaybackState() {
+    return runtime.getPreviewPlaybackState();
+  }
+
   function getSnapshot() {
     return {
       ready: Boolean(runtime.currentVRM),
@@ -691,9 +787,11 @@ export function createAvatarLayer({
       mouthCue: state.currentMouthCue,
       speaking: state.speaking,
       energy: state.energy,
+      displayMode: state.displayMode,
       lookTargetLabel: state.lookTargetLabel,
       poseSampleTimeMs: state.poseSampleTimeMs,
       gesturePaused: Boolean(runtime.animation.activeAction?.paused),
+      featureFlags: { ...state.featureFlags },
     };
   }
 
@@ -703,18 +801,27 @@ export function createAvatarLayer({
 
   return {
     DEFAULT_MODEL,
+    captureHumanoidSkeleton,
     destroy,
+    getPreviewPlaybackState,
     getSnapshot,
     loadModel,
+    pausePreviewClip,
+    playPreviewClip,
     recenterGaze,
+    resumePreviewClip,
+    setDisplayMode,
     setEmote,
     setEnergy: applyEnergy,
+    setFeatureFlags,
     setGesture,
     setGesturePaused,
     setMouthCue,
+    setOrbitSnapDegrees,
     setPoseSampleTime,
     setSpeaking,
     setStage: applyStage,
+    stopPreviewClip,
   };
 }
 
@@ -771,6 +878,12 @@ function createRendererRuntime({
       actions: new Map(),
       clips: new Map(),
       mixer: null,
+      previewAction: null,
+    },
+    display: {
+      mode: state.displayMode || 'mesh',
+      skeletonHelper: null,
+      skinnedMeshes: [],
     },
     look: {
       pointerActive: false,
@@ -791,6 +904,7 @@ function createRendererRuntime({
       targetPitch: 0,
       currentYaw: 0,
       currentPitch: 0,
+      snapRadians: 0,
     },
     blink: {
       active: false,
@@ -805,6 +919,13 @@ function createRendererRuntime({
     setGesturePaused,
     syncGestureMotion,
     applyStageLighting,
+    applyDisplayMode,
+    getPreviewPlaybackState,
+    pausePreviewClip,
+    playPreviewClip,
+    resumePreviewClip,
+    setOrbitSnapDegrees,
+    stopPreviewClip,
   };
 
   function start() {
@@ -870,7 +991,11 @@ function createRendererRuntime({
 
       const deltaX = event.clientX - runtime.orbit.startX;
       const deltaY = event.clientY - runtime.orbit.startY;
-      runtime.orbit.targetYaw = THREE.MathUtils.clamp(runtime.orbit.baseYaw + deltaX * 0.012, -1.25, 1.25);
+      let nextYaw = runtime.orbit.baseYaw + deltaX * 0.012;
+      if (runtime.orbit.snapRadians > 0) {
+        nextYaw = Math.round(nextYaw / runtime.orbit.snapRadians) * runtime.orbit.snapRadians;
+      }
+      runtime.orbit.targetYaw = THREE.MathUtils.clamp(nextYaw, -Math.PI, Math.PI);
       runtime.orbit.targetPitch = THREE.MathUtils.clamp(runtime.orbit.basePitch + deltaY * 0.008, -0.42, 0.42);
       event.preventDefault();
       return;
@@ -937,17 +1062,35 @@ function createRendererRuntime({
     runtime.blink.active = false;
     runtime.blink.weight = 0;
     runtime.blink.nextAt = performance.now() + 1200;
+    runtime.display.skinnedMeshes = [];
+    vrm.scene.traverse((object) => {
+      if (object.isSkinnedMesh) {
+        runtime.display.skinnedMeshes.push(object);
+      }
+    });
+    runtime.display.skeletonHelper = new THREE.SkeletonHelper(vrm.scene);
+    runtime.display.skeletonHelper.visible = false;
+    modelPivot.add(runtime.display.skeletonHelper);
+    applyDisplayMode(state.displayMode || 'mesh');
     syncGestureMotion();
   }
 
   function clearCurrentVRM() {
     runtime.animation.activeAction?.stop();
+    runtime.animation.previewAction?.stop();
     runtime.animation.activeAction = null;
     runtime.animation.activeClipId = null;
+    runtime.animation.previewAction = null;
     runtime.animation.actions.clear();
     runtime.animation.clips.clear();
     runtime.animation.mixer?.stopAllAction();
     runtime.animation.mixer = null;
+
+    if (runtime.display.skeletonHelper) {
+      modelPivot.remove(runtime.display.skeletonHelper);
+      runtime.display.skeletonHelper = null;
+    }
+    runtime.display.skinnedMeshes = [];
 
     if (runtime.currentVRM) {
       modelPivot.remove(runtime.currentVRM.scene);
@@ -1053,6 +1196,11 @@ function createRendererRuntime({
       return;
     }
     const shouldCutTransition = transition === 'cut' || fadeIn <= 0;
+    const transitionConfig = resolveGestureTransitionConfig({
+      nextFadeIn: fadeIn,
+      featureFlags: state.featureFlags,
+    });
+    const effectiveFadeIn = shouldCutTransition ? 0 : transitionConfig.fadeIn;
 
     const sampleTimeSeconds =
       Number.isFinite(state.poseSampleTimeMs) && state.poseSampleTimeMs >= 0
@@ -1103,12 +1251,16 @@ function createRendererRuntime({
       if (shouldCutTransition) {
         previousAction.stop();
       } else {
-        previousAction.fadeOut(fadeIn);
-        nextAction.fadeIn(fadeIn);
+        if (transitionConfig.useCrossFade) {
+          nextAction.crossFadeFrom(previousAction, effectiveFadeIn, transitionConfig.warp);
+        } else {
+          previousAction.fadeOut(effectiveFadeIn);
+          nextAction.fadeIn(effectiveFadeIn);
+        }
       }
     } else {
       if (!shouldCutTransition) {
-        nextAction.fadeIn(fadeIn);
+        nextAction.fadeIn(effectiveFadeIn);
       }
     }
 
@@ -1292,7 +1444,7 @@ function createRendererRuntime({
       return;
     }
 
-    if (runtime.animation.activeClipId) {
+    if (runtime.animation.activeClipId || runtime.animation.previewAction) {
       modelPivot.position.y = 0;
       return;
     }
@@ -1509,6 +1661,121 @@ function createRendererRuntime({
     }
 
     manager.setValue(VRMExpressionPresetName.Blink, runtime.blink.weight);
+  }
+
+  function createPreviewAnimationClip(clip) {
+    if (!runtime.currentVRM) {
+      return new THREE.AnimationClip(clip.name, clip.duration, []);
+    }
+
+    const tracks = [];
+    clip.rotationTracks?.forEach((track, boneName) => {
+      const node = runtime.currentVRM.humanoid.getNormalizedBoneNode(boneName);
+      if (node?.name) {
+        tracks.push(new THREE.QuaternionKeyframeTrack(`${node.name}.quaternion`, track.times, track.values));
+      }
+    });
+    clip.translationTracks?.forEach((track, boneName) => {
+      const node = runtime.currentVRM.humanoid.getNormalizedBoneNode(boneName);
+      if (node?.name) {
+        tracks.push(new THREE.VectorKeyframeTrack(`${node.name}.position`, track.times, track.values));
+      }
+    });
+
+    return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+  }
+
+  function stopPreviewClip() {
+    runtime.animation.previewAction?.stop();
+    runtime.animation.previewAction = null;
+  }
+
+  function pausePreviewClip() {
+    if (!runtime.animation.previewAction) {
+      return;
+    }
+
+    runtime.animation.previewAction.paused = true;
+    runtime.animation.mixer?.setTime(runtime.animation.previewAction.time);
+  }
+
+  function resumePreviewClip() {
+    if (!runtime.animation.previewAction) {
+      return;
+    }
+
+    runtime.animation.previewAction.paused = false;
+  }
+
+  function getPreviewPlaybackState() {
+    const action = runtime.animation.previewAction;
+    const clip = action?.getClip?.();
+
+    if (!action) {
+      return {
+        active: false,
+        paused: false,
+        timeSeconds: 0,
+        durationSeconds: 0,
+      };
+    }
+
+    return {
+      active: true,
+      paused: Boolean(action.paused),
+      timeSeconds: action.time || 0,
+      durationSeconds: clip?.duration || 0,
+    };
+  }
+
+  function playPreviewClip(clip, { loop = 'repeat', paused = false, timeSeconds = null } = {}) {
+    if (!runtime.animation.mixer) {
+      return;
+    }
+
+    stopGestureMotion();
+    stopPreviewClip();
+
+    const previewClip = createPreviewAnimationClip(clip);
+    const action = runtime.animation.mixer.clipAction(previewClip);
+    action.enabled = true;
+    action.reset();
+    action.setEffectiveWeight(1);
+    action.setEffectiveTimeScale(1);
+    action.setLoop(loop === 'once' ? THREE.LoopOnce : THREE.LoopRepeat, loop === 'once' ? 1 : Infinity);
+    action.clampWhenFinished = loop === 'once';
+    action.play();
+
+    if (Number.isFinite(timeSeconds) && timeSeconds >= 0) {
+      action.time = Math.min(timeSeconds, previewClip.duration || timeSeconds);
+      runtime.animation.mixer.setTime(action.time);
+    }
+
+    if (paused) {
+      action.paused = true;
+    }
+
+    runtime.animation.previewAction = action;
+  }
+
+  function applyDisplayMode(mode = 'mesh') {
+    runtime.display.mode = mode;
+    const showMesh = mode !== 'bones';
+    const showSkeleton = mode !== 'mesh';
+
+    runtime.display.skinnedMeshes.forEach((mesh) => {
+      mesh.visible = showMesh;
+    });
+    if (runtime.display.skeletonHelper) {
+      runtime.display.skeletonHelper.visible = showSkeleton;
+    }
+  }
+
+  function setOrbitSnapDegrees(degrees = 0) {
+    runtime.orbit.snapRadians =
+      Number.isFinite(degrees) && degrees > 0
+        ? THREE.MathUtils.degToRad(degrees)
+        : 0;
   }
 
   return runtime;

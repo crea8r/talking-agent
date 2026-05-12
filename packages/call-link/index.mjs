@@ -1,7 +1,14 @@
-import os from 'node:os';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  McpError,
+} from '@modelcontextprotocol/sdk/types.js';
+import { resolveDefaultSourceCodexHome } from '../codex-exec/index.mjs';
 
 function normalizeString(value) {
   return `${value || ''}`.trim();
@@ -41,6 +48,14 @@ async function readSessionIndex(sourceCodexHome) {
     .filter(Boolean);
 }
 
+function buildCapabilityPolicy(setup = {}) {
+  return {
+    enabledPluginIds: Array.isArray(setup?.enabledPluginIds) ? setup.enabledPluginIds : [],
+    enableControlComputer: setup?.enableControlComputer === true,
+    enableComplexTasks: setup?.enableComplexTasks === true,
+  };
+}
+
 function buildBootstrapPrompt({
   displayTitle = '',
   activeModelId = '',
@@ -56,9 +71,92 @@ function buildBootstrapPrompt({
   ].join(' ');
 }
 
+function toolResult(payload) {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify(payload, null, 2),
+      },
+    ],
+    structuredContent: payload,
+  };
+}
+
+function toProtocolError(error) {
+  if (error instanceof McpError) {
+    return error;
+  }
+
+  return new McpError(-32000, error instanceof Error ? error.message : 'Internal error');
+}
+
+function wrapRequestHandler(handler) {
+  return async (...args) => {
+    try {
+      return await handler(...args);
+    } catch (error) {
+      throw toProtocolError(error);
+    }
+  };
+}
+
+export const CALL_LINK_SERVER_INFO = {
+  name: 'one-to-one-agent-room',
+  title: 'One-to-One Agent Room',
+  version: '0.1.0',
+};
+
+export const CALL_LINK_SERVER_OPTIONS = {
+  capabilities: {
+    tools: { listChanged: false },
+  },
+  instructions:
+    'Use create_call_link when the user asks for a live call. Return the generated localhost link and do not invent a link manually.',
+};
+
+export const CALL_LINK_TOOL = {
+  name: 'create_call_link',
+  description:
+    'Create a linked call for the current Codex work session and return a localhost URL that opens the call-ready room.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      originalSessionId: { type: 'string' },
+      workspaceRoot: { type: 'string' },
+      displayTitle: { type: 'string' },
+      scopeKey: { type: 'string' },
+    },
+  },
+};
+
+export function createCallLinkMcpServer({ service } = {}) {
+  if (!service) {
+    throw new Error('createCallLinkMcpServer requires a service.');
+  }
+
+  const server = new Server(CALL_LINK_SERVER_INFO, CALL_LINK_SERVER_OPTIONS);
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [CALL_LINK_TOOL],
+  }));
+  server.setRequestHandler(
+    CallToolRequestSchema,
+    wrapRequestHandler(async (request) => {
+      if (request.params?.name !== CALL_LINK_TOOL.name) {
+        throw new Error(`Unknown tool: ${request.params?.name || ''}`);
+      }
+
+      const payload = await service.createCallLink(request.params?.arguments || {});
+      return toolResult(payload);
+    }),
+  );
+  return server;
+}
+
 export function createCallLinkService({
   appBaseUrl = 'http://127.0.0.1:4384',
-  sourceCodexHome = process.env.CODEX_HOME || path.join(process.env.HOME || os.homedir(), '.codex'),
+  sourceCodexHome = resolveDefaultSourceCodexHome(),
   callRecordStore,
   workspaceSetupStore,
   productionVoiceProfileStore,
@@ -122,6 +220,7 @@ export function createCallLinkService({
       workspaceRoot: cleanedWorkspaceRoot,
       displayTitle: cleanedDisplayTitle,
       bootstrapPrompt,
+      capabilityPolicy: buildCapabilityPolicy(setup),
     });
 
     await callRecordStore.createRecord({

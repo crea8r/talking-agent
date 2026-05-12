@@ -15,6 +15,7 @@ export function createAvatarSpeechController({
   const state = {
     active: false,
     mode: 'idle',
+    source: '',
     currentText: '',
     currentMouth: 'rest',
     durationMs: 0,
@@ -37,6 +38,7 @@ export function createAvatarSpeechController({
     return {
       active: state.active,
       mode: state.mode,
+      source: state.source,
       currentText: state.currentText,
       currentMouth: state.currentMouth,
       durationMs: state.durationMs,
@@ -61,6 +63,7 @@ export function createAvatarSpeechController({
 
     state.active = false;
     state.mode = 'idle';
+    state.source = '';
     state.currentText = '';
     state.durationMs = 0;
     state.startedAt = 0;
@@ -162,6 +165,7 @@ export function createAvatarSpeechController({
     state.sessionId = sessionId;
     state.active = true;
     state.mode = withVoice ? 'voice' : 'silent';
+    state.source = source;
     state.currentText = cleanedText;
     state.durationMs = timeline.durationMs;
     state.startedAt = 0;

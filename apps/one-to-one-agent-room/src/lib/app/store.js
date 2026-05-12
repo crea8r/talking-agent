@@ -64,6 +64,8 @@ export function createAppStore({
       reasoningEffort: '',
       sessionRoot: '',
       command: '',
+      availablePlugins: [],
+      pluginInventoryLoading: false,
     },
     currentTurnId: null,
     playbackGeneration: 0,
@@ -89,6 +91,10 @@ export function createAppStore({
       voiceSampleStatus: bootstrapDefaults.voiceSampleStatus,
       voiceSampleSpeakerId: '',
       voiceSampleSpeakerLabel: '',
+      enabledPluginIds: [],
+      enableControlComputer: false,
+      enableComplexTasks: false,
+      smoothGestureTransitions: true,
       stageId: stages[0].id,
       emoteId: emotes[0].id,
       gestureId: defaultGestures[0]?.id || 'Pose',
@@ -127,6 +133,16 @@ export function createAppStore({
       storedState.voiceSampleStatus || bootstrapDefaults.voiceSampleStatus;
     state.preferences.voiceSampleSpeakerId = storedState.voiceSampleSpeakerId || '';
     state.preferences.voiceSampleSpeakerLabel = storedState.voiceSampleSpeakerLabel || '';
+    state.preferences.enabledPluginIds = Array.from(
+      new Set(
+        (Array.isArray(storedState.enabledPluginIds) ? storedState.enabledPluginIds : [])
+          .map((value) => `${value || ''}`.trim())
+          .filter(Boolean),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+    state.preferences.enableControlComputer = storedState.enableControlComputer === true;
+    state.preferences.enableComplexTasks = storedState.enableComplexTasks === true;
+    state.preferences.smoothGestureTransitions = storedState.smoothGestureTransitions !== false;
     state.preferences.stageId = stageMap.has(storedState.stageId) ? storedState.stageId : stages[0].id;
     state.preferences.emoteId = emoteMap.has(storedState.emoteId) ? storedState.emoteId : emotes[0].id;
     state.preferences.gestureId = preferredGestureId;
@@ -148,6 +164,10 @@ export function createAppStore({
       voiceSampleStatus: state.preferences.voiceSampleStatus,
       voiceSampleSpeakerId: state.preferences.voiceSampleSpeakerId,
       voiceSampleSpeakerLabel: state.preferences.voiceSampleSpeakerLabel,
+      enabledPluginIds: state.preferences.enabledPluginIds,
+      enableControlComputer: state.preferences.enableControlComputer,
+      enableComplexTasks: state.preferences.enableComplexTasks,
+      smoothGestureTransitions: state.preferences.smoothGestureTransitions,
       stageId: state.preferences.stageId,
       emoteId: state.preferences.emoteId,
       gestureId: state.preferences.gestureId,
@@ -188,6 +208,9 @@ export function createAppStore({
         : 'missing voice reference, a 3+s wav file';
     dom.voiceSampleStatus.dataset.tone =
       state.preferences.voiceSampleStatus === 'ready' ? 'muted' : 'danger';
+    if (dom.smoothGestureTransitionsToggle) {
+      dom.smoothGestureTransitionsToggle.checked = state.preferences.smoothGestureTransitions !== false;
+    }
   }
 
   function ensureDefaults() {
@@ -207,6 +230,10 @@ export function createAppStore({
       voiceSampleStatus: state.preferences.voiceSampleStatus,
       voiceSampleSpeakerId: state.preferences.voiceSampleSpeakerId,
       voiceSampleSpeakerLabel: state.preferences.voiceSampleSpeakerLabel,
+      enabledPluginIds: state.preferences.enabledPluginIds,
+      enableControlComputer: state.preferences.enableControlComputer,
+      enableComplexTasks: state.preferences.enableComplexTasks,
+      smoothGestureTransitions: state.preferences.smoothGestureTransitions,
     };
   }
 

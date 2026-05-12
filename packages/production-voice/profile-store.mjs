@@ -76,17 +76,31 @@ export function createProductionVoiceProfileStore({ rootDir } = {}) {
     return createProfilePaths(rootDir, scopeKey);
   }
 
-  async function loadProfile({ scopeKey = '' } = {}) {
+  async function loadProfileFromScope({ scopeKey = '' } = {}) {
     const profilePaths = getProfilePaths(scopeKey);
     return readJson(profilePaths.activeProfilePath, null);
   }
 
+  async function loadProfile({ scopeKey = '' } = {}) {
+    const scopedProfile = await loadProfileFromScope({ scopeKey });
+    if (scopedProfile || !normalizeScopeKey(scopeKey)) {
+      return scopedProfile;
+    }
+    return loadProfileFromScope();
+  }
+
   async function getProfileSummary({ scopeKey = '' } = {}) {
-    const profilePaths = getProfilePaths(scopeKey);
     const profile = await loadProfile({ scopeKey });
     if (!profile) {
       return null;
     }
+
+    const normalizedScopeKey = normalizeScopeKey(scopeKey);
+    const scopedProfilePaths = getProfilePaths(scopeKey);
+    const profilePaths =
+      normalizedScopeKey && profile.referenceStoredPath === getProfilePaths().referenceStoredPath
+        ? getProfilePaths()
+        : scopedProfilePaths;
 
     return {
       ...toPublicProfile(profile),

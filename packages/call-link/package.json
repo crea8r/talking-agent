@@ -1,0 +1,12 @@
+{
+  "name": "@talking-agent/call-link",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs",
+    "./mcp-http": "./mcp-http.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  }
+}

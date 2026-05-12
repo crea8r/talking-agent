@@ -1,6 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -16,8 +15,13 @@ import {
 import {
   createForkedCallExecutor,
   createIsolatedCodexExecutor,
+  listAvailablePlugins,
+  resolveDefaultSourceCodexHome,
 } from '../../packages/codex-exec/index.mjs';
 import { createCallRecordStore } from '../../packages/call-record-store/index.mjs';
+import { createCallLinkService } from '../../packages/call-link/index.mjs';
+import { createCallLinkMcpHttpHandler } from '../../packages/call-link/mcp-http.mjs';
+import { createAgentSelf } from '../../packages/agent-self/index.mjs';
 import { createProductionVoiceClient } from '../../packages/production-voice/client.mjs';
 import { createProductionVoiceProfileStore } from '../../packages/production-voice/profile-store.mjs';
 import { createWorkspaceSetupStore } from '../../packages/workspace-setup-store/index.mjs';
@@ -68,6 +72,11 @@ const CALL_RECORD_STATE_DIR = path.join(
   'output',
   'one-to-one-agent-room-calls',
 );
+const AGENT_SELF_STATE_DIR = path.join(
+  REPO_ROOT,
+  'output',
+  'agent-self',
+);
 const CODEX_SESSION_ROOT = path.join(
   REPO_ROOT,
   'output',
@@ -83,13 +92,16 @@ const PRODUCTION_VOICE_DEFAULT_SPEAKER_ID =
 const CODEX_COMMAND = process.env.ONE_TO_ONE_AGENT_ROOM_CODEX_COMMAND || 'codex';
 const CODEX_SOURCE_HOME =
   process.env.ONE_TO_ONE_AGENT_ROOM_SOURCE_CODEX_HOME ||
-  process.env.CODEX_HOME ||
-  path.join(process.env.HOME || os.homedir(), '.codex');
+  resolveDefaultSourceCodexHome();
 const CODEX_MODEL = process.env.ONE_TO_ONE_AGENT_ROOM_CODEX_MODEL || 'gpt-5.4';
 const CODEX_REASONING_EFFORT =
   process.env.ONE_TO_ONE_AGENT_ROOM_CODEX_REASONING_EFFORT || 'low';
 const CODEX_TIMEOUT_MS = Number.parseInt(
-  process.env.ONE_TO_ONE_AGENT_ROOM_CODEX_TIMEOUT_MS || '45000',
+  process.env.ONE_TO_ONE_AGENT_ROOM_CODEX_TIMEOUT_MS || '600000',
+  10,
+);
+const SOFT_TURN_TIMEOUT_MS = Number.parseInt(
+  process.env.ONE_TO_ONE_AGENT_ROOM_SOFT_TURN_TIMEOUT_MS || '30000',
   10,
 );
 
@@ -111,19 +123,23 @@ const workspaceSetupStore = createWorkspaceSetupStore({
 const callRecordStore = createCallRecordStore({
   rootDir: CALL_RECORD_STATE_DIR,
 });
+const agentSelf = createAgentSelf({
+  rootDir: AGENT_SELF_STATE_DIR,
+  appId: 'one-to-one-agent-room',
+});
 const isolatedCodexExecutor = createIsolatedCodexExecutor({
   rootDir: CODEX_SESSION_ROOT,
   sourceCodexHome: CODEX_SOURCE_HOME,
   codexCommand: CODEX_COMMAND,
   model: CODEX_MODEL,
   reasoningEffort: CODEX_REASONING_EFFORT,
-  timeoutMs: Number.isFinite(CODEX_TIMEOUT_MS) ? CODEX_TIMEOUT_MS : 45_000,
+  timeoutMs: Number.isFinite(CODEX_TIMEOUT_MS) ? CODEX_TIMEOUT_MS : 600_000,
 });
 const forkedCallExecutor = createForkedCallExecutor({
   rootDir: CODEX_SESSION_ROOT,
   sourceCodexHome: CODEX_SOURCE_HOME,
   codexCommand: CODEX_COMMAND,
-  timeoutMs: Number.isFinite(CODEX_TIMEOUT_MS) ? CODEX_TIMEOUT_MS : 45_000,
+  timeoutMs: Number.isFinite(CODEX_TIMEOUT_MS) ? CODEX_TIMEOUT_MS : 600_000,
 });
 const directCodexAgent = createDirectCodexAgent({
   executor: isolatedCodexExecutor,
@@ -134,6 +150,18 @@ const directCodexAgent = createDirectCodexAgent({
     destroyCallSession: forkedCallExecutor.destroyCallSession,
   },
 });
+const callLinkService = createCallLinkService({
+  appBaseUrl: `http://${HOST}:${PORT}`,
+  sourceCodexHome: CODEX_SOURCE_HOME,
+  callRecordStore,
+  workspaceSetupStore,
+  productionVoiceProfileStore,
+  forkedCallExecutor,
+});
+const callLinkMcpHandler = createCallLinkMcpHttpHandler({
+  service: callLinkService,
+  pathname: '/mcp',
+});
 const sessionRuntime = createDirectSessionRuntime({
   agentRunner: directCodexAgent,
   callRecordStore,
@@ -142,6 +170,36 @@ const sessionRuntime = createDirectSessionRuntime({
   defaultModelId: DEFAULT_MODEL.id,
   projectTitle: CODEX_PROJECT_NAME,
 });
+
+function getSessionCapabilityPolicy(session = {}) {
+  const policy = session?.metadata?.agentSetup?.codexCapabilityPolicy;
+  return {
+    enabledPluginIds: Array.isArray(policy?.enabledPluginIds) ? policy.enabledPluginIds : [],
+    enableControlComputer: policy?.enableControlComputer === true,
+    enableComplexTasks: policy?.enableComplexTasks === true,
+  };
+}
+
+async function syncSessionCodexHomeCapabilities(session = {}) {
+  if (!session?.id) {
+    return;
+  }
+
+  const capabilityPolicy = getSessionCapabilityPolicy(session);
+  const launch = session?.metadata?.launch || {};
+  if (`${launch.mode || ''}`.trim() === 'linked-call' && `${launch.launchId || ''}`.trim()) {
+    await forkedCallExecutor.syncLaunchCapabilities({
+      launchId: launch.launchId,
+      capabilityPolicy,
+    });
+    return;
+  }
+
+  await isolatedCodexExecutor.syncSessionCapabilities({
+    sessionId: session.id,
+    capabilityPolicy,
+  });
+}
 
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -219,6 +277,55 @@ function sendText(res, statusCode, text) {
     'content-type': 'text/plain; charset=utf-8',
   });
   res.end(text);
+}
+
+async function persistSessionPayload(payload) {
+  const sessionId = `${payload?.session?.id || ''}`.trim();
+  if (!sessionId) {
+    return;
+  }
+
+  const sessionDir = path.join(CODEX_SESSION_ROOT, sessionId);
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(
+    path.join(sessionDir, 'session-report.json'),
+    JSON.stringify(payload, null, 2),
+    'utf8',
+  );
+}
+
+async function persistCurrentSessionSnapshot(sessionId) {
+  const payload = await sessionRuntime.getSession(sessionId);
+  await persistSessionPayload(payload);
+  return payload;
+}
+
+async function raceTurnAgainstSoftTimeout(turnPromise, timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return {
+      kind: 'reply',
+      payload: await turnPromise,
+    };
+  }
+
+  let timeoutId = 0;
+  try {
+    return await Promise.race([
+      turnPromise.then((payload) => ({
+        kind: 'reply',
+        payload,
+      })),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => {
+          resolve({ kind: 'soft-timeout' });
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 async function serveStatic(res, filePath) {
@@ -431,6 +538,10 @@ function serializeGesture(gesture) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${HOST}:${PORT}`);
 
+  if (await callLinkMcpHandler.handle(req, res, url.pathname)) {
+    return;
+  }
+
   if (req.method === 'GET' && STATIC_ROUTES.has(url.pathname)) {
     await serveStatic(res, STATIC_ROUTES.get(url.pathname));
     return;
@@ -497,13 +608,25 @@ const server = createServer(async (req, res) => {
         reasoningEffort: CODEX_REASONING_EFFORT,
         sessionRoute: '/api/call/sessions',
         stateRoute: '/api/codex/state',
+        pluginsRoute: '/api/codex/plugins',
         turnFields: ['spokenText', 'subtitle', 'mood', 'animationSequence'],
       },
       workspaceSetup: {
         route: '/api/workspace-setup',
       },
+      agentSelf: {
+        settingsRoute: '/api/agent-self/settings',
+        reserveRoute: '/api/agent-self/reserve',
+        turnCompleteRoute: '/api/agent-self/turn-complete',
+        modes: ['standard', 'continuity'],
+      },
       launch: {
         resolveRouteTemplate: '/api/launch/:launchId',
+      },
+      mcp: {
+        route: '/mcp',
+        url: `http://${HOST}:${PORT}/mcp`,
+        toolNames: ['create_call_link'],
       },
       productionVoice: {
         baseUrl: PRODUCTION_VOICE_BASE_URL,
@@ -526,10 +649,94 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/codex/plugins') {
+    const plugins = await listAvailablePlugins({ sourceCodexHome: CODEX_SOURCE_HOME });
+    sendJson(res, 200, {
+      ok: true,
+      plugins: plugins.map((plugin) => ({
+        id: plugin.id,
+        name: plugin.name,
+        marketplace: plugin.marketplace,
+        version: plugin.version,
+        displayName: plugin.displayName,
+        description: plugin.description,
+        enabled: plugin.enabled,
+      })),
+    });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/workspace-setup') {
     sendJson(res, 200, await buildWorkspaceSetupState({
       scopeKey: resolveVoiceScopeKey(url),
     }));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/agent-self/settings') {
+    sendJson(res, 200, {
+      ok: true,
+      settings: await agentSelf.getSettings(),
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/agent-self/settings') {
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, {
+        ok: true,
+        settings: await agentSelf.updateSettings(body),
+      });
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to save agent self settings.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/agent-self/reserve') {
+    try {
+      const body = await readJsonBody(req);
+      const scopeKey = resolveVoiceScopeKey(url);
+      sendJson(res, 200, {
+        ok: true,
+        packet: await agentSelf.prepareReserve({
+          scopeKey,
+          turnId: body.turnId,
+          text: body.text,
+        }),
+      });
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to prepare continuity reserve.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/agent-self/turn-complete') {
+    try {
+      const body = await readJsonBody(req);
+      const scopeKey = resolveVoiceScopeKey(url);
+      sendJson(res, 200, {
+        ok: true,
+        state: await agentSelf.completeTurn({
+          scopeKey,
+          turnId: body.turnId,
+          userText: body.userText,
+          agentText: body.agentText,
+        }),
+      });
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to update continuity state.',
+      });
+    }
     return;
   }
 
@@ -541,6 +748,9 @@ const server = createServer(async (req, res) => {
         scopeKey,
         activeModelId: body.activeModelId,
         activeModelLabel: body.activeModelLabel,
+        enabledPluginIds: body.enabledPluginIds,
+        enableControlComputer: body.enableControlComputer,
+        enableComplexTasks: body.enableComplexTasks,
       });
       sendJson(res, 200, {
         ok: true,
@@ -661,6 +871,7 @@ const server = createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const payload = await sessionRuntime.createSession(body);
+      await persistSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -675,6 +886,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && sessionMatch) {
     try {
       const payload = await sessionRuntime.getSession(decodeURIComponent(sessionMatch[1]));
+      await persistSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 404, {
@@ -693,6 +905,8 @@ const server = createServer(async (req, res) => {
         sessionId: decodeURIComponent(setupMatch[1]),
         metadata: body.metadata,
       });
+      await syncSessionCodexHomeCapabilities(payload.session);
+      await persistSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -712,6 +926,7 @@ const server = createServer(async (req, res) => {
         state: body.state,
         reason: body.reason,
       });
+      await persistSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -731,6 +946,7 @@ const server = createServer(async (req, res) => {
         reason: body.reason,
         skipAgentFinalize: body.skipAgentFinalize === true,
       });
+      await persistSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -749,6 +965,7 @@ const server = createServer(async (req, res) => {
         sessionId: decodeURIComponent(interruptMatch[1]),
         reason: body.reason,
       });
+      await persistSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -759,18 +976,79 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const speculativeTurnMatch = url.pathname.match(
+    /^\/api\/call\/sessions\/([^/]+)\/speculative-turns$/,
+  );
+  if (req.method === 'POST' && speculativeTurnMatch) {
+    try {
+      const body = await readJsonBody(req);
+      const payload = await sessionRuntime.startSpeculativeHumanTurn({
+        sessionId: decodeURIComponent(speculativeTurnMatch[1]),
+        text: body.text,
+        source: body.source,
+      });
+      await persistSessionPayload(payload);
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to process the speculative human turn.',
+      });
+    }
+    return;
+  }
+
   const turnMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)\/turns$/);
   if (req.method === 'POST' && turnMatch) {
     try {
       const body = await readJsonBody(req);
-      const payload = await sessionRuntime.submitHumanTurn({
-        sessionId: decodeURIComponent(turnMatch[1]),
+      const sessionId = decodeURIComponent(turnMatch[1]);
+      const turnPromise = sessionRuntime.submitHumanTurn({
+        sessionId,
         text: body.text,
         source: body.source,
         humanIdentity: body.humanIdentity,
         humanName: body.humanName,
       });
-      sendJson(res, 200, payload);
+      void turnPromise.catch(() => {});
+      const outcome = await raceTurnAgainstSoftTimeout(turnPromise, SOFT_TURN_TIMEOUT_MS);
+      if (outcome.kind === 'reply') {
+        await persistSessionPayload(outcome.payload);
+        sendJson(res, 200, outcome.payload);
+        return;
+      }
+
+      const deferredPayload = await sessionRuntime.deferActiveTurn({
+        sessionId,
+        reason: 'The agent is still working after the soft timeout window.',
+      });
+      if (deferredPayload.deferred !== true) {
+        const finalPayload = await turnPromise;
+        await persistSessionPayload(finalPayload);
+        sendJson(res, 200, finalPayload);
+        return;
+      }
+
+      await persistSessionPayload(deferredPayload);
+      void turnPromise
+        .then(async (payload) => {
+          await persistSessionPayload(payload);
+        })
+        .catch(async (error) => {
+          try {
+            await persistCurrentSessionSnapshot(sessionId);
+          } catch (snapshotError) {
+            console.error('Failed to persist deferred turn snapshot.', {
+              sessionId,
+              error: snapshotError,
+            });
+          }
+          console.error('Deferred Codex turn failed.', {
+            sessionId,
+            error,
+          });
+        });
+      sendJson(res, 200, deferredPayload);
     } catch (error) {
       sendJson(res, 500, {
         ok: false,
@@ -789,11 +1067,38 @@ const server = createServer(async (req, res) => {
         sessionId: decodeURIComponent(replyPlayedMatch[1]),
         turnId: decodeURIComponent(replyPlayedMatch[2]),
       });
+      await persistSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
         error: error instanceof Error ? error.message : 'Unable to mark the reply as played.',
+      });
+    }
+    return;
+  }
+
+  const playbackEventMatch = url.pathname.match(
+    /^\/api\/call\/sessions\/([^/]+)\/playback-events$/,
+  );
+  if (req.method === 'POST' && playbackEventMatch) {
+    try {
+      const body = await readJsonBody(req);
+      const payload = await sessionRuntime.recordPlaybackEvent({
+        sessionId: decodeURIComponent(playbackEventMatch[1]),
+        phase: body.phase,
+        kind: body.kind,
+        source: body.source,
+        turnId: body.turnId,
+        text: body.text,
+        turnCompleted: body.turnCompleted,
+      });
+      await persistSessionPayload(payload);
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to record playback event.',
       });
     }
     return;
@@ -810,6 +1115,10 @@ server.on('error', (error) => {
 
   console.error('one-to-one-agent-room failed to start', error);
   process.exit(1);
+});
+
+server.on('close', () => {
+  callLinkMcpHandler.close().catch(() => {});
 });
 
 server.listen(PORT, HOST, () => {

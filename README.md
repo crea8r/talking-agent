@@ -10,7 +10,7 @@ The current main spike is `apps/one-to-one-agent-room`. Its flow is now:
 - Codex returns structured reply text plus coarse animation beats
 - the browser synthesizes the reply with `production-voice`, plays the avatar animation, and lip-syncs locally
 
-There is no live MCP listener in this app anymore.
+There is no live MCP turn-claim bridge in this app anymore. The only MCP surface now is the host-facing `create_call_link` endpoint exposed by `one-to-one-agent-room` itself.
 
 The working plan for the repo lives in [docs/6-app-plan.md](docs/6-app-plan.md).
 The first product draft lives in [docs/prd-local-call-command.md](docs/prd-local-call-command.md).
@@ -39,7 +39,7 @@ Current reusable packages are listed in [packages/README.md](packages/README.md)
 - `npm install`
 - a browser with Web Speech API support
 - a working local Codex auth home at `~/.codex` or `CODEX_HOME`
-- the local `production-voice` backend running
+- a working local `production-voice` Python runtime
 
 ## Run App 4
 
@@ -52,17 +52,26 @@ npm run start:one-to-one-agent-room
 
 Open [http://127.0.0.1:4384](http://127.0.0.1:4384).
 
-## Start The Voice Backend
+That command now starts both:
 
-`one-to-one-agent-room` expects `production-voice` at `http://127.0.0.1:50003` by default.
+- `one-to-one-agent-room`
+- the local `production-voice` backend
 
-If you use a different URL, set:
+If you start the room server manually without the launcher, you can still point it at an already-running voice backend with:
 
 ```bash
 ONE_TO_ONE_AGENT_ROOM_PRODUCTION_VOICE_BASE_URL=http://127.0.0.1:50003
 ```
 
-before starting the app server.
+For the combined launcher, set the voice backend inputs directly:
+
+```bash
+ONE_TO_ONE_AGENT_ROOM_PRODUCTION_VOICE_PYTHON=/path/to/python
+ONE_TO_ONE_AGENT_ROOM_PRODUCTION_VOICE_HOST=127.0.0.1
+ONE_TO_ONE_AGENT_ROOM_PRODUCTION_VOICE_PORT=50003
+PRODUCTION_VOICE_VENDOR_ROOT=/path/to/vendor
+PORT=4384
+```
 
 ## How `one-to-one-agent-room` Talks To Codex
 
@@ -82,20 +91,31 @@ Instead:
 
 The reusable subprocess helper for this lives in `packages/codex-exec`.
 
+## How `call me` Works In Codex
+
+`one-to-one-agent-room` exposes `create_call_link` from the same runtime over MCP HTTP at `/mcp`.
+
+Register it in Codex with:
+
+```bash
+codex mcp add one-to-one-agent-room --url http://127.0.0.1:4384/mcp
+```
+
+After that, Codex can use `create_call_link` when you type `call me`. The room runtime creates the forked call session, stores the launch record, and returns a localhost link that opens linked-call mode.
+
 ## Short Voice Call Test
 
 Use this flow for a quick end-to-end check:
 
-1. Start the `production-voice` backend.
-2. Start `one-to-one-agent-room`.
-3. Open [http://127.0.0.1:4384](http://127.0.0.1:4384).
-4. In `Setup`, choose a character model.
-5. Upload a WAV voice sample.
-6. Wait for both `Voice` and `Codex` to show ready states.
-7. Click `Start Call`.
-8. Allow microphone access.
-9. Say `hello can you hear me`.
-10. The app server should call Codex directly and the avatar should answer.
+1. Start `one-to-one-agent-room`.
+2. Open [http://127.0.0.1:4384](http://127.0.0.1:4384).
+3. In `Setup`, choose a character model.
+4. Upload a WAV voice sample.
+5. Wait for both `Voice` and `Codex` to show ready states.
+6. Click `Start Call`.
+7. Allow microphone access.
+8. Say `hello can you hear me`.
+9. The app server should call Codex directly and the avatar should answer.
 
 If microphone capture is unavailable, use `Typed Turn` in `Diagnostics`.
 
@@ -177,3 +197,4 @@ They are useful only if you want to revisit the earlier MCP-mediated architectur
   - `packages/avatar-speech-browser`
   - `packages/production-voice`
   - `packages/codex-exec`
+  - `packages/call-link`

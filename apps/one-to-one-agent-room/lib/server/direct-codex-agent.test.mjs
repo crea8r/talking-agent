@@ -8,6 +8,16 @@ import {
   normalizeAgentReply,
 } from './direct-codex-agent.mjs';
 
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
 const SESSION_FIXTURE = {
   id: 'session-1',
   avatar: {
@@ -23,6 +33,14 @@ const SESSION_FIXTURE = {
     agentSetup: {
       voiceSampleFileName: 'reference.wav',
       voiceSampleSpeakerLabel: 'EN-US',
+    },
+    agentIdentity: {
+      mode: 'continuity',
+      name: 'Jane',
+      pronouns: 'she',
+      personality: 'playful',
+      interests: 'outgoing, sport',
+      selfPrompt: 'dream about sky',
     },
   },
   turns: [
@@ -42,10 +60,16 @@ test('turn prompts describe the spoken JSON contract and available gestures', ()
   const resumePrompt = buildResumeTurnPrompt({ session: SESSION_FIXTURE, turn });
 
   assert.match(initialPrompt, /Return exactly one JSON object/);
+  assert.match(initialPrompt, /Spoken agent identity:/);
+  assert.match(initialPrompt, /Name: Jane/);
+  assert.match(initialPrompt, /Use the spoken agent identity when the human asks who you are/);
   assert.match(initialPrompt, /Character model: Red Tinker Bell/);
   assert.match(initialPrompt, /Voice sample file: reference\.wav/);
+  assert.match(initialPrompt, /followUps is optional and may contain 0 to 7 additional spoken segments/);
+  assert.match(initialPrompt, /Also use followUps when the answer is a long list, plan, or explanation/);
   assert.match(initialPrompt, /- Greeting:/);
   assert.match(resumePrompt, /Continue the same live voice call/);
+  assert.match(resumePrompt, /Name: Jane/);
   assert.match(resumePrompt, /Human: How are you doing\?/);
 });
 
@@ -60,6 +84,17 @@ test('normalizeAgentReply keeps only allowed gestures and falls back for plain t
         { gestureId: 'Greeting', atRatio: 0 },
         { gestureId: 'Missing', atRatio: 0.5 },
       ],
+      followUps: [
+        {
+          spokenText: 'Second beat.',
+          subtitle: 'Second beat.',
+          mood: 'playful',
+          pauseMs: 5000,
+          animationSequence: [
+            { gestureId: 'Pose', atRatio: 0.2 },
+          ],
+        },
+      ],
     }),
     allowedGestures,
   );
@@ -68,6 +103,9 @@ test('normalizeAgentReply keeps only allowed gestures and falls back for plain t
   assert.equal(normalized.text, 'Hello there.');
   assert.equal(normalized.animationSequence.length, 1);
   assert.equal(normalized.animationSequence[0].gestureId, 'Greeting');
+  assert.equal(normalized.followUps.length, 1);
+  assert.equal(normalized.followUps[0].text, 'Second beat.');
+  assert.equal(normalized.followUps[0].pauseMs, 5000);
   assert.equal(fallback.emoteId, 'warm');
   assert.ok(fallback.animationSequence.length >= 1);
 });
@@ -115,6 +153,75 @@ test('direct codex agent normalizes the executor output into a speech action', a
   assert.equal(reply.text, 'Hi there.');
   assert.equal(reply.emoteId, 'playful');
   assert.equal(reply.animationSequence[0].gestureId, 'Greeting');
+});
+
+test('direct codex agent warms the direct session during connecting and waits for it before the first reply', async () => {
+  const warmupDeferred = createDeferred();
+  const startCalls = [];
+  const agent = createDirectCodexAgent({
+    executor: {
+      async checkHealth() {
+        return { ok: true };
+      },
+      async resetSession() {},
+      async startPrompt(options) {
+        startCalls.push(options);
+        if (startCalls.length === 1) {
+          return {
+            requestId: 'warmup-1',
+            abort() {
+              return true;
+            },
+            promise: warmupDeferred.promise,
+          };
+        }
+        return {
+          requestId: 'reply-1',
+          abort() {
+            return true;
+          },
+          promise: Promise.resolve({
+            text: '{"spokenText":"Hi after warmup.","subtitle":"Hi after warmup.","mood":"warm","animationSequence":[{"gestureId":"Greeting","atRatio":0}]}',
+            mode: 'resume',
+          }),
+        };
+      },
+    },
+  });
+
+  const session = {
+    ...SESSION_FIXTURE,
+    metadata: {
+      ...SESSION_FIXTURE.metadata,
+      launch: {
+        workspaceRoot: '/tmp/workspace-alpha',
+      },
+    },
+  };
+
+  const warmup = await agent.startSessionWarmup({ session });
+  const replyHandlePromise = agent.startReply({
+    session,
+    turn: { id: 'turn-1', transcript: 'Say hello.' },
+  });
+  await Promise.resolve();
+
+  assert.equal(warmup.started, true);
+  assert.equal(startCalls.length, 1);
+  assert.match(startCalls[0].initialPrompt, /No human has spoken yet\./);
+
+  warmupDeferred.resolve({
+    text: '{"spokenText":"Ready.","subtitle":"Ready.","mood":"warm","animationSequence":[{"gestureId":"Pose","atRatio":0}]}',
+    mode: 'initial',
+  });
+  const replyHandle = await replyHandlePromise;
+  const reply = await replyHandle.promise;
+
+  assert.equal(startCalls.length, 2);
+  assert.equal(startCalls[1].sessionId, session.id);
+  assert.match(startCalls[1].resumePrompt, /Continue the same live voice call\./);
+  assert.equal(reply.runMode, 'resume');
+  assert.equal(reply.text, 'Hi after warmup.');
 });
 
 test('direct codex agent routes linked calls through the forked call executor and writes back a summary on finalize', async () => {

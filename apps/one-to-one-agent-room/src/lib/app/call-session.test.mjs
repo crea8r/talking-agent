@@ -33,6 +33,9 @@ test('buildCallSessionPayload describes the direct codex voice-avatar contract',
       voiceSampleStatus: 'ready',
       voiceSampleSpeakerId: 'EN-US',
       voiceSampleSpeakerLabel: 'EN-US',
+      enabledPluginIds: ['github@openai-curated', 'figma@openai-curated'],
+      enableControlComputer: true,
+      enableComplexTasks: false,
     },
     {
       codexProjectName: 'talking-agent',
@@ -48,6 +51,16 @@ test('buildCallSessionPayload describes the direct codex voice-avatar contract',
       displayTitle: 'workspace-alpha',
       linkedSessionId: 'session-42',
     },
+    {
+      agentMode: 'continuity',
+      selfProfile: {
+        name: 'Jane',
+        pronouns: 'she',
+        personality: 'playful',
+        interests: 'outgoing, sport',
+        selfPrompt: 'dream about sky',
+      },
+    },
   );
 
   assert.equal(payload.metadata.callMode, 'direct-codex-voice-avatar');
@@ -55,6 +68,12 @@ test('buildCallSessionPayload describes the direct codex voice-avatar contract',
   assert.equal(payload.metadata.agentSetup.voiceSampleFileName, 'reference.wav');
   assert.equal(payload.metadata.agentSetup.voiceSampleProfileId, 'profile-123');
   assert.equal(payload.metadata.agentSetup.activeModelId, 'bhf-1-2');
+  assert.deepEqual(
+    payload.metadata.agentSetup.codexCapabilityPolicy.enabledPluginIds,
+    ['figma@openai-curated', 'github@openai-curated'],
+  );
+  assert.equal(payload.metadata.agentSetup.codexCapabilityPolicy.enableControlComputer, true);
+  assert.equal(payload.metadata.agentSetup.codexCapabilityPolicy.enableComplexTasks, false);
   assert.equal(payload.metadata.launch.mode, 'linked-call');
   assert.equal(payload.metadata.launch.autoStart, true);
   assert.equal(payload.metadata.launch.launchId, 'launch-123');
@@ -62,6 +81,12 @@ test('buildCallSessionPayload describes the direct codex voice-avatar contract',
   assert.equal(payload.metadata.launch.callSessionId, 'session-call');
   assert.equal(payload.metadata.launch.workspaceRoot, '/tmp/workspace-alpha');
   assert.equal(payload.metadata.launch.linkedSessionId, 'session-42');
+  assert.equal(payload.metadata.agentIdentity.mode, 'continuity');
+  assert.equal(payload.metadata.agentIdentity.name, 'Jane');
+  assert.equal(payload.metadata.agentIdentity.pronouns, 'she');
+  assert.equal(payload.metadata.agentIdentity.personality, 'playful');
+  assert.equal(payload.metadata.agentIdentity.interests, 'outgoing, sport');
+  assert.equal(payload.metadata.agentIdentity.selfPrompt, 'dream about sky');
   assert.equal(payload.metadata.codexContract.turnRoute, '/api/call/sessions/:id/turns');
   assert.equal(payload.metadata.runtimeHints.directCodexExec, true);
   assert.equal(payload.metadata.runtimeHints.browserSpeechSynthesis, false);
@@ -95,6 +120,67 @@ test('buildCallSessionKey changes when the workspace scope changes', () => {
   );
 
   assert.notEqual(alpha, beta);
+});
+
+test('buildCallSessionKey changes when codex capability policy changes', () => {
+  const runtimeConfig = { codexProjectName: 'talking-agent' };
+  const baseForm = {
+    humanIdentity: 'human-caller',
+    participantName: 'Human Caller',
+    bundledModelId: 'bhf-1-2',
+    voiceSampleProfileId: 'profile-alpha',
+  };
+  const pluginsOff = buildCallSessionKey(baseForm, runtimeConfig, {
+    workspaceRoot: '/tmp/workspace-alpha',
+  });
+  const pluginsOn = buildCallSessionKey(
+    {
+      ...baseForm,
+      enabledPluginIds: ['github@openai-curated'],
+      enableControlComputer: true,
+    },
+    runtimeConfig,
+    {
+      workspaceRoot: '/tmp/workspace-alpha',
+    },
+  );
+
+  assert.notEqual(pluginsOff, pluginsOn);
+});
+
+test('buildCallSessionKey changes when the spoken agent identity changes', () => {
+  const runtimeConfig = { codexProjectName: 'talking-agent' };
+  const form = {
+    humanIdentity: 'human-caller',
+    participantName: 'Human Caller',
+    bundledModelId: 'bhf-1-2',
+    voiceSampleProfileId: 'profile-alpha',
+  };
+
+  const jane = buildCallSessionKey(
+    form,
+    runtimeConfig,
+    {
+      workspaceRoot: '/tmp/workspace-alpha',
+    },
+    {
+      agentMode: 'continuity',
+      selfProfile: { name: 'Jane' },
+    },
+  );
+  const moth = buildCallSessionKey(
+    form,
+    runtimeConfig,
+    {
+      workspaceRoot: '/tmp/workspace-alpha',
+    },
+    {
+      agentMode: 'continuity',
+      selfProfile: { name: 'Moth' },
+    },
+  );
+
+  assert.notEqual(jane, moth);
 });
 
 test('getCallPrimaryAction blocks start-call until recognition, production voice, and codex are ready', () => {

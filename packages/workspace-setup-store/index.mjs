@@ -40,20 +40,63 @@ function normalizeString(value) {
   return `${value || ''}`.trim();
 }
 
+function normalizePluginIds(values = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => normalizeString(value))
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeSetupPayload(payload = {}) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const activeModelId = normalizeString(payload.activeModelId);
+  if (!activeModelId) {
+    return null;
+  }
+
+  return {
+    scopeKey: normalizeScopeKey(payload.scopeKey),
+    activeModelId,
+    activeModelLabel: normalizeString(payload.activeModelLabel),
+    enabledPluginIds: normalizePluginIds(payload.enabledPluginIds),
+    enableControlComputer: payload.enableControlComputer === true,
+    enableComplexTasks: payload.enableComplexTasks === true,
+    createdAt: normalizeString(payload.createdAt),
+    updatedAt: normalizeString(payload.updatedAt),
+  };
+}
+
 export function createWorkspaceSetupStore({ rootDir } = {}) {
   if (!rootDir) {
     throw new Error('createWorkspaceSetupStore requires a rootDir.');
   }
 
-  async function loadSetup({ scopeKey = '' } = {}) {
+  async function loadSetupFromScope({ scopeKey = '' } = {}) {
     const { setupPath } = createSetupPaths(rootDir, scopeKey);
-    return readJson(setupPath, null);
+    return normalizeSetupPayload(await readJson(setupPath, null));
+  }
+
+  async function loadSetup({ scopeKey = '' } = {}) {
+    const scopedSetup = await loadSetupFromScope({ scopeKey });
+    if (scopedSetup || !normalizeScopeKey(scopeKey)) {
+      return scopedSetup;
+    }
+    return loadSetupFromScope();
   }
 
   async function saveSetup({
     scopeKey = '',
     activeModelId = '',
     activeModelLabel = '',
+    enabledPluginIds = [],
+    enableControlComputer = false,
+    enableComplexTasks = false,
   } = {}) {
     const modelId = normalizeString(activeModelId);
     if (!modelId) {
@@ -67,6 +110,9 @@ export function createWorkspaceSetupStore({ rootDir } = {}) {
       scopeKey: normalizeScopeKey(scopeKey),
       activeModelId: modelId,
       activeModelLabel: normalizeString(activeModelLabel),
+      enabledPluginIds: normalizePluginIds(enabledPluginIds),
+      enableControlComputer: enableControlComputer === true,
+      enableComplexTasks: enableComplexTasks === true,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };

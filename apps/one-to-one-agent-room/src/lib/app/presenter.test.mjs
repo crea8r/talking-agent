@@ -53,18 +53,30 @@ function createPresenterHarness({
     joinCall: createElement(),
     sendTyped: createElement(),
     typedInput: createElement(),
+    callCameraToggle: createElement(),
+    callSpeakerToggle: createElement(),
     callMicToggle: createElement(),
     callAvatarHost: createElement(),
+    callSelfCluster: createElement({ hidden: true }),
+    callSelfView: createElement({ hidden: true }),
+    callSelfVideo: createElement({ hidden: true, play() { return Promise.resolve(); } }),
+    callSelfStatus: createElement(),
+    callSelfPlaceholder: createElement(),
     callStageLoading: createElement({ hidden: true }),
+    callStageLoadingLabel: createElement(),
     callEmptyState: createElement({ hidden: false }),
     callEmptyStateTitle: createElement(),
     callEmptyStateDetail: createElement(),
-    callSubtitleCombined: createElement(),
+    callSubtitleOverlay: createElement({ hidden: true }),
+    callSubtitleHuman: createElement({ hidden: true }),
+    callSubtitleAgent: createElement({ hidden: true }),
     callLayout: createElement(),
     callHistoryPanel: createElement({ hidden: true }),
     callHistoryList: createElement(),
-    callHistoryToggle: createElement({ hidden: true }),
+    callHistoryToggle: createElement({ hidden: false }),
     callThinkingTimer: createElement({ hidden: true }),
+    callDeferredIndicator: createElement({ hidden: true }),
+    callDeferredTime: createElement(),
     ...domOverrides,
   };
 
@@ -152,6 +164,7 @@ test('renderCallSnapshot marks the call stage offline until a call is active', (
   assert.equal(dom.callEmptyState.hidden, false);
   assert.equal(dom.callEmptyStateTitle.textContent, 'Waiting');
   assert.equal(dom.callEmptyStateDetail.textContent, 'Need voice');
+  assert.equal(dom.callSelfCluster.hidden, true);
 });
 
 test('renderCallSnapshot keeps the stage clear during initial avatar loading before the call starts', () => {
@@ -176,20 +189,189 @@ test('renderCallSnapshot keeps the stage clear during initial avatar loading bef
   assert.equal(dom.callEmptyStateDetail.textContent, 'Ready to start');
 });
 
-test('renderSubtitles merges human and agent text into one overlay block', () => {
+test('renderCallSnapshot makes the mic live and glowing while the user is speaking', () => {
+  const { presenter, dom } = createPresenterHarness({
+    stateOverrides: {
+      activeCall: true,
+      humanMicLevel: 58,
+      humanVoiceSnapshot: {
+        recognitionSupported: true,
+        listening: true,
+      },
+      productionVoice: {
+        loading: false,
+        uploading: false,
+        backendRunning: true,
+        profile: { referenceAvailable: true },
+        validationMessage: '',
+      },
+    },
+    domOverrides: {
+      callMicToggle: createElement(),
+    },
+  });
+
+  presenter.renderCallSnapshot();
+
+  assert.equal(dom.callMicToggle.dataset.state, 'live');
+  assert.equal(dom.callMicToggle.dataset.speaking, 'true');
+  assert.equal(dom.callMicToggle.disabled, false);
+  assert.equal(dom.callMicToggle.attributes.title, 'Mute microphone');
+  assert.equal(dom.callMicToggle.style.getPropertyValue('--mic-glow'), '0.58');
+});
+
+test('renderCallSnapshot exposes camera and speaker controls on the call surface', () => {
+  const { presenter, dom } = createPresenterHarness({
+    stateOverrides: {
+      activeCall: true,
+      localCameraSnapshot: {
+        supported: true,
+        enabled: true,
+        active: true,
+        loading: false,
+        permissionState: 'granted',
+        status: 'live',
+      },
+      agentVoiceSnapshot: {
+        speechSynthesisSupported: true,
+        speakReplies: true,
+      },
+      productionVoice: {
+        loading: false,
+        uploading: false,
+        backendRunning: true,
+        profile: { referenceAvailable: true },
+        validationMessage: '',
+      },
+    },
+  });
+
+  presenter.renderCallSnapshot();
+
+  assert.equal(dom.callCameraToggle.disabled, false);
+  assert.equal(dom.callSpeakerToggle.disabled, false);
+  assert.equal(dom.callSelfCluster.hidden, false);
+  assert.equal(dom.callSelfView.hidden, false);
+  assert.equal(dom.callSelfView.dataset.state, 'live');
+});
+
+test('renderCallSnapshot keeps the mic visibly live while the browser is listening', () => {
+  const { presenter, dom } = createPresenterHarness({
+    stateOverrides: {
+      activeCall: true,
+      humanMicLevel: 4,
+      humanVoiceSnapshot: {
+        recognitionSupported: true,
+        listening: true,
+      },
+      productionVoice: {
+        loading: false,
+        uploading: false,
+        backendRunning: true,
+        profile: { referenceAvailable: true },
+        validationMessage: '',
+      },
+    },
+  });
+
+  presenter.renderCallSnapshot();
+
+  assert.equal(dom.callMicToggle.dataset.state, 'live');
+  assert.equal(dom.callMicToggle.dataset.listening, 'true');
+  assert.equal(dom.callMicToggle.dataset.speaking, 'false');
+  assert.equal(dom.callMicToggle.disabled, false);
+  assert.equal(dom.callMicToggle.style.getPropertyValue('--mic-glow'), '0.04');
+});
+
+test('renderCallSnapshot switches the mic to muted while a reply sequence blocks listening', () => {
+  const { presenter, dom } = createPresenterHarness({
+    stateOverrides: {
+      activeCall: true,
+      currentTurnId: 'turn-42',
+      humanMicLevel: 41,
+      humanVoiceSnapshot: {
+        recognitionSupported: true,
+        listening: false,
+      },
+      productionVoice: {
+        loading: false,
+        uploading: false,
+        backendRunning: true,
+        profile: { referenceAvailable: true },
+        validationMessage: '',
+      },
+    },
+    avatarSpeechSnapshot: {
+      active: true,
+      playbackStarted: true,
+      mode: 'speaking',
+      currentText: 'Here is the next part.',
+    },
+  });
+
+  presenter.renderCallSnapshot();
+
+  assert.equal(dom.callMicToggle.dataset.state, 'muted');
+  assert.equal(dom.callMicToggle.dataset.listening, 'false');
+  assert.equal(dom.callMicToggle.disabled, true);
+  assert.equal(dom.callMicToggle.attributes.title, 'Microphone muted while agent is speaking');
+  assert.equal(dom.callMicToggle.style.getPropertyValue('--mic-glow'), '0.00');
+});
+
+test('renderCallSnapshot shows the deferred-work timer only while background work is still pending', () => {
+  const { presenter, dom, state } = createPresenterHarness({
+    stateOverrides: {
+      activeCall: true,
+      deferredIndicator: {
+        active: true,
+        elapsedSeconds: 37,
+        pendingCount: 1,
+      },
+      productionVoice: {
+        loading: false,
+        uploading: false,
+        backendRunning: true,
+        profile: { referenceAvailable: true },
+        validationMessage: '',
+      },
+    },
+  });
+
+  presenter.renderCallSnapshot();
+
+  assert.equal(dom.callDeferredIndicator.hidden, false);
+  assert.equal(dom.callDeferredTime.textContent, '0:37');
+
+  state.deferredIndicator = {
+    active: false,
+    elapsedSeconds: 0,
+    pendingCount: 0,
+  };
+  presenter.renderCallSnapshot();
+
+  assert.equal(dom.callDeferredIndicator.hidden, true);
+  assert.equal(dom.callDeferredTime.textContent, '');
+});
+
+test('renderSubtitles shows chip subtitles only when live transcript content exists', () => {
   const { presenter, dom, state } = createPresenterHarness({
     stateOverrides: {
       transcriptPreview: 'Hello there',
       subtitles: {
         human: { mode: 'listening', text: 'Listening…' },
-        agent: { mode: 'thinking', text: 'Thinking…' },
+        agent: { mode: 'speaking', text: 'Thinking…' },
       },
+      activeCall: true,
     },
   });
 
   presenter.renderSubtitles();
 
-  assert.equal(dom.callSubtitleCombined.textContent, 'Me: Hello there\nAgent: Thinking…');
+  assert.equal(dom.callSubtitleOverlay.hidden, false);
+  assert.equal(dom.callSubtitleHuman.hidden, false);
+  assert.equal(dom.callSubtitleHuman.textContent, 'Hello there');
+  assert.equal(dom.callSubtitleAgent.hidden, false);
+  assert.equal(dom.callSubtitleAgent.textContent, 'Thinking…');
 });
 
 test('renderTranscriptList hides history until there are turns', () => {
@@ -203,6 +385,7 @@ test('renderTranscriptList hides history until there are turns', () => {
   presenter.renderTranscriptList();
   assert.equal(dom.callLayout.dataset.historyVisible, 'false');
   assert.equal(dom.callHistoryPanel.hidden, true);
+  assert.equal(dom.callHistoryToggle.disabled, true);
 
   state.session = {
     turns: [
@@ -218,6 +401,7 @@ test('renderTranscriptList hides history until there are turns', () => {
   presenter.renderTranscriptList();
   assert.equal(dom.callLayout.dataset.historyVisible, 'true');
   assert.equal(dom.callHistoryPanel.hidden, false);
+  assert.equal(dom.callHistoryToggle.disabled, false);
 
   delete globalThis.document;
 });
@@ -290,6 +474,7 @@ test('renderTranscriptList exposes a collapsed history opener when turns exist',
   assert.equal(dom.callHistoryPanel.dataset.collapsed, 'true');
   assert.equal(dom.callHistoryList.hidden, true);
   assert.equal(dom.callHistoryToggle.hidden, false);
+  assert.equal(dom.callHistoryToggle.disabled, false);
   assert.equal(dom.callHistoryToggle.attributes.title, 'Show call history');
 
   delete globalThis.document;
@@ -396,6 +581,47 @@ test('renderCallSnapshot hides the thinking timer once playback is active', () =
   assert.equal(dom.callThinkingTimer.textContent, '');
 });
 
+test('local thinking prompts keep the waiting timer visible until the real reply starts', () => {
+  const { presenter, dom } = createPresenterHarness({
+    stateOverrides: {
+      activeCall: true,
+      processingReplies: true,
+      agentThinkingActive: true,
+      agentThinkingElapsedTenths: 91,
+      session: {
+        agent: {
+          lastError: '',
+        },
+      },
+      subtitles: {
+        human: { mode: 'final', text: 'Tell me more.' },
+        agent: { mode: 'thinking', text: 'Still with you.' },
+      },
+      productionVoice: {
+        loading: false,
+        uploading: false,
+        backendRunning: true,
+        profile: { referenceAvailable: true },
+        validationMessage: '',
+      },
+    },
+    avatarSpeechSnapshot: {
+      active: true,
+      playbackStarted: true,
+      source: 'local-thinking-prompt',
+      mode: 'speaking',
+      currentText: 'Still with you.',
+    },
+  });
+
+  presenter.renderCallSnapshot();
+  presenter.renderAgentStatus();
+
+  assert.equal(dom.callThinkingTimer.hidden, false);
+  assert.equal(dom.callThinkingTimer.textContent, '9.1s');
+  assert.equal(dom.callMicToggle.disabled, true);
+});
+
 test('startup greeting keeps the mic muted and composer disabled until the hello finishes', () => {
   const { presenter, dom } = createPresenterHarness({
     stateOverrides: {
@@ -423,6 +649,37 @@ test('startup greeting keeps the mic muted and composer disabled until the hello
   assert.equal(dom.callMicToggle.attributes.title, 'Microphone muted while agent greets you');
   assert.equal(dom.typedInput.disabled, true);
   assert.equal(dom.sendTyped.disabled, true);
+  assert.equal(dom.callCameraToggle.disabled, true);
+  assert.equal(dom.callSpeakerToggle.disabled, true);
+});
+
+test('startup greeting shows a connecting overlay until hello playback begins', () => {
+  const { presenter, dom } = createPresenterHarness({
+    stateOverrides: {
+      activeCall: true,
+      startupGreetingActive: true,
+      productionVoice: {
+        loading: false,
+        uploading: false,
+        backendRunning: true,
+        profile: { referenceAvailable: true },
+        validationMessage: '',
+      },
+    },
+    avatarSpeechSnapshot: {
+      active: false,
+      playbackStarted: false,
+      source: '',
+      mode: 'idle',
+      currentText: '',
+    },
+  });
+
+  presenter.renderCallSnapshot();
+
+  assert.equal(dom.callStageLoading.hidden, false);
+  assert.equal(dom.callStageLoadingLabel.textContent, 'Connecting');
+  assert.equal(dom.joinCall.attributes.title, 'End Call · Connecting');
 });
 
 test('renderCallSnapshot dims the stage during the 3 second goodbye tail after speech ends', () => {

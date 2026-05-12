@@ -145,6 +145,41 @@
                 />
               </label>
             </div>
+
+            <section class="setup-control setup-control--continuity">
+              <div class="setup-control-head">
+                <span class="setup-control-label">Settings</span>
+              </div>
+              <div class="setup-settings-actions">
+                <button
+                  id="continuity-settings-open"
+                  class="continuity-trigger"
+                  type="button"
+                  aria-haspopup="dialog"
+                  aria-controls="continuity-settings-dialog"
+                >
+                  Continuity
+                </button>
+                <button
+                  id="plugin-settings-open"
+                  class="continuity-trigger"
+                  type="button"
+                  aria-haspopup="dialog"
+                  aria-controls="plugin-settings-dialog"
+                >
+                  Plugins
+                </button>
+                <button
+                  id="advanced-settings-open"
+                  class="continuity-trigger"
+                  type="button"
+                  aria-haspopup="dialog"
+                  aria-controls="advanced-settings-dialog"
+                >
+                  Advanced
+                </button>
+              </div>
+            </section>
           </div>
 
           <div hidden>
@@ -181,105 +216,168 @@
                 </div>
                 <div id="call-stage-loading" class="call-stage-loading" hidden>
                   <span class="call-stage-spinner" aria-hidden="true"></span>
-                  <span class="call-stage-loading-label">Loading</span>
+                  <span id="call-stage-loading-label" class="call-stage-loading-label">Loading</span>
                 </div>
               </div>
-              <button
-                id="call-mic-toggle"
-                class="call-mic-toggle"
-                type="button"
-                data-state="muted"
-                data-speaking="false"
-                aria-label="Microphone muted"
-                title="Microphone muted"
-                disabled
+              <div class="call-self-cluster" hidden>
+                <aside id="call-self-view" class="call-self-view" data-state="idle" hidden>
+                  <video id="call-self-video" class="call-self-video" autoplay playsinline muted hidden></video>
+                  <div id="call-self-placeholder" class="call-self-placeholder">
+                    <span class="call-self-placeholder-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M4.5 7.5a2.5 2.5 0 0 1 2.5-2.5h6a2.5 2.5 0 0 1 2.5 2.5v9a2.5 2.5 0 0 1-2.5 2.5H7a2.5 2.5 0 0 1-2.5-2.5v-9Z"></path>
+                        <path d="m15.5 10 4-2.5v9l-4-2.5"></path>
+                      </svg>
+                    </span>
+                  </div>
+                  <div class="call-self-meta">
+                    <span class="call-self-label">You</span>
+                    <span id="call-self-status" class="call-self-status">Camera off</span>
+                  </div>
+                </aside>
+                <div class="call-self-controls" aria-label="Local capture controls">
+                  <button
+                    id="call-camera-toggle"
+                    class="call-action-button"
+                    type="button"
+                    aria-label="Turn camera on"
+                    title="Turn camera on"
+                    disabled
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M4.5 7.5a2.5 2.5 0 0 1 2.5-2.5h6a2.5 2.5 0 0 1 2.5 2.5v9a2.5 2.5 0 0 1-2.5 2.5H7a2.5 2.5 0 0 1-2.5-2.5v-9Z"></path>
+                      <path d="m15.5 10 4-2.5v9l-4-2.5"></path>
+                    </svg>
+                  </button>
+                  <button
+                    id="call-mic-toggle"
+                    class="call-mic-toggle"
+                    type="button"
+                    data-state="muted"
+                    data-listening="false"
+                    data-speaking="false"
+                    aria-label="Microphone muted"
+                    title="Microphone muted"
+                    disabled
+                  >
+                    <span class="call-mic-icon call-mic-icon--live" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+                        <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0"></path>
+                        <path d="M12 17v4"></path>
+                        <path d="M8.5 21h7"></path>
+                      </svg>
+                    </span>
+                    <span class="call-mic-icon call-mic-icon--muted" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+                        <path d="M6.5 11.5a5.5 5.5 0 0 0 8 4.8"></path>
+                        <path d="M12 17v4"></path>
+                        <path d="M8.5 21h7"></path>
+                        <path d="M4 4l16 16"></path>
+                      </svg>
+                    </span>
+                  </button>
+                </div>
+              </div>
+              <div
+                id="call-deferred-indicator"
+                class="call-deferred-indicator"
+                aria-live="polite"
+                hidden
               >
-                <span class="call-mic-icon call-mic-icon--live" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                    <rect x="9" y="3" width="6" height="11" rx="3"></rect>
-                    <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0"></path>
-                    <path d="M12 17v4"></path>
-                    <path d="M8.5 21h7"></path>
-                  </svg>
-                </span>
-                <span class="call-mic-icon call-mic-icon--muted" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                    <rect x="9" y="3" width="6" height="11" rx="3"></rect>
-                    <path d="M6.5 11.5a5.5 5.5 0 0 0 8 4.8"></path>
-                    <path d="M12 17v4"></path>
-                    <path d="M8.5 21h7"></path>
-                    <path d="M4 4l16 16"></path>
-                  </svg>
-                </span>
-              </button>
-              <section class="call-subtitle-overlay" aria-label="Live call subtitles">
-                <div class="call-subtitle-bar">
-                  <p id="call-subtitle-combined" class="call-subtitle-copy">Me: Waiting for you to start the call.
-Agent: Agent is offline.</p>
-                  <div class="call-subtitle-actions">
-                    <span
-                      id="call-thinking-timer"
-                      class="call-thinking-timer"
-                      aria-live="polite"
-                      hidden
-                    ></span>
+                <span class="call-deferred-dot" aria-hidden="true"></span>
+                <span id="call-deferred-time" class="call-deferred-time"></span>
+              </div>
+              <div class="call-controls-stack">
+                <section
+                  id="call-subtitle-overlay"
+                  class="call-subtitle-overlay"
+                  aria-label="Live call subtitles"
+                  hidden
+                >
+                  <p id="call-subtitle-human" class="call-subtitle-chip call-subtitle-chip--human" hidden></p>
+                  <p id="call-subtitle-agent" class="call-subtitle-chip call-subtitle-chip--agent" hidden></p>
+                  <span
+                    id="call-thinking-timer"
+                    class="call-thinking-timer call-subtitle-chip call-subtitle-chip--timer"
+                    aria-live="polite"
+                    hidden
+                  ></span>
+                </section>
+                <div class="call-action-bar" aria-label="Call controls">
+                  <button
+                    id="call-speaker-toggle"
+                    class="call-action-button"
+                    type="button"
+                    aria-label="Mute speaker"
+                    title="Mute speaker"
+                    disabled
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M5 15.5V8.5h3.2l4.8-3.7v14.4L8.2 15.5H5Z"></path>
+                      <path d="M16 9.5c1.3.9 2 2.1 2 3.5s-.7 2.6-2 3.5"></path>
+                      <path d="M18.8 7c2.1 1.6 3.2 3.6 3.2 6s-1.1 4.4-3.2 6"></path>
+                    </svg>
+                  </button>
+                  <button
+                    id="call-history-toggle"
+                    class="call-action-button call-history-toggle"
+                    type="button"
+                    aria-label="Show call history"
+                    title="Show call history"
+                    disabled
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M7 7h10"></path>
+                      <path d="M7 12h10"></path>
+                      <path d="M7 17h10"></path>
+                    </svg>
+                  </button>
+                  <button
+                    id="join-call"
+                    class="call-action-button call-action-button--danger"
+                    type="button"
+                    data-mode="start-call"
+                    aria-label="Start Call"
+                    title="Start Call"
+                  >
+                    <span class="call-button-icon call-button-icon--start" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M8.7 4.8c.6-.6 1.5-.8 2.3-.4l2.1 1c.8.4 1.2 1.3 1 2.2l-.4 2a2 2 0 0 0 .6 1.8l1.3 1.3a2 2 0 0 0 1.8.6l2-.4c.9-.2 1.8.2 2.2 1l1 2.1c.4.8.2 1.7-.4 2.3l-1.3 1.3c-1.4 1.4-3.5 1.9-5.4 1.2a22 22 0 0 1-7-4.5 22 22 0 0 1-4.5-7c-.7-1.9-.2-4 1.2-5.4l1.3-1.3Z"></path>
+                      </svg>
+                    </span>
+                    <span class="call-button-icon call-button-icon--end" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M4 16.5c2.4-2.3 5-3.5 8-3.5s5.6 1.2 8 3.5"></path>
+                        <path d="M9 15 4.5 19.5"></path>
+                        <path d="M15 15 19.5 19.5"></path>
+                      </svg>
+                    </span>
+                  </button>
+                </div>
+                <div class="call-input-panel">
+                  <div class="call-compose call-compose--dock">
+                    <textarea
+                      id="typed-input"
+                      class="call-compose-input"
+                      rows="1"
+                      placeholder="Type to agent"
+                    ></textarea>
                     <button
-                      id="call-history-toggle"
-                      class="call-history-toggle call-history-toggle--overlay"
+                      id="send-typed"
+                      class="call-compose-send"
                       type="button"
-                      aria-label="Show call history"
-                      title="Show call history"
-                      hidden
+                      aria-label="Send typed message"
+                      title="Send typed message"
                     >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                        <path d="M7 7h10"></path>
-                        <path d="M7 12h10"></path>
-                        <path d="M7 17h10"></path>
+                        <path d="M4 12 20 4 14 20 11 13 4 12Z"></path>
                       </svg>
-                    </button>
-                    <button
-                      id="join-call"
-                      class="primary call-button call-button--overlay"
-                      type="button"
-                      data-mode="start-call"
-                      aria-label="Start Call"
-                      title="Start Call"
-                    >
-                      <span class="call-button-icon call-button-icon--start" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                          <path d="M8.7 4.8c.6-.6 1.5-.8 2.3-.4l2.1 1c.8.4 1.2 1.3 1 2.2l-.4 2a2 2 0 0 0 .6 1.8l1.3 1.3a2 2 0 0 0 1.8.6l2-.4c.9-.2 1.8.2 2.2 1l1 2.1c.4.8.2 1.7-.4 2.3l-1.3 1.3c-1.4 1.4-3.5 1.9-5.4 1.2a22 22 0 0 1-7-4.5 22 22 0 0 1-4.5-7c-.7-1.9-.2-4 1.2-5.4l1.3-1.3Z"></path>
-                        </svg>
-                      </span>
-                      <span class="call-button-icon call-button-icon--end" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                          <path d="M4 16.5c2.4-2.3 5-3.5 8-3.5s5.6 1.2 8 3.5"></path>
-                          <path d="M9 15 4.5 19.5"></path>
-                          <path d="M15 15 19.5 19.5"></path>
-                        </svg>
-                      </span>
                     </button>
                   </div>
                 </div>
-                <div class="call-compose">
-                  <textarea
-                    id="typed-input"
-                    class="call-compose-input"
-                    rows="1"
-                    placeholder="Type to agent"
-                  ></textarea>
-                  <button
-                    id="send-typed"
-                    class="call-compose-send"
-                    type="button"
-                    aria-label="Send typed message"
-                    title="Send typed message"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                      <path d="M4 12 20 4 14 20 11 13 4 12Z"></path>
-                    </svg>
-                  </button>
-                </div>
-              </section>
+              </div>
             </div>
 
             <aside id="call-history-panel" class="call-history" hidden>
@@ -295,6 +393,164 @@ Agent: Agent is offline.</p>
         </article>
       </section>
     </main>
+
+    <dialog id="continuity-settings-dialog" class="prompt-dialog continuity-dialog">
+      <section class="prompt-dialog-card continuity-dialog-card">
+        <div class="continuity-dialog-head">
+          <span class="setup-control-label">Continuity</span>
+          <button
+            id="continuity-settings-close"
+            class="setup-action-button"
+            type="button"
+            aria-label="Close continuity settings"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M6 6 18 18"></path>
+              <path d="M18 6 6 18"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="agent-self-grid">
+          <label class="agent-self-field">
+            <span class="setup-control-label">Mode</span>
+            <select id="agent-mode-select" name="agent-mode-select">
+              <option value="standard">Standard</option>
+              <option value="continuity">Continuity</option>
+            </select>
+          </label>
+          <label class="agent-self-field">
+            <span class="setup-control-label">Name</span>
+            <input id="agent-self-name" name="agent-self-name" type="text" placeholder="Optional" />
+          </label>
+          <label class="agent-self-field">
+            <span class="setup-control-label">Pronouns</span>
+            <input id="agent-self-pronouns" name="agent-self-pronouns" type="text" placeholder="Optional" />
+          </label>
+          <label class="agent-self-field">
+            <span class="setup-control-label">Personality</span>
+            <textarea id="agent-self-personality" name="agent-self-personality" rows="2" placeholder="Optional"></textarea>
+          </label>
+          <label class="agent-self-field">
+            <span class="setup-control-label">Interests</span>
+            <textarea id="agent-self-interests" name="agent-self-interests" rows="2" placeholder="Optional"></textarea>
+          </label>
+          <label class="agent-self-field agent-self-field--wide">
+            <span class="setup-control-label">Self Prompt</span>
+            <textarea id="agent-self-prompt" name="agent-self-prompt" rows="3" placeholder="Optional hidden self seed"></textarea>
+          </label>
+        </div>
+        <label class="continuity-toggle-field">
+          <input
+            id="smooth-gesture-transitions-toggle"
+            class="continuity-toggle-input"
+            name="smooth-gesture-transitions-toggle"
+            type="checkbox"
+            checked
+          />
+          <span class="continuity-toggle-copy">
+            <span class="setup-control-label">Smooth transitions</span>
+            <span class="continuity-toggle-note">Blend animation switches more softly.</span>
+          </span>
+        </label>
+        <div class="continuity-dialog-actions">
+          <span id="continuity-settings-dirty" class="continuity-dirty-indicator" hidden>Unsaved</span>
+          <button
+            id="continuity-settings-save"
+            class="primary continuity-save-button"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </section>
+    </dialog>
+
+    <dialog id="plugin-settings-dialog" class="prompt-dialog continuity-dialog">
+      <section class="prompt-dialog-card continuity-dialog-card">
+        <div class="continuity-dialog-head">
+          <span class="setup-control-label">Plugins</span>
+          <button
+            id="plugin-settings-close"
+            class="setup-action-button"
+            type="button"
+            aria-label="Close plugin settings"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M6 6 18 18"></path>
+              <path d="M18 6 6 18"></path>
+            </svg>
+          </button>
+        </div>
+        <p class="dialog-note">
+          This list syncs with the installed Codex plugins each time you open it.
+        </p>
+        <div id="codex-plugin-list" class="plugin-settings-list" aria-live="polite"></div>
+        <div id="codex-plugin-empty" class="plugin-settings-empty" hidden>
+          No installed Codex plugins were found.
+        </div>
+        <div class="continuity-dialog-actions">
+          <button
+            id="plugin-settings-save"
+            class="primary continuity-save-button"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </section>
+    </dialog>
+
+    <dialog id="advanced-settings-dialog" class="prompt-dialog continuity-dialog">
+      <section class="prompt-dialog-card continuity-dialog-card">
+        <div class="continuity-dialog-head">
+          <span class="setup-control-label">Advanced</span>
+          <button
+            id="advanced-settings-close"
+            class="setup-action-button"
+            type="button"
+            aria-label="Close advanced settings"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M6 6 18 18"></path>
+              <path d="M18 6 6 18"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="advanced-settings-list">
+          <label class="advanced-setting-card">
+            <input
+              id="advanced-control-computer"
+              class="advanced-setting-checkbox"
+              type="checkbox"
+            />
+            <span class="advanced-setting-copy">
+              <strong>Control computer</strong>
+              <span>Enable <code>shell_tool</code> and <code>shell_snapshot</code>.</span>
+            </span>
+          </label>
+          <label class="advanced-setting-card">
+            <input
+              id="advanced-complex-tasks"
+              class="advanced-setting-checkbox"
+              type="checkbox"
+            />
+            <span class="advanced-setting-copy">
+              <strong>Complex tasks</strong>
+              <span>Enable <code>multi_agent</code>, <code>multi_agent_v2</code>, and <code>enable_fanout</code>.</span>
+            </span>
+          </label>
+        </div>
+        <div class="continuity-dialog-actions">
+          <button
+            id="advanced-settings-save"
+            class="primary continuity-save-button"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </section>
+    </dialog>
 
     <script type="module" src="/app.js"></script>
   </body>

@@ -73,6 +73,13 @@ export function createPresenter({
     return `${seconds}.${tenths % 10}s`;
   }
 
+  function formatDeferredElapsedSeconds(value = 0) {
+    const totalSeconds = Math.max(0, Number(value) || 0);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${`${seconds}`.padStart(2, '0')}`;
+  }
+
   function clampPercent(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) {
@@ -173,12 +180,22 @@ export function createPresenter({
 
   function renderCallSnapshot() {
     const humanVoiceSnapshot = state.humanVoiceSnapshot || humanVoiceLayer.getSnapshot();
+    const agentVoiceSnapshot = state.agentVoiceSnapshot || agentVoiceLayer.getSnapshot();
     const avatarSpeechSnapshot = avatarSpeech.getSnapshot();
     const avatarSnapshot = avatarLayer.getSnapshot();
+    const localCameraSnapshot = state.localCameraSnapshot || {};
     const playbackStarted = Boolean(avatarSpeechSnapshot.playbackStarted);
-    const thinkingInputLocked = Boolean(state.agentThinkingActive && !playbackStarted);
+    const localThinkingPromptActive = avatarSpeechSnapshot.source === 'local-thinking-prompt';
+    const replyPlaybackStarted = Boolean(playbackStarted && !localThinkingPromptActive);
+    const thinkingInputLocked = Boolean(state.agentThinkingActive && !replyPlaybackStarted);
     const startupGreetingLocked = Boolean(state.startupGreetingActive);
+    const startupGreetingConnecting = Boolean(startupGreetingLocked && !playbackStarted);
     const callInputLocked = thinkingInputLocked || startupGreetingLocked;
+    const replySequenceLocked = Boolean(
+      state.activeCall &&
+      state.currentTurnId &&
+      !humanVoiceSnapshot.listening,
+    );
     const speechReady = recognitionReady(humanVoiceSnapshot);
     const action = getCallPrimaryAction({
       activeCall: state.activeCall,
@@ -198,9 +215,28 @@ export function createPresenter({
     );
     const stageShowingAgent = agentOnline && !state.callEndingDimmed;
     const micMuted =
-      !state.activeCall || state.endingCall || state.humanMicMuted || callInputLocked;
+      !state.activeCall ||
+      state.endingCall ||
+      state.humanMicMuted ||
+      callInputLocked ||
+      replySequenceLocked;
     const micLevel = micMuted ? 0 : clampPercent(state.humanMicLevel);
-    const micSpeaking = state.activeCall && !micMuted && micLevel >= 8;
+    const micListening = Boolean(state.activeCall && !micMuted && humanVoiceSnapshot.listening);
+    const micSpeaking = Boolean(micListening && micLevel >= 8);
+    const cameraSupported = localCameraSnapshot.supported !== false;
+    const cameraActive = Boolean(localCameraSnapshot.active);
+    const cameraLoading = Boolean(localCameraSnapshot.loading);
+    const cameraEnabled = localCameraSnapshot.enabled !== false;
+    const cameraPermissionState = `${localCameraSnapshot.permissionState || ''}`.trim();
+    const cameraInteractive =
+      Boolean(state.activeCall && !state.endingCall && !startupGreetingLocked && cameraSupported);
+    const speakerEnabled = agentVoiceSnapshot.speakReplies !== false;
+    const speakerInteractive = Boolean(
+      state.activeCall &&
+      !state.endingCall &&
+      !startupGreetingLocked &&
+      agentVoiceSnapshot.speechSynthesisSupported,
+    );
 
     if (dom.callTitle) {
       dom.callTitle.textContent = getCallTitle(state.session, state.runtimeConfig);
@@ -217,8 +253,13 @@ export function createPresenter({
 
     if (dom.callMicToggle) {
       dom.callMicToggle.dataset.state = micMuted ? 'muted' : 'live';
+      dom.callMicToggle.dataset.listening = micListening ? 'true' : 'false';
       dom.callMicToggle.dataset.speaking = micSpeaking ? 'true' : 'false';
-      dom.callMicToggle.disabled = !state.activeCall || state.endingCall || callInputLocked;
+      dom.callMicToggle.disabled =
+        !state.activeCall ||
+        state.endingCall ||
+        callInputLocked ||
+        replySequenceLocked;
       dom.callMicToggle.style.setProperty('--mic-glow', `${(micLevel / 100).toFixed(2)}`);
       const micLabel = !state.activeCall
         ? 'Microphone muted'
@@ -226,11 +267,69 @@ export function createPresenter({
           ? 'Microphone muted while agent greets you'
         : thinkingInputLocked
           ? 'Microphone muted while agent is thinking'
+        : replySequenceLocked
+          ? 'Microphone muted while agent is speaking'
         : micMuted
           ? 'Unmute microphone'
           : 'Mute microphone';
       dom.callMicToggle.setAttribute('aria-label', micLabel);
       dom.callMicToggle.setAttribute('title', micLabel);
+    }
+
+    if (dom.callSelfView) {
+      const selfViewVisible = Boolean(state.activeCall || cameraLoading || cameraActive);
+      let selfViewState = 'idle';
+      if (cameraActive) {
+        selfViewState = 'live';
+      } else if (cameraLoading) {
+        selfViewState = 'loading';
+      } else if (cameraPermissionState === 'denied') {
+        selfViewState = 'denied';
+      } else if (!cameraEnabled) {
+        selfViewState = 'off';
+      }
+      dom.callSelfView.hidden = !selfViewVisible;
+      dom.callSelfView.dataset.state = selfViewState;
+    }
+
+    if (dom.callSelfCluster) {
+      dom.callSelfCluster.hidden = !state.activeCall;
+    }
+
+    if (dom.callSelfVideo) {
+      dom.callSelfVideo.hidden = !cameraActive;
+    }
+
+    if (dom.callSelfPlaceholder) {
+      dom.callSelfPlaceholder.hidden = cameraActive;
+    }
+
+    if (dom.callSelfStatus) {
+      dom.callSelfStatus.textContent =
+        localCameraSnapshot.status ||
+        (cameraActive ? 'live' : cameraEnabled ? 'Camera ready' : 'Camera off');
+    }
+
+    if (dom.callCameraToggle) {
+      const cameraLabel = !cameraSupported
+        ? 'Camera unavailable'
+        : cameraLoading
+          ? 'Starting camera'
+          : cameraEnabled
+            ? 'Turn camera off'
+            : 'Turn camera on';
+      dom.callCameraToggle.disabled = !cameraInteractive;
+      dom.callCameraToggle.dataset.state = cameraActive ? 'live' : cameraEnabled ? 'ready' : 'off';
+      dom.callCameraToggle.setAttribute('aria-label', cameraLabel);
+      dom.callCameraToggle.setAttribute('title', cameraLabel);
+    }
+
+    if (dom.callSpeakerToggle) {
+      const speakerLabel = speakerEnabled ? 'Mute speaker' : 'Unmute speaker';
+      dom.callSpeakerToggle.disabled = !speakerInteractive;
+      dom.callSpeakerToggle.dataset.state = speakerEnabled ? 'live' : 'muted';
+      dom.callSpeakerToggle.setAttribute('aria-label', speakerLabel);
+      dom.callSpeakerToggle.setAttribute('title', speakerLabel);
     }
 
     if (dom.callEmptyState) {
@@ -267,15 +366,18 @@ export function createPresenter({
       const callVisualPending = Boolean((state.activeCall || state.sessionPreparing) && !state.callEndingDimmed);
       const stageLoading = Boolean(
         callVisualPending &&
-        (state.modelLoading || !avatarSnapshot.ready),
+        (state.modelLoading || !avatarSnapshot.ready || startupGreetingConnecting),
       );
       dom.callStageLoading.hidden = !stageLoading;
+      if (dom.callStageLoadingLabel) {
+        dom.callStageLoadingLabel.textContent = startupGreetingConnecting ? 'Connecting' : 'Loading';
+      }
     }
 
     if (dom.callThinkingTimer) {
       const showThinkingTimer = Boolean(
         state.agentThinkingActive &&
-        !playbackStarted,
+        !replyPlaybackStarted,
       );
       dom.callThinkingTimer.hidden = !showThinkingTimer;
       dom.callThinkingTimer.textContent = showThinkingTimer
@@ -283,7 +385,23 @@ export function createPresenter({
         : '';
     }
 
-    if (avatarSpeechSnapshot.active && playbackStarted) {
+    if (dom.callDeferredIndicator) {
+      const deferredIndicator = state.deferredIndicator || {};
+      const showDeferredIndicator = Boolean(state.activeCall && deferredIndicator.active);
+      dom.callDeferredIndicator.hidden = !showDeferredIndicator;
+      if (dom.callDeferredTime) {
+        dom.callDeferredTime.textContent = showDeferredIndicator
+          ? formatDeferredElapsedSeconds(deferredIndicator.elapsedSeconds)
+          : '';
+      }
+    }
+
+    if (startupGreetingConnecting) {
+      setCallButtonMeta(action.label, 'Connecting');
+      return;
+    }
+
+    if (avatarSpeechSnapshot.active && replyPlaybackStarted) {
       setCallButtonMeta(action.label, 'Speaking');
       return;
     }
@@ -420,25 +538,55 @@ export function createPresenter({
   }
 
   function renderSubtitles() {
-    const humanText = state.transcriptPreview || state.subtitles.human.text || '…';
-    const agentText = state.subtitles.agent.text || '…';
+    const livePlayback = state.avatarSpeechSnapshot || avatarSpeech.getSnapshot();
+    const humanText = `${state.transcriptPreview || state.subtitles.human.text || ''}`.trim();
+    const agentText = `${state.subtitles.agent.text || ''}`.trim();
+    const humanMode = `${state.subtitles.human.mode || 'idle'}`.trim() || 'idle';
+    const agentMode = `${state.subtitles.agent.mode || 'idle'}`.trim() || 'idle';
+    const showHuman = Boolean(
+      state.activeCall &&
+      humanText &&
+      (state.transcriptPreview || !['idle', 'ready'].includes(humanMode))
+    );
+    const showAgent = Boolean(
+      state.activeCall &&
+      agentText &&
+      (
+        !['idle', 'ready'].includes(agentMode) ||
+        state.processingReplies ||
+        state.agentThinkingActive ||
+        livePlayback.active
+      )
+    );
+    const thinkingVisible = Boolean(dom.callThinkingTimer && !dom.callThinkingTimer.hidden);
 
     if (dom.subtitleHuman) {
-      dom.subtitleHuman.textContent = humanText;
+      dom.subtitleHuman.textContent = humanText || '…';
     }
     if (dom.subtitleHumanMode) {
-      dom.subtitleHumanMode.textContent = state.subtitles.human.mode || 'idle';
-      dom.subtitleHumanMode.dataset.mode = state.subtitles.human.mode || 'idle';
+      dom.subtitleHumanMode.textContent = humanMode;
+      dom.subtitleHumanMode.dataset.mode = humanMode;
     }
     if (dom.subtitleAgent) {
-      dom.subtitleAgent.textContent = agentText;
+      dom.subtitleAgent.textContent = agentText || '…';
     }
     if (dom.subtitleAgentMode) {
-      dom.subtitleAgentMode.textContent = state.subtitles.agent.mode || 'idle';
-      dom.subtitleAgentMode.dataset.mode = state.subtitles.agent.mode || 'idle';
+      dom.subtitleAgentMode.textContent = agentMode;
+      dom.subtitleAgentMode.dataset.mode = agentMode;
     }
     if (dom.callSubtitleCombined) {
-      dom.callSubtitleCombined.textContent = `Me: ${humanText}\nAgent: ${agentText}`;
+      dom.callSubtitleCombined.textContent = `Me: ${humanText || '…'}\nAgent: ${agentText || '…'}`;
+    }
+    if (dom.callSubtitleHuman) {
+      dom.callSubtitleHuman.hidden = !showHuman;
+      dom.callSubtitleHuman.textContent = humanText || '';
+    }
+    if (dom.callSubtitleAgent) {
+      dom.callSubtitleAgent.hidden = !showAgent;
+      dom.callSubtitleAgent.textContent = agentText || '';
+    }
+    if (dom.callSubtitleOverlay) {
+      dom.callSubtitleOverlay.hidden = !(showHuman || showAgent || thinkingVisible);
     }
   }
 
@@ -446,8 +594,10 @@ export function createPresenter({
     const playback = state.avatarSpeechSnapshot || avatarSpeech.getSnapshot();
     const agentVoice = state.agentVoiceSnapshot || agentVoiceLayer.getSnapshot();
     const playbackStarted = Boolean(playback.playbackStarted);
+    const localThinkingPromptActive = playback.source === 'local-thinking-prompt';
+    const replyPlaybackStarted = Boolean(playbackStarted && !localThinkingPromptActive);
 
-    if (playback.active && playbackStarted) {
+    if (playback.active && replyPlaybackStarted) {
       updateAgentStatus(
         'active',
         playback.mode === 'voice' ? 'Speaking' : 'Animating',
@@ -457,7 +607,7 @@ export function createPresenter({
       return;
     }
 
-    if (state.processingReplies || (playback.active && !playbackStarted)) {
+    if (state.processingReplies || localThinkingPromptActive || (playback.active && !replyPlaybackStarted)) {
       updateAgentStatus('active', 'Thinking', state.subtitles.agent.text || 'Thinking');
       renderCallSnapshot();
       return;
@@ -515,9 +665,13 @@ export function createPresenter({
 
   function refreshActionButtons() {
     const humanVoiceSnapshot = state.humanVoiceSnapshot || humanVoiceLayer.getSnapshot();
+    const agentVoiceSnapshot = state.agentVoiceSnapshot || agentVoiceLayer.getSnapshot();
+    const localCameraSnapshot = state.localCameraSnapshot || {};
     const avatarSpeechSnapshot = state.avatarSpeechSnapshot || avatarSpeech.getSnapshot();
     const playbackStarted = Boolean(avatarSpeechSnapshot.playbackStarted);
-    const thinkingInputLocked = Boolean(state.agentThinkingActive && !playbackStarted);
+    const localThinkingPromptActive = avatarSpeechSnapshot.source === 'local-thinking-prompt';
+    const replyPlaybackStarted = Boolean(playbackStarted && !localThinkingPromptActive);
+    const thinkingInputLocked = Boolean(state.agentThinkingActive && !replyPlaybackStarted);
     const startupGreetingLocked = Boolean(state.startupGreetingActive);
     const callInputLocked = thinkingInputLocked || startupGreetingLocked;
     const hasTypedText = (dom.typedInput?.value || '').trim().length > 0;
@@ -542,6 +696,22 @@ export function createPresenter({
         state.endingCall ||
         callInputLocked ||
         !hasTypedText;
+    }
+    if (dom.callCameraToggle) {
+      dom.callCameraToggle.disabled = Boolean(
+        !state.activeCall ||
+        state.endingCall ||
+        startupGreetingLocked ||
+        localCameraSnapshot.supported === false,
+      );
+    }
+    if (dom.callSpeakerToggle) {
+      dom.callSpeakerToggle.disabled = Boolean(
+        !state.activeCall ||
+        state.endingCall ||
+        startupGreetingLocked ||
+        !agentVoiceSnapshot.speechSynthesisSupported,
+      );
     }
     syncSetupPreviewButtons();
   }
@@ -600,8 +770,13 @@ export function createPresenter({
       dom.callHistoryPanel.dataset.collapsed = historyCollapsed ? 'true' : 'false';
     }
     if (dom.callHistoryToggle) {
-      const nextLabel = historyCollapsed ? 'Show call history' : 'Hide call history';
-      dom.callHistoryToggle.hidden = !historyVisible;
+      const nextLabel = !historyVisible
+        ? 'No call history yet'
+        : historyCollapsed
+          ? 'Show call history'
+          : 'Hide call history';
+      dom.callHistoryToggle.hidden = false;
+      dom.callHistoryToggle.disabled = !historyVisible;
       dom.callHistoryToggle.setAttribute('aria-label', nextLabel);
       dom.callHistoryToggle.setAttribute('title', nextLabel);
     }

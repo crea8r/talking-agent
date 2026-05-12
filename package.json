@@ -12,8 +12,10 @@
     "start:voice-loop-lab": "PORT=4382 npm run start -w @talking-agent/voice-loop-lab",
     "dev:avatar-puppet-lab": "PORT=4383 npm run dev -w @talking-agent/avatar-puppet-lab",
     "start:avatar-puppet-lab": "PORT=4383 npm run start -w @talking-agent/avatar-puppet-lab",
-    "dev:one-to-one-agent-room": "PORT=4384 npm run dev -w @talking-agent/one-to-one-agent-room",
-    "start:one-to-one-agent-room": "PORT=4384 npm run start -w @talking-agent/one-to-one-agent-room",
+    "dev:vrma-studio": "PORT=4384 npm run dev -w @talking-agent/vrma-studio",
+    "start:vrma-studio": "PORT=4384 npm run start -w @talking-agent/vrma-studio",
+    "dev:one-to-one-agent-room": "node scripts/one-to-one-agent-room-launcher.mjs dev",
+    "start:one-to-one-agent-room": "node scripts/one-to-one-agent-room-launcher.mjs start",
     "dev:call-landing": "PORT=4385 npm run dev -w @talking-agent/call-landing",
     "start:call-landing": "PORT=4385 npm run start -w @talking-agent/call-landing",
     "dev:agent-room-mcp-tester": "PORT=4386 npm run dev -w @talking-agent/agent-room-mcp-tester",
@@ -26,6 +28,7 @@
     "dev:voice-cast": "PORT=4388 npm run dev -w @talking-agent/voice-cast",
     "start:voice-cast": "PORT=4388 npm run start -w @talking-agent/voice-cast",
     "check:package-boundaries": "node scripts/check-package-boundaries.mjs",
+    "report:one-to-one-agent-room": "node scripts/one-to-one-agent-room-session-report.mjs",
     "prepare": "husky"
   },
   "engines": {

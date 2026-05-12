@@ -12,6 +12,27 @@ import {
   pickGreetingHelloGesture,
   pickRandomHelloPhrase,
 } from './hello-sequence.js';
+import {
+  pickRandomThinkingPromptPhrase,
+} from './thinking-prompt-sequence.js';
+
+const INITIAL_THINKING_PROMPT_DELAY_MS = 550;
+const THINKING_PROMPT_LOOP_BASE_DELAY_MS = 1_000;
+const THINKING_PROMPT_LOOP_JITTER_MS = 0;
+const AGENT_SELF_RESERVE_DELAY_MS = 300;
+const INTERIM_SPECULATIVE_BOUNDARY_DELAY_MS = 180;
+const INTERIM_SPECULATIVE_STALL_DELAY_MS = 450;
+const INTERIM_SPECULATIVE_MIN_GROWTH_CHARS = 24;
+const LOCAL_HELLO_DELAY_MS = 0;
+const AUTO_REPLY_SEGMENT_TARGET_DURATION_MS = 5_500;
+const AUTO_REPLY_SEGMENT_TOTAL_DURATION_MS = 15_000;
+const AUTO_REPLY_SEGMENT_SENTENCE_THRESHOLD = 6;
+const AUTO_REPLY_SEGMENT_MAX_CHARS = 180;
+const AUTO_REPLY_SEGMENT_MAX_WORDS = 26;
+const AUTO_REPLY_SEGMENT_PAUSE_MS = 120;
+const BACKGROUND_TURN_POLL_INTERVAL_MS = 2_000;
+const SOFT_TIMEOUT_NOTICE_TEXT =
+  "I'm still working on that, and it may take a while. We can talk about something else, and I'll come back when it's ready.";
 
 const AMBIENT_KEYWORDS = {
   idle: ['idle', 'between replies', 'resting', 'neutral speaking', 'waiting', 'calm'],
@@ -42,6 +63,7 @@ export function createSessionController({
   renderSubtitles,
   renderDebugSnapshot,
   renderAgentStatus,
+  renderCallSnapshot = () => {},
   renderVoiceSampleState,
   refreshActionButtons,
   syncVoiceSampleProfile,
@@ -59,6 +81,29 @@ export function createSessionController({
   let activeEndCallPromise = null;
   let pendingLocalHelloTimerId = 0;
   let localHelloToken = 0;
+  let pendingThinkingPromptTimerId = 0;
+  let thinkingPromptToken = 0;
+  let localThinkingPromptActive = false;
+  let pendingReserveTimerId = 0;
+  let localReservePromptActive = false;
+  let activeLocalHelloText = '';
+  let activeSpeculativeAbortController = null;
+  let pendingInterimSpeculativeTimerId = 0;
+  let pendingInterimSpeculativeDelayMs = 0;
+  let pendingReplyContinuationTimerId = 0;
+  let speculativePlaybackGeneration = 0;
+  let speculativeSpeechActive = false;
+  let lastSpeculativeTranscript = '';
+  let lastSpeculativeBoundaryIndex = -1;
+  let queuedSpeculativeTranscript = '';
+  let queuedSpeculativeSource = '';
+  let speechIdleWaiters = [];
+  let pendingDeferredTurnIds = new Set();
+  let deferredTurnStartedAtById = new Map();
+  let pendingDeferredTurnPollTimerId = 0;
+  let deferredTurnPollInFlight = false;
+  let activeDeferredTurnPlaybackId = '';
+  let deferredIndicatorTimerId = 0;
 
   function getLaunchContext() {
     return state.launchContext && typeof state.launchContext === 'object'
@@ -77,6 +122,10 @@ export function createSessionController({
   }
 
   function buildWorkspaceSetupScopeQuery() {
+    return buildVoiceScopeQuery();
+  }
+
+  function buildAgentSelfScopeQuery() {
     return buildVoiceScopeQuery();
   }
 
@@ -111,10 +160,33 @@ export function createSessionController({
         reasoningEffort: '',
         sessionRoot: '',
         command: '',
+        availablePlugins: [],
+        pluginInventoryLoading: false,
       };
     }
 
     return state.codex;
+  }
+
+  function getAgentSelfState() {
+    if (!state.agentSelf) {
+      state.agentSelf = {
+        loading: false,
+        saving: false,
+        settings: {
+          agentMode: 'standard',
+          selfProfile: {
+            name: '',
+            pronouns: '',
+            personality: '',
+            interests: '',
+            selfPrompt: '',
+          },
+        },
+      };
+    }
+
+    return state.agentSelf;
   }
 
   function createUtteranceId() {
@@ -131,11 +203,434 @@ export function createSessionController({
     renderSubtitles();
   }
 
+  function shouldAcceptVoiceInput({
+    allowDuringStartupGreeting = false,
+    ignoreBlockingAgentSpeech = false,
+  } = {}) {
+    const blockingAgentSpeech =
+      !ignoreBlockingAgentSpeech &&
+      avatarSpeech.getSnapshot().active &&
+      !speculativeSpeechActive;
+    return Boolean(
+      state.activeCall &&
+        !state.endingCall &&
+        !state.callEndingDimmed &&
+        !state.humanMicMuted &&
+        !state.agentThinkingActive &&
+        !state.startupGreetingActive &&
+        !blockingAgentSpeech,
+    );
+  }
+
+  function suspendHumanListening() {
+    humanVoiceLayer.updateConfig?.({ autoRestart: false });
+    humanVoiceLayer.stopListening({ suppressAutoRestart: true });
+    state.humanMicLevel = 0;
+  }
+
+  async function resumeHumanListeningIfAllowed({
+    updateSubtitle = false,
+    ignoreBlockingAgentSpeech = false,
+  } = {}) {
+    if (!shouldAcceptVoiceInput({ ignoreBlockingAgentSpeech })) {
+      return false;
+    }
+
+    humanVoiceLayer.updateConfig?.({ autoRestart: true });
+    const humanVoiceSnapshot = state.humanVoiceSnapshot || humanVoiceLayer.getSnapshot?.() || {};
+    if (!humanVoiceSnapshot.listening) {
+      await humanVoiceLayer.startListening({ restart: true });
+    }
+    state.humanMicLevel = 0;
+    if (updateSubtitle && !state.transcriptPreview && !state.activeUtteranceId) {
+      setSubtitle('human', 'Listening…', 'listening');
+    }
+    return true;
+  }
+
+  async function resumeHumanListeningDuringReplyPause() {
+    if (
+      !state.activeCall ||
+      state.endingCall ||
+      state.callEndingDimmed ||
+      state.humanMicMuted ||
+      state.startupGreetingActive
+    ) {
+      return false;
+    }
+
+    humanVoiceLayer.updateConfig?.({ autoRestart: true });
+    const humanVoiceSnapshot = state.humanVoiceSnapshot || humanVoiceLayer.getSnapshot?.() || {};
+    if (!humanVoiceSnapshot.listening) {
+      await humanVoiceLayer.startListening({ restart: true });
+    }
+    state.humanMicLevel = 0;
+    if (!state.transcriptPreview && state.activeUtteranceId) {
+      setSubtitle('human', state.activeUtteranceText || state.transcriptPreview, 'listening');
+    } else if (!state.transcriptPreview) {
+      setSubtitle('human', 'Listening…', 'listening');
+    }
+    return true;
+  }
+
   function clearThinkingTimer() {
     if (thinkingTimerId) {
       timers.clearInterval?.(thinkingTimerId);
       thinkingTimerId = 0;
     }
+  }
+
+  function normalizeTranscriptForComparison(text) {
+    return `${text || ''}`
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function findLastStrongBoundaryIndex(text) {
+    const transcript = `${text || ''}`;
+    let lastIndex = -1;
+    const matches = transcript.matchAll(/[.!?;:](?=\s|$)/g);
+    for (const match of matches) {
+      lastIndex = match.index ?? lastIndex;
+    }
+    return lastIndex;
+  }
+
+  function clearPendingInterimSpeculative() {
+    if (!pendingInterimSpeculativeTimerId) {
+      pendingInterimSpeculativeDelayMs = 0;
+      return;
+    }
+
+    timers.clearTimeout?.(pendingInterimSpeculativeTimerId);
+    pendingInterimSpeculativeTimerId = 0;
+    pendingInterimSpeculativeDelayMs = 0;
+  }
+
+  function clearPendingReplyContinuation() {
+    if (!pendingReplyContinuationTimerId) {
+      return;
+    }
+
+    timers.clearTimeout?.(pendingReplyContinuationTimerId);
+    pendingReplyContinuationTimerId = 0;
+  }
+
+  function clearPendingDeferredTurnPoll() {
+    if (!pendingDeferredTurnPollTimerId) {
+      return;
+    }
+
+    timers.clearTimeout?.(pendingDeferredTurnPollTimerId);
+    pendingDeferredTurnPollTimerId = 0;
+  }
+
+  function getDeferredIndicatorState() {
+    if (!state.deferredIndicator || typeof state.deferredIndicator !== 'object') {
+      state.deferredIndicator = {
+        active: false,
+        elapsedSeconds: 0,
+        pendingCount: 0,
+      };
+    }
+
+    return state.deferredIndicator;
+  }
+
+  function clearDeferredIndicatorTimer() {
+    if (!deferredIndicatorTimerId) {
+      return;
+    }
+
+    timers.clearInterval?.(deferredIndicatorTimerId);
+    deferredIndicatorTimerId = 0;
+  }
+
+  function syncDeferredIndicator() {
+    const indicator = getDeferredIndicatorState();
+    const turns = Array.isArray(state.session?.turns) ? state.session.turns : [];
+    const turnsById = new Map(turns.map((turn) => [`${turn?.id || ''}`.trim(), turn]));
+    const unresolvedEntries = [...pendingDeferredTurnIds]
+      .map((turnId) => {
+        const turn = turnsById.get(turnId);
+        if (!turn || turn.status !== 'processing') {
+          return null;
+        }
+
+        return {
+          turnId,
+          startedAt: deferredTurnStartedAtById.get(turnId) || Date.now(),
+        };
+      })
+      .filter(Boolean);
+
+    if (!unresolvedEntries.length) {
+      indicator.active = false;
+      indicator.elapsedSeconds = 0;
+      indicator.pendingCount = 0;
+      clearDeferredIndicatorTimer();
+      renderCallSnapshot();
+      return;
+    }
+
+    const oldestStartedAt = Math.min(...unresolvedEntries.map((entry) => entry.startedAt));
+    indicator.active = true;
+    indicator.pendingCount = unresolvedEntries.length;
+    indicator.elapsedSeconds = Math.max(0, Math.floor((Date.now() - oldestStartedAt) / 1000));
+    if (!deferredIndicatorTimerId) {
+      deferredIndicatorTimerId =
+        timers.setInterval?.(() => {
+          syncDeferredIndicator();
+        }, 1000) || 0;
+    }
+    renderCallSnapshot();
+  }
+
+  function resetDeferredTurnTracking() {
+    clearPendingDeferredTurnPoll();
+    deferredTurnPollInFlight = false;
+    pendingDeferredTurnIds.clear();
+    deferredTurnStartedAtById.clear();
+    activeDeferredTurnPlaybackId = '';
+    const indicator = getDeferredIndicatorState();
+    indicator.active = false;
+    indicator.elapsedSeconds = 0;
+    indicator.pendingCount = 0;
+    clearDeferredIndicatorTimer();
+  }
+
+  function notifySpeechIdleWaiters() {
+    if (avatarSpeech.getSnapshot().active || !speechIdleWaiters.length) {
+      return;
+    }
+
+    const waiters = speechIdleWaiters;
+    speechIdleWaiters = [];
+    waiters.forEach((resolve) => resolve());
+  }
+
+  function waitForSpeechIdle() {
+    if (!avatarSpeech.getSnapshot().active) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      speechIdleWaiters.push(resolve);
+    });
+  }
+
+  function pruneDeferredTurnTracking() {
+    const turns = Array.isArray(state.session?.turns) ? state.session.turns : [];
+    const turnsById = new Map(turns.map((turn) => [`${turn?.id || ''}`.trim(), turn]));
+    for (const turnId of [...pendingDeferredTurnIds]) {
+      const turn = turnsById.get(turnId);
+      if (!turn) {
+        pendingDeferredTurnIds.delete(turnId);
+        deferredTurnStartedAtById.delete(turnId);
+        continue;
+      }
+
+      if (
+        turn.status === 'error' ||
+        turn.status === 'interrupted' ||
+        turn.agentReply?.playedAt ||
+        turn.agentReply?.interruptedAt
+      ) {
+        pendingDeferredTurnIds.delete(turnId);
+        deferredTurnStartedAtById.delete(turnId);
+      }
+    }
+
+    syncDeferredIndicator();
+    if (!pendingDeferredTurnIds.size) {
+      clearPendingDeferredTurnPoll();
+    }
+  }
+
+  function isLikelyLocalHelloEcho(text) {
+    if (!state.startupGreetingActive || !activeLocalHelloText) {
+      return false;
+    }
+
+    const normalizedTranscript = normalizeTranscriptForComparison(text);
+    const normalizedHello = normalizeTranscriptForComparison(activeLocalHelloText);
+    if (!normalizedTranscript || !normalizedHello || normalizedTranscript.length < 8) {
+      return false;
+    }
+
+    return (
+      normalizedHello.startsWith(normalizedTranscript) ||
+      normalizedTranscript.startsWith(normalizedHello)
+    );
+  }
+
+  function estimateSpeechDurationMs(text, speechRate = 1) {
+    const words = `${text || ''}`.trim().split(/\s+/).filter(Boolean).length;
+    if (!words) {
+      return 0;
+    }
+
+    const normalizedSpeechRate =
+      Number.isFinite(Number(speechRate)) && Number(speechRate) > 0
+        ? Number(speechRate)
+        : 1;
+    const wordsPerSecond = 2.6 * normalizedSpeechRate;
+    return Math.round((words / wordsPerSecond) * 1_000);
+  }
+
+  function splitTextByWordCount(text, maxWords = AUTO_REPLY_SEGMENT_MAX_WORDS) {
+    const words = `${text || ''}`.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      return [];
+    }
+
+    const segments = [];
+    for (let index = 0; index < words.length; index += maxWords) {
+      segments.push(words.slice(index, index + maxWords).join(' ').trim());
+    }
+    return segments.filter(Boolean);
+  }
+
+  function splitSpeechTokens(text) {
+    const normalizedText = `${text || ''}`.trim();
+    if (!normalizedText) {
+      return [];
+    }
+
+    const sentenceTokens = normalizedText
+      .split(/(?<=[.!?])\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+    if (sentenceTokens.length > 1) {
+      return sentenceTokens;
+    }
+
+    const clauseTokens = normalizedText
+      .split(/(?<=[,;:])\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+    if (clauseTokens.length > 1) {
+      return clauseTokens;
+    }
+
+    return [normalizedText];
+  }
+
+  function splitLongReplyText(text, mood = 'warm') {
+    const cleanedText = `${text || ''}`.trim();
+    if (!cleanedText) {
+      return [];
+    }
+
+    const renderProfile = agentVoiceLayer.resolveRenderProfile({
+      characterId: resolveActiveCharacterId(),
+      mood,
+    });
+    const totalDurationMs = estimateSpeechDurationMs(cleanedText, renderProfile.speechRate);
+    const tokenCount = splitSpeechTokens(cleanedText).length;
+    const needsSegmentation =
+      totalDurationMs > AUTO_REPLY_SEGMENT_TOTAL_DURATION_MS ||
+      tokenCount >= AUTO_REPLY_SEGMENT_SENTENCE_THRESHOLD;
+    if (!needsSegmentation) {
+      return [cleanedText];
+    }
+
+    const segments = [];
+    const tokens = splitSpeechTokens(cleanedText);
+    let current = '';
+
+    const flushCurrent = () => {
+      const next = `${current || ''}`.trim();
+      if (next) {
+        segments.push(next);
+      }
+      current = '';
+    };
+
+    const pushToken = (token) => {
+      const candidate = current ? `${current} ${token}` : token;
+      const candidateDurationMs = estimateSpeechDurationMs(candidate, renderProfile.speechRate);
+      const candidateWordCount = candidate.split(/\s+/).filter(Boolean).length;
+      if (
+        !current ||
+        (
+          candidateDurationMs <= AUTO_REPLY_SEGMENT_TARGET_DURATION_MS &&
+          candidate.length <= AUTO_REPLY_SEGMENT_MAX_CHARS &&
+          candidateWordCount <= AUTO_REPLY_SEGMENT_MAX_WORDS
+        )
+      ) {
+        current = candidate;
+        return;
+      }
+
+      flushCurrent();
+      current = token;
+    };
+
+    tokens.forEach((token) => {
+      const tokenDurationMs = estimateSpeechDurationMs(token, renderProfile.speechRate);
+      const tokenWordCount = token.split(/\s+/).filter(Boolean).length;
+      if (
+        tokenDurationMs <= AUTO_REPLY_SEGMENT_TARGET_DURATION_MS &&
+        token.length <= AUTO_REPLY_SEGMENT_MAX_CHARS &&
+        tokenWordCount <= AUTO_REPLY_SEGMENT_MAX_WORDS
+      ) {
+        pushToken(token);
+        return;
+      }
+
+      flushCurrent();
+      splitTextByWordCount(token).forEach((chunk) => pushToken(chunk));
+    });
+
+    flushCurrent();
+    return segments.length ? segments : [cleanedText];
+  }
+
+  function scheduleInterimSpeculativeTurn(transcript) {
+    const cleanedTranscript = `${transcript || ''}`.trim();
+    if (!cleanedTranscript || !state.session?.id || !state.activeCall) {
+      return;
+    }
+
+    const currentBoundaryIndex = findLastStrongBoundaryIndex(cleanedTranscript);
+    const hasNewBoundary = currentBoundaryIndex > lastSpeculativeBoundaryIndex;
+    const growthSinceLast = cleanedTranscript.length - lastSpeculativeTranscript.length;
+    if (!hasNewBoundary && growthSinceLast < INTERIM_SPECULATIVE_MIN_GROWTH_CHARS) {
+      return;
+    }
+
+    const delayMs = hasNewBoundary
+      ? INTERIM_SPECULATIVE_BOUNDARY_DELAY_MS
+      : INTERIM_SPECULATIVE_STALL_DELAY_MS;
+    if (pendingInterimSpeculativeTimerId) {
+      if (delayMs >= pendingInterimSpeculativeDelayMs) {
+        return;
+      }
+      clearPendingInterimSpeculative();
+    }
+
+    pendingInterimSpeculativeDelayMs = delayMs;
+    pendingInterimSpeculativeTimerId =
+      timers.setTimeout?.(() => {
+        pendingInterimSpeculativeTimerId = 0;
+        pendingInterimSpeculativeDelayMs = 0;
+        const latestTranscript = `${state.activeUtteranceText || state.transcriptPreview || cleanedTranscript || ''}`.trim();
+        if (!latestTranscript) {
+          return;
+        }
+
+        const latestBoundaryIndex = findLastStrongBoundaryIndex(latestTranscript);
+        const latestHasNewBoundary = latestBoundaryIndex > lastSpeculativeBoundaryIndex;
+        const latestGrowthSinceLast = latestTranscript.length - lastSpeculativeTranscript.length;
+        if (!latestHasNewBoundary && latestGrowthSinceLast < INTERIM_SPECULATIVE_MIN_GROWTH_CHARS) {
+          return;
+        }
+
+        void startSpeculativeTurn(latestTranscript, 'voice-interim');
+      }, delayMs) || 0;
   }
 
   function renderThinkingTimer() {
@@ -145,6 +640,7 @@ export function createSessionController({
 
   function stopAgentThinkingTimer() {
     clearThinkingTimer();
+    clearThinkingPromptLoop();
     thinkingStartedAt = 0;
     state.agentThinkingActive = false;
     state.agentThinkingElapsedTenths = 0;
@@ -167,9 +663,11 @@ export function createSessionController({
 
   function startAgentThinkingTimer() {
     clearThinkingTimer();
+    clearThinkingPromptLoop();
     thinkingStartedAt = Date.now();
     state.agentThinkingActive = true;
     state.agentThinkingElapsedTenths = 0;
+    suspendHumanListening();
     renderThinkingTimer();
     thinkingTimerId = timers.setInterval?.(() => {
       tickAgentThinkingTimer();
@@ -184,6 +682,136 @@ export function createSessionController({
     if (payload?.inspector) {
       state.inspectorSnapshot = payload.inspector;
     }
+
+    pruneDeferredTurnTracking();
+    if (pendingDeferredTurnIds.size) {
+      void maybePlayDeferredTurn();
+      scheduleDeferredTurnPolling();
+    }
+  }
+
+  function canPlayDeferredTurn() {
+    return Boolean(
+      state.activeCall &&
+        !state.endingCall &&
+        !state.callEndingDimmed &&
+        !state.startupGreetingActive &&
+        !state.processingReplies &&
+        !state.agentThinkingActive &&
+        !state.currentTurnId &&
+        !state.activeUtteranceId &&
+        !state.transcriptPreview &&
+        !avatarSpeech.getSnapshot().active,
+    );
+  }
+
+  function getReadyDeferredTurn() {
+    if (!pendingDeferredTurnIds.size) {
+      return null;
+    }
+
+    const turns = Array.isArray(state.session?.turns) ? state.session.turns : [];
+    return (
+      turns.find(
+        (turn) =>
+          pendingDeferredTurnIds.has(`${turn?.id || ''}`.trim()) &&
+          turn.status === 'replied' &&
+          turn.agentReply &&
+          !turn.agentReply.playedAt &&
+          !turn.agentReply.interruptedAt,
+      ) || null
+    );
+  }
+
+  async function maybePlayDeferredTurn() {
+    if (activeDeferredTurnPlaybackId || !canPlayDeferredTurn()) {
+      return false;
+    }
+
+    const turn = getReadyDeferredTurn();
+    if (!turn?.id) {
+      return false;
+    }
+
+    activeDeferredTurnPlaybackId = turn.id;
+    pendingDeferredTurnIds.delete(turn.id);
+    deferredTurnStartedAtById.delete(turn.id);
+    syncDeferredIndicator();
+    try {
+      await playTurnReply(turn);
+      return true;
+    } finally {
+      activeDeferredTurnPlaybackId = '';
+      pruneDeferredTurnTracking();
+      if (pendingDeferredTurnIds.size) {
+        scheduleDeferredTurnPolling({ immediate: true });
+      }
+    }
+  }
+
+  async function pollDeferredTurnReplies() {
+    if (
+      deferredTurnPollInFlight ||
+      !state.session?.id ||
+      !state.activeCall ||
+      !pendingDeferredTurnIds.size
+    ) {
+      return;
+    }
+
+    deferredTurnPollInFlight = true;
+    clearPendingDeferredTurnPoll();
+    try {
+      const payload = await fetchJson(`/api/call/sessions/${encodeURIComponent(state.session.id)}`);
+      applySessionPayload(payload);
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      await maybePlayDeferredTurn();
+    } catch (error) {
+      addLog('error', 'Deferred reply refresh failed.', formatError(error));
+    } finally {
+      deferredTurnPollInFlight = false;
+      pruneDeferredTurnTracking();
+      if (pendingDeferredTurnIds.size) {
+        scheduleDeferredTurnPolling();
+      }
+    }
+  }
+
+  function scheduleDeferredTurnPolling({ immediate = false } = {}) {
+    if (!state.activeCall || !pendingDeferredTurnIds.size) {
+      clearPendingDeferredTurnPoll();
+      return;
+    }
+
+    clearPendingDeferredTurnPoll();
+    if (immediate) {
+      void pollDeferredTurnReplies();
+      return;
+    }
+
+    pendingDeferredTurnPollTimerId =
+      timers.setTimeout?.(() => {
+        pendingDeferredTurnPollTimerId = 0;
+        void pollDeferredTurnReplies();
+      }, BACKGROUND_TURN_POLL_INTERVAL_MS) || 0;
+  }
+
+  function trackDeferredTurn(turnId) {
+    const normalizedTurnId = `${turnId || ''}`.trim();
+    if (!normalizedTurnId) {
+      return;
+    }
+
+    pendingDeferredTurnIds.add(normalizedTurnId);
+    if (!deferredTurnStartedAtById.has(normalizedTurnId)) {
+      deferredTurnStartedAtById.set(normalizedTurnId, Date.now());
+    }
+    pruneDeferredTurnTracking();
+    void maybePlayDeferredTurn();
+    scheduleDeferredTurnPolling();
   }
 
   function applyProductionVoicePayload(payload) {
@@ -231,6 +859,22 @@ export function createSessionController({
     renderDebugSnapshot();
   }
 
+  function applyAgentSelfSettingsPayload(payload) {
+    const agentSelf = getAgentSelfState();
+    const settings = payload?.settings || {};
+    agentSelf.settings = {
+      agentMode: `${settings.agentMode || 'standard'}`.trim() === 'continuity' ? 'continuity' : 'standard',
+      selfProfile: {
+        name: `${settings.selfProfile?.name || ''}`.trim(),
+        pronouns: `${settings.selfProfile?.pronouns || ''}`.trim(),
+        personality: `${settings.selfProfile?.personality || ''}`.trim(),
+        interests: `${settings.selfProfile?.interests || ''}`.trim(),
+        selfPrompt: `${settings.selfProfile?.selfPrompt || ''}`.trim(),
+      },
+    };
+    renderDebugSnapshot();
+  }
+
   function applyWorkspaceSetupPayload(payload) {
     const setup = payload?.setup || null;
     if (!setup?.activeModelId) {
@@ -238,6 +882,33 @@ export function createSessionController({
     }
 
     state.preferences.bundledModelId = `${setup.activeModelId}`.trim() || state.preferences.bundledModelId;
+    state.preferences.enabledPluginIds = Array.from(
+      new Set(
+        (Array.isArray(setup.enabledPluginIds) ? setup.enabledPluginIds : [])
+          .map((value) => `${value || ''}`.trim())
+          .filter(Boolean),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+    state.preferences.enableControlComputer = setup.enableControlComputer === true;
+    state.preferences.enableComplexTasks = setup.enableComplexTasks === true;
+  }
+
+  function applyCodexPluginsPayload(payload) {
+    const codex = getCodexState();
+    codex.availablePlugins = Array.isArray(payload?.plugins)
+      ? payload.plugins
+          .map((plugin) => ({
+            id: `${plugin?.id || ''}`.trim(),
+            name: `${plugin?.name || ''}`.trim(),
+            displayName: `${plugin?.displayName || plugin?.name || plugin?.id || ''}`.trim(),
+            description: `${plugin?.description || ''}`.trim(),
+            version: `${plugin?.version || ''}`.trim(),
+            marketplace: `${plugin?.marketplace || ''}`.trim(),
+            enabled: plugin?.enabled === true,
+          }))
+          .filter((plugin) => plugin.id)
+      : [];
+    return codex.availablePlugins;
   }
 
   function resolveActiveCharacterId() {
@@ -263,6 +934,236 @@ export function createSessionController({
   function clearSpeechBeats() {
     speechBeatTimerIds.forEach((timerId) => clearTimeout(timerId));
     speechBeatTimerIds = [];
+  }
+
+  function clearThinkingPromptLoop({ stopSpeech = false } = {}) {
+    if (pendingThinkingPromptTimerId) {
+      timers.clearTimeout?.(pendingThinkingPromptTimerId);
+      pendingThinkingPromptTimerId = 0;
+    }
+    thinkingPromptToken += 1;
+    if (stopSpeech && localThinkingPromptActive) {
+      localThinkingPromptActive = false;
+      avatarSpeech.stop({ cancelVoice: true });
+      notifySpeechIdleWaiters();
+    } else if (!stopSpeech) {
+      localThinkingPromptActive = false;
+    }
+  }
+
+  function clearPendingReservePlayback({ stopSpeech = false } = {}) {
+    if (pendingReserveTimerId) {
+      timers.clearTimeout?.(pendingReserveTimerId);
+      pendingReserveTimerId = 0;
+    }
+    if (stopSpeech && localReservePromptActive) {
+      localReservePromptActive = false;
+      avatarSpeech.stop({ cancelVoice: true });
+      notifySpeechIdleWaiters();
+    } else if (!stopSpeech) {
+      localReservePromptActive = false;
+    }
+  }
+
+  function canScheduleAgentSelfReserve(requestController) {
+    return (
+      state.activeCall &&
+      !state.endingCall &&
+      !state.callEndingDimmed &&
+      !state.startupGreetingActive &&
+      state.processingReplies &&
+      state.agentThinkingActive &&
+      !state.currentTurnId
+    );
+  }
+
+  function canPlayAgentSelfReserve(requestController) {
+    return canScheduleAgentSelfReserve(requestController) && !avatarSpeech.getSnapshot().active;
+  }
+
+  async function playAgentSelfReserve(packet, requestController) {
+    if (!packet?.text || !canPlayAgentSelfReserve(requestController)) {
+      return;
+    }
+
+    localReservePromptActive = true;
+    let playbackStarted = false;
+
+    await avatarSpeech
+      .speakText(packet.text, {
+        withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
+        source: 'agent-self-reserve',
+        locale: collectFormState().humanLocale || 'en-US',
+        characterId: resolveActiveCharacterId(),
+        mood: packet.mood || 'focused',
+        onPlaybackStart: () => {
+          if (!canPlayAgentSelfReserve(requestController)) {
+            return;
+          }
+
+          playbackStarted = true;
+          setSubtitle('agent', packet.text, 'thinking');
+          renderAgentStatus();
+          syncAmbientMotion();
+        },
+      })
+      .catch((error) => {
+        addLog('error', 'Continuity reserve playback failed.', formatError(error));
+      })
+      .finally(() => {
+        localReservePromptActive = false;
+        notifySpeechIdleWaiters();
+        renderAgentStatus();
+        syncAmbientMotion();
+        if (playbackStarted && canScheduleAgentSelfReserve(requestController)) {
+          scheduleThinkingPromptLoop(THINKING_PROMPT_LOOP_BASE_DELAY_MS);
+        }
+      });
+  }
+
+  async function maybeScheduleAgentSelfReserve({ turnId = '', text = '', requestController } = {}) {
+    const cleanedText = `${text || ''}`.trim();
+    if (!cleanedText) {
+      return null;
+    }
+
+    pendingReserveTimerId = timers.setTimeout?.(() => {
+      pendingReserveTimerId = 0;
+      if (!canScheduleAgentSelfReserve(requestController)) {
+        return;
+      }
+
+      void postJson(`/api/agent-self/reserve${buildAgentSelfScopeQuery()}`, {
+        turnId,
+        text: cleanedText,
+      })
+        .then((payload) => {
+          if (!payload?.packet?.text || !canPlayAgentSelfReserve(requestController)) {
+            return;
+          }
+          return playAgentSelfReserve(payload.packet, requestController);
+        })
+        .catch(() => {});
+    }, AGENT_SELF_RESERVE_DELAY_MS) || 0;
+
+    return {
+      turnId,
+      delayMs: AGENT_SELF_RESERVE_DELAY_MS,
+    };
+  }
+
+  function recordAgentSelfTurnComplete({ turnId = '', userText = '', agentText = '' } = {}) {
+    void postJson(`/api/agent-self/turn-complete${buildAgentSelfScopeQuery()}`, {
+      turnId,
+      userText,
+      agentText,
+    }).catch(() => {});
+  }
+
+  function canPlaySpeculativeReply(expectedGeneration) {
+    return (
+      expectedGeneration === speculativePlaybackGeneration &&
+      state.activeCall &&
+      !state.endingCall &&
+      !state.callEndingDimmed &&
+      !state.startupGreetingActive &&
+      !state.processingReplies &&
+      !state.agentThinkingActive &&
+      !state.currentTurnId
+    );
+  }
+
+  function cancelSpeculativeTurn({
+    stopSpeech = false,
+    resetTranscript = false,
+    clearPendingTimer = true,
+  } = {}) {
+    speculativePlaybackGeneration += 1;
+    if (clearPendingTimer) {
+      clearPendingInterimSpeculative();
+    }
+
+    queuedSpeculativeTranscript = '';
+    queuedSpeculativeSource = '';
+
+    if (activeSpeculativeAbortController) {
+      activeSpeculativeAbortController.abort();
+      activeSpeculativeAbortController = null;
+    }
+
+    if (stopSpeech && speculativeSpeechActive) {
+      speculativeSpeechActive = false;
+      avatarSpeech.stop({ cancelVoice: true });
+      notifySpeechIdleWaiters();
+    }
+
+    if (resetTranscript) {
+      lastSpeculativeTranscript = '';
+      lastSpeculativeBoundaryIndex = -1;
+    }
+  }
+
+  async function playSpeculativeReply(reply, expectedGeneration) {
+    if (!reply?.text) {
+      return;
+    }
+
+    while (avatarSpeech.getSnapshot().active && canPlaySpeculativeReply(expectedGeneration)) {
+      await waitForSpeechIdle();
+    }
+    if (!canPlaySpeculativeReply(expectedGeneration)) {
+      return;
+    }
+
+    const renderProfile = agentVoiceLayer.resolveRenderProfile({
+      characterId: resolveActiveCharacterId(),
+      mood: reply.mood,
+    });
+    const timeline = avatarSpeech.buildMouthTimeline(reply.text, renderProfile.speechRate);
+    const startSpeechBeats = buildSpeechBeatTimers(reply, timeline.durationMs);
+    speculativeSpeechActive = true;
+    let playbackStarted = false;
+
+    try {
+      await avatarSpeech.speakText(reply.text, {
+        withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
+        source: `speculative-turn:${expectedGeneration}`,
+        locale: collectFormState().humanLocale || 'en-US',
+        characterId: resolveActiveCharacterId(),
+        mood: reply.mood,
+        onPlaybackStart: () => {
+          if (!canPlaySpeculativeReply(expectedGeneration)) {
+            return;
+          }
+
+          playbackStarted = true;
+          applySpeechScene(reply);
+          startSpeechBeats();
+          renderAgentStatus();
+          syncAmbientMotion();
+          sendPlaybackEvent({
+            phase: 'started',
+            kind: 'speculative',
+            source: 'speculative-turn',
+            text: reply.text,
+          });
+        },
+      });
+    } finally {
+      clearSpeechBeats();
+      if (playbackStarted) {
+        sendPlaybackEvent({
+          phase: 'ended',
+          kind: 'speculative',
+          source: 'speculative-turn',
+          text: reply.text,
+        });
+      }
+      speculativeSpeechActive = false;
+      notifySpeechIdleWaiters();
+      renderAgentStatus();
+      syncAmbientMotion();
+    }
   }
 
   function setStartupGreetingActive(active) {
@@ -308,7 +1209,129 @@ export function createSessionController({
     );
   }
 
-  async function enableListeningAfterLocalHello(expectedToken) {
+  function canPlayThinkingPrompt(expectedToken) {
+    return (
+      expectedToken === thinkingPromptToken &&
+      state.activeCall &&
+      !state.endingCall &&
+      !state.callEndingDimmed &&
+      !state.startupGreetingActive &&
+      state.processingReplies &&
+      state.agentThinkingActive &&
+      !state.currentTurnId &&
+      !avatarSpeech.getSnapshot().active
+    );
+  }
+
+  function scheduleThinkingPromptLoop(delayMs = INITIAL_THINKING_PROMPT_DELAY_MS) {
+    if (!state.activeCall || !state.processingReplies || !state.agentThinkingActive) {
+      return;
+    }
+
+    clearThinkingPromptLoop();
+    const nextToken = thinkingPromptToken;
+    pendingThinkingPromptTimerId = timers.setTimeout?.(() => {
+      pendingThinkingPromptTimerId = 0;
+      void playThinkingPrompt(nextToken);
+    }, delayMs) || 0;
+  }
+
+  async function playThinkingPrompt(expectedToken) {
+    if (!canPlayThinkingPrompt(expectedToken)) {
+      return;
+    }
+
+    const promptText = pickRandomThinkingPromptPhrase(random);
+    localThinkingPromptActive = true;
+    let playbackStarted = false;
+
+    await avatarSpeech
+      .speakText(promptText, {
+        withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
+        source: 'local-thinking-prompt',
+        locale: collectFormState().humanLocale || 'en-US',
+        characterId: resolveActiveCharacterId(),
+        mood: 'warm',
+        onPlaybackStart: () => {
+          playbackStarted = true;
+          setSubtitle('agent', promptText, 'thinking');
+          renderAgentStatus();
+          sendPlaybackEvent({
+            phase: 'started',
+            kind: 'thinking',
+            source: 'local-thinking-prompt',
+            text: promptText,
+          });
+        },
+      })
+      .catch((error) => {
+        addLog('error', 'Local thinking prompt playback failed.', formatError(error));
+      })
+      .finally(() => {
+        if (playbackStarted) {
+          sendPlaybackEvent({
+            phase: 'ended',
+            kind: 'thinking',
+            source: 'local-thinking-prompt',
+            text: promptText,
+          });
+        }
+        localThinkingPromptActive = false;
+        notifySpeechIdleWaiters();
+        if (canPlayThinkingPrompt(expectedToken)) {
+          scheduleThinkingPromptLoop(
+            THINKING_PROMPT_LOOP_BASE_DELAY_MS +
+              Math.round(random() * THINKING_PROMPT_LOOP_JITTER_MS),
+          );
+        }
+      });
+  }
+
+  async function playSoftTimeoutNotice() {
+    while (avatarSpeech.getSnapshot().active) {
+      await waitForSpeechIdle();
+    }
+
+    let playbackStarted = false;
+    await avatarSpeech
+      .speakText(SOFT_TIMEOUT_NOTICE_TEXT, {
+        withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
+        source: 'local-soft-timeout',
+        locale: collectFormState().humanLocale || 'en-US',
+        characterId: resolveActiveCharacterId(),
+        mood: 'warm',
+        onPlaybackStart: () => {
+          playbackStarted = true;
+          setSubtitle('agent', SOFT_TIMEOUT_NOTICE_TEXT, 'thinking');
+          renderAgentStatus();
+          syncAmbientMotion();
+          sendPlaybackEvent({
+            phase: 'started',
+            kind: 'thinking',
+            source: 'local-soft-timeout',
+            text: SOFT_TIMEOUT_NOTICE_TEXT,
+          });
+        },
+      })
+      .catch((error) => {
+        addLog('error', 'Soft-timeout notice playback failed.', formatError(error));
+      })
+      .finally(() => {
+        if (playbackStarted) {
+          sendPlaybackEvent({
+            phase: 'ended',
+            kind: 'thinking',
+            source: 'local-soft-timeout',
+            text: SOFT_TIMEOUT_NOTICE_TEXT,
+          });
+        }
+        notifySpeechIdleWaiters();
+        renderAgentStatus();
+        syncAmbientMotion();
+      });
+  }
+
+  async function finishLocalHello(expectedToken) {
     if (
       expectedToken !== localHelloToken ||
       !state.activeCall ||
@@ -318,26 +1341,29 @@ export function createSessionController({
       return;
     }
 
-    humanVoiceLayer.updateConfig?.({ autoRestart: true });
-
-    try {
-      await humanVoiceLayer.startListening({ restart: true });
-    } catch (error) {
-      setStartupGreetingActive(false);
-      await endCall({ reason: 'speech recognition failed to start after local hello' });
-      updateRoomStatus(
-        'error',
-        'Speech recognition failed',
-        error instanceof Error ? error.message : 'Unable to start browser speech recognition.',
-      );
-      throw error;
-    }
-
     setStartupGreetingActive(false);
     state.humanMicLevel = 0;
+    let listeningReady = false;
+    try {
+      listeningReady = await resumeHumanListeningIfAllowed({
+        updateSubtitle: true,
+        ignoreBlockingAgentSpeech: true,
+      });
+    } catch (error) {
+      addLog('error', 'Speech recognition failed to start after the startup hello.', formatError(error));
+    }
+    renderCallSnapshot();
+    if (!listeningReady) {
+      updateRoomStatus('warn', 'Microphone inactive', 'Browser listening did not start after the greeting.');
+      setSubtitle('human', 'Mic inactive.', 'idle');
+      setSubtitle('agent', 'Microphone did not start listening.', 'warn');
+      return;
+    }
     updateRoomStatus('ready', 'Call live', 'Listening for your voice.');
-    setSubtitle('human', 'Listening…', 'listening');
-    setSubtitle('agent', 'Waiting for your first line.', 'ready');
+    if (!state.transcriptPreview && !state.activeUtteranceId) {
+      setSubtitle('human', 'Listening…', 'listening');
+      setSubtitle('agent', 'Waiting for your first line.', 'ready');
+    }
   }
 
   async function playLocalHello(expectedToken) {
@@ -353,10 +1379,12 @@ export function createSessionController({
       random,
     );
     const helloText = pickRandomHelloPhrase(random);
+    activeLocalHelloText = helloText;
     const helloMood =
       selectedGesture?.id === 'Cheer' || selectedGesture?.id === 'Peace'
         ? 'playful'
         : 'warm';
+    let playbackStarted = false;
 
     if (selectedGesture?.id) {
       selectGesture(selectedGesture.id, { persist: false });
@@ -374,21 +1402,40 @@ export function createSessionController({
         characterId: resolveActiveCharacterId(),
         mood: helloMood,
         onPlaybackStart: () => {
+          playbackStarted = true;
+          updateRoomStatus('ready', 'Call live', 'Agent is greeting you.');
           setSubtitle('agent', helloText, 'speaking');
+          renderCallSnapshot();
           renderAgentStatus();
           syncAmbientMotion();
+          sendPlaybackEvent({
+            phase: 'started',
+            kind: 'hello',
+            source: 'local-hello',
+            text: helloText,
+          });
         },
         onPlaybackEnd: () => {
-          void enableListeningAfterLocalHello(expectedToken);
+          void finishLocalHello(expectedToken);
         },
       })
       .catch((error) => {
         addLog('error', 'Local hello playback failed.', formatError(error));
         if (canPlayLocalHello(expectedToken)) {
-          void enableListeningAfterLocalHello(expectedToken);
+          void finishLocalHello(expectedToken);
         }
       })
       .finally(() => {
+        if (playbackStarted) {
+          sendPlaybackEvent({
+            phase: 'ended',
+            kind: 'hello',
+            source: 'local-hello',
+            text: helloText,
+          });
+        }
+        activeLocalHelloText = '';
+        notifySpeechIdleWaiters();
         if (state.activeCall && !state.endingCall && !state.processingReplies && !state.currentTurnId) {
           renderAgentStatus();
           syncAmbientMotion();
@@ -399,7 +1446,7 @@ export function createSessionController({
   function scheduleLocalHello() {
     clearScheduledLocalHello();
     const nextToken = localHelloToken;
-    const delayMs = 1000 + Math.round(random() * 2000);
+    const delayMs = LOCAL_HELLO_DELAY_MS;
     pendingLocalHelloTimerId = timers.setTimeout?.(() => {
       pendingLocalHelloTimerId = 0;
       void playLocalHello(nextToken);
@@ -514,7 +1561,12 @@ export function createSessionController({
       defaultCharacterId: resolveActiveCharacterId(),
     });
 
-    const payload = buildCallSessionPayload(collectFormState(), state.runtimeConfig);
+    const payload = buildCallSessionPayload(
+      collectFormState(),
+      state.runtimeConfig,
+      getLaunchContext(),
+      getAgentSelfState().settings,
+    );
     const merged = await postJson(
       `/api/call/sessions/${encodeURIComponent(state.session.id)}/setup`,
       {
@@ -529,19 +1581,53 @@ export function createSessionController({
   async function loadWorkspaceSetup() {
     const payload = await fetchJson(`/api/workspace-setup${buildWorkspaceSetupScopeQuery()}`);
     applyWorkspaceSetupPayload(payload);
+    persistState();
     renderDebugSnapshot();
     return payload;
+  }
+
+  async function loadAgentSelfSettings() {
+    const agentSelf = getAgentSelfState();
+    agentSelf.loading = true;
+    try {
+      const payload = await fetchJson('/api/agent-self/settings');
+      applyAgentSelfSettingsPayload(payload);
+      return payload;
+    } finally {
+      agentSelf.loading = false;
+      renderDebugSnapshot();
+    }
+  }
+
+  async function saveAgentSelfSettings(settings) {
+    const agentSelf = getAgentSelfState();
+    agentSelf.saving = true;
+    try {
+      const payload = await postJson('/api/agent-self/settings', settings);
+      applyAgentSelfSettingsPayload(payload);
+      return payload;
+    } finally {
+      agentSelf.saving = false;
+      renderDebugSnapshot();
+    }
   }
 
   async function syncWorkspaceSetup({
     activeModelId = resolveActiveCharacterId(),
     activeModelLabel = '',
+    enabledPluginIds = collectFormState().enabledPluginIds,
+    enableControlComputer = collectFormState().enableControlComputer,
+    enableComplexTasks = collectFormState().enableComplexTasks,
   } = {}) {
     const payload = await postJson(`/api/workspace-setup${buildWorkspaceSetupScopeQuery()}`, {
       activeModelId,
       activeModelLabel,
+      enabledPluginIds,
+      enableControlComputer,
+      enableComplexTasks,
     });
     applyWorkspaceSetupPayload(payload);
+    persistState();
     renderDebugSnapshot();
     return payload;
   }
@@ -618,6 +1704,19 @@ export function createSessionController({
     }
   }
 
+  async function loadAvailablePlugins() {
+    const codex = getCodexState();
+    codex.pluginInventoryLoading = true;
+    renderDebugSnapshot();
+    try {
+      const payload = await fetchJson('/api/codex/plugins');
+      return applyCodexPluginsPayload(payload);
+    } finally {
+      codex.pluginInventoryLoading = false;
+      renderDebugSnapshot();
+    }
+  }
+
   async function uploadVoiceSample(file) {
     const productionVoice = getProductionVoiceState();
     productionVoice.uploading = true;
@@ -683,7 +1782,12 @@ export function createSessionController({
     }
 
     const form = collectFormState();
-    const sessionKey = buildCallSessionKey(form, state.runtimeConfig, getLaunchContext());
+    const sessionKey = buildCallSessionKey(
+      form,
+      state.runtimeConfig,
+      getLaunchContext(),
+      getAgentSelfState().settings,
+    );
     if (!force && state.session?.id && state.sessionKey === sessionKey) {
       return state.session;
     }
@@ -696,7 +1800,12 @@ export function createSessionController({
     try {
       const sessionResponse = await postJson(
         '/api/call/sessions',
-        buildCallSessionPayload(form, state.runtimeConfig, getLaunchContext()),
+        buildCallSessionPayload(
+          form,
+          state.runtimeConfig,
+          getLaunchContext(),
+          getAgentSelfState().settings,
+        ),
       );
       applySessionPayload(sessionResponse);
       state.sessionKey = sessionKey;
@@ -767,54 +1876,240 @@ export function createSessionController({
     applySessionPayload(payload);
   }
 
+  async function postPlaybackEvent({
+    phase,
+    kind,
+    source = '',
+    text = '',
+    turnId = '',
+    turnCompleted,
+  } = {}) {
+    if (!state.session?.id || !phase || !kind) {
+      return;
+    }
+
+    return postJson(
+      `/api/call/sessions/${encodeURIComponent(state.session.id)}/playback-events`,
+      {
+        phase,
+        kind,
+        source,
+        text,
+        turnId,
+        turnCompleted,
+      },
+    );
+  }
+
+  function sendPlaybackEvent(event) {
+    void postPlaybackEvent(event).catch(() => {});
+  }
+
+  function normalizeReplyPauseMs(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    return Math.max(0, Math.min(15_000, Math.round(numeric)));
+  }
+
+  function expandReplySegment(segment) {
+    const text = `${segment?.text || ''}`.trim();
+    if (!text) {
+      return [];
+    }
+
+    const chunks = splitLongReplyText(text, segment.mood);
+    if (chunks.length <= 1) {
+      return [{
+        ...segment,
+        text,
+        subtitle: `${segment?.subtitle || text}`.trim() || text,
+      }];
+    }
+
+    return chunks.map((chunk, index) => ({
+      ...segment,
+      text: chunk,
+      subtitle: chunk,
+      pauseMs: index === 0 ? normalizeReplyPauseMs(segment.pauseMs) : AUTO_REPLY_SEGMENT_PAUSE_MS,
+      animationSequence: index === 0
+        ? Array.isArray(segment.animationSequence)
+          ? structuredClone(segment.animationSequence)
+          : []
+        : [],
+    }));
+  }
+
+  function buildReplySegments(reply) {
+    if (!reply?.text) {
+      return [];
+    }
+
+    const baseSegment = {
+      text: `${reply.text || ''}`.trim(),
+      subtitle: `${reply.subtitle || reply.text || ''}`.trim(),
+      mood: `${reply.mood || 'warm'}`.trim() || 'warm',
+      pauseMs: 0,
+      animationSequence: Array.isArray(reply.animationSequence)
+        ? structuredClone(reply.animationSequence)
+        : [],
+    };
+
+    const followUps = Array.isArray(reply.followUps)
+      ? reply.followUps
+          .map((segment) => {
+            const text = `${segment?.text || segment?.spokenText || ''}`.trim();
+            if (!text) {
+              return null;
+            }
+
+            return {
+              text,
+              subtitle: `${segment?.subtitle || text}`.trim() || text,
+              mood: `${segment?.mood || reply.mood || 'warm'}`.trim() || 'warm',
+              pauseMs: normalizeReplyPauseMs(segment?.pauseMs),
+              animationSequence: Array.isArray(segment?.animationSequence)
+                ? structuredClone(segment.animationSequence)
+                : [],
+            };
+          })
+          .filter(Boolean)
+      : [];
+
+    return [baseSegment, ...followUps].flatMap((segment) => expandReplySegment(segment));
+  }
+
+  function waitForReplyContinuation(delayMs = 0) {
+    const normalizedDelayMs = normalizeReplyPauseMs(delayMs);
+    if (!normalizedDelayMs) {
+      return Promise.resolve();
+    }
+
+    clearPendingReplyContinuation();
+    return new Promise((resolve) => {
+      pendingReplyContinuationTimerId =
+        timers.setTimeout?.(() => {
+          pendingReplyContinuationTimerId = 0;
+          resolve();
+        }, normalizedDelayMs) || 0;
+    });
+  }
+
   async function playTurnReply(turn) {
+    clearPendingReservePlayback({ stopSpeech: true });
+    clearThinkingPromptLoop({ stopSpeech: false });
     const reply = turn?.agentReply;
     if (!reply) {
       return;
     }
 
+    const segments = buildReplySegments(reply);
+    if (!segments.length) {
+      return;
+    }
+
     state.currentTurnId = turn.id;
     const playbackGeneration = state.playbackGeneration;
-    const renderProfile = agentVoiceLayer.resolveRenderProfile({
-      characterId: resolveActiveCharacterId(),
-      mood: reply.mood,
-    });
-    const timeline = avatarSpeech.buildMouthTimeline(reply.text, renderProfile.speechRate);
-    const startSpeechBeats = buildSpeechBeatTimers(reply, timeline.durationMs);
-
     try {
-      await avatarSpeech.speakText(reply.text, {
-        withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
-        source: `codex-turn:${turn.id}`,
-        locale: collectFormState().humanLocale || 'en-US',
-        characterId: resolveActiveCharacterId(),
-        mood: reply.mood,
-        onPlaybackStart: () => {
-          stopAgentThinkingTimer();
-          applySpeechScene(reply);
-          startSpeechBeats();
-          renderAgentStatus();
-          syncAmbientMotion();
-        },
-      });
+      for (const [index, segment] of segments.entries()) {
+        if (playbackGeneration !== state.playbackGeneration || state.currentTurnId !== turn.id) {
+          return;
+        }
+
+        if (index > 0) {
+          await waitForReplyContinuation(segment.pauseMs);
+          if (playbackGeneration !== state.playbackGeneration || state.currentTurnId !== turn.id) {
+            return;
+          }
+        }
+
+        if (index === 0) {
+          while (avatarSpeech.getSnapshot().active) {
+            await waitForSpeechIdle();
+            if (playbackGeneration !== state.playbackGeneration || state.currentTurnId !== turn.id) {
+              return;
+            }
+          }
+        }
+
+        suspendHumanListening();
+        const renderProfile = agentVoiceLayer.resolveRenderProfile({
+          characterId: resolveActiveCharacterId(),
+          mood: segment.mood,
+        });
+        const timeline = avatarSpeech.buildMouthTimeline(segment.text, renderProfile.speechRate);
+        const startSpeechBeats = buildSpeechBeatTimers(
+          {
+            ...reply,
+            ...segment,
+          },
+          timeline.durationMs,
+        );
+        let playbackStarted = false;
+
+        try {
+          await avatarSpeech.speakText(segment.text, {
+            withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
+            source: `codex-turn:${turn.id}:segment-${index}`,
+            locale: collectFormState().humanLocale || 'en-US',
+            characterId: resolveActiveCharacterId(),
+            mood: segment.mood,
+            onPlaybackStart: () => {
+              playbackStarted = true;
+              stopAgentThinkingTimer();
+              applySpeechScene({
+                ...reply,
+                ...segment,
+              });
+              startSpeechBeats();
+              setSubtitle('agent', segment.subtitle || segment.text, 'speaking');
+              renderAgentStatus();
+              syncAmbientMotion();
+              sendPlaybackEvent({
+                phase: 'started',
+                kind: 'reply',
+                source: 'codex-turn',
+                turnId: turn.id,
+                text: segment.text,
+              });
+            },
+          });
+        } finally {
+          clearSpeechBeats();
+          notifySpeechIdleWaiters();
+        }
+
+        if (playbackStarted) {
+          const payload = await postPlaybackEvent({
+            phase: 'ended',
+            kind: 'reply',
+            source: 'codex-turn',
+            turnId: turn.id,
+            text: segment.text,
+            turnCompleted: index === segments.length - 1,
+          }).catch((error) => {
+            addLog('error', 'Reply playback event failed.', formatError(error));
+            return null;
+          });
+          if (payload?.session) {
+            applySessionPayload(payload);
+          }
+        }
+      }
     } finally {
-      clearSpeechBeats();
-    }
-
-    stopAgentThinkingTimer();
-
-    if (playbackGeneration === state.playbackGeneration) {
-      await markReplyPlayed(turn.id).catch((error) => {
-        addLog('error', 'Mark reply played failed.', formatError(error));
+      clearPendingReplyContinuation();
+      stopAgentThinkingTimer();
+      state.currentTurnId = null;
+      await resumeHumanListeningIfAllowed({ updateSubtitle: true }).catch((error) => {
+        addLog('error', 'Speech recognition failed to resume after agent reply.', formatError(error));
       });
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      syncAmbientMotion();
     }
-
-    state.currentTurnId = null;
-    renderSessionSnapshot();
-    renderTranscriptList();
-    renderDebugSnapshot();
-    renderAgentStatus();
-    syncAmbientMotion();
   }
 
   async function interruptActiveReply(
@@ -825,9 +2120,11 @@ export function createSessionController({
       return false;
     }
 
+    const blockingAgentSpeech =
+      avatarSpeech.getSnapshot().active && !speculativeSpeechActive;
     const hadActiveWork = Boolean(
       state.processingReplies ||
-        avatarSpeech.getSnapshot().active ||
+        blockingAgentSpeech ||
         state.currentTurnId ||
         state.activeReplyAbortController,
     );
@@ -836,13 +2133,17 @@ export function createSessionController({
     }
 
     state.playbackGeneration += 1;
+    clearPendingReplyContinuation();
+    clearPendingReservePlayback({ stopSpeech: true });
     state.currentTurnId = null;
     state.processingReplies = false;
+    clearThinkingPromptLoop({ stopSpeech: true });
     if (!preserveThinkingTimer) {
       stopAgentThinkingTimer();
     }
     clearSpeechBeats();
     avatarSpeech.stop({ cancelVoice: true });
+    notifySpeechIdleWaiters();
 
     if (state.activeReplyAbortController) {
       state.activeReplyAbortController.abort();
@@ -876,8 +2177,13 @@ export function createSessionController({
     );
 
     clearAmbientLoop();
+    clearPendingReplyContinuation();
+    clearPendingReservePlayback({ stopSpeech: true });
     clearSpeechBeats();
     clearScheduledLocalHello({ releaseLock: true });
+    clearThinkingPromptLoop({ stopSpeech: true });
+    cancelSpeculativeTurn({ stopSpeech: true, resetTranscript: true });
+    resetDeferredTurnTracking();
     interruptionIssuedForUtterance = false;
     stopAgentThinkingTimer();
     state.callEndingDimmed = false;
@@ -889,6 +2195,7 @@ export function createSessionController({
     state.activeUtteranceText = '';
     state.transcriptPreview = '';
     avatarSpeech.stop({ cancelVoice: true });
+    notifySpeechIdleWaiters();
 
     if (state.activeReplyAbortController) {
       state.activeReplyAbortController.abort();
@@ -921,6 +2228,7 @@ export function createSessionController({
     const goodbyeText = pickRandomGoodbyePhrase(random);
     let endDelayStarted = false;
     let resolveEndDelay = () => {};
+    let playbackStarted = false;
     const endDelayPromise = new Promise((resolve) => {
       resolveEndDelay = resolve;
     });
@@ -963,8 +2271,15 @@ export function createSessionController({
         characterId: resolveActiveCharacterId(),
         mood: selectedGesture?.id === 'Cheer' || selectedGesture?.id === 'Peace' ? 'playful' : 'warm',
         onPlaybackStart: () => {
+          playbackStarted = true;
           setSubtitle('agent', goodbyeText, 'speaking');
           renderAgentStatus();
+          sendPlaybackEvent({
+            phase: 'started',
+            kind: 'goodbye',
+            source: 'local-goodbye',
+            text: goodbyeText,
+          });
         },
         onPlaybackEnd: () => {
           startEndDelay();
@@ -974,6 +2289,15 @@ export function createSessionController({
         addLog('error', 'Local goodbye playback failed.', formatError(error));
       })
       .finally(() => {
+        if (playbackStarted) {
+          sendPlaybackEvent({
+            phase: 'ended',
+            kind: 'goodbye',
+            source: 'local-goodbye',
+            text: goodbyeText,
+          });
+        }
+        notifySpeechIdleWaiters();
         startEndDelay();
       });
 
@@ -1013,13 +2337,15 @@ export function createSessionController({
     state.startupGreetingActive = true;
     state.humanMicMuted = false;
     state.humanMicLevel = 0;
-    humanVoiceLayer.updateConfig?.({ autoRestart: false });
+    humanVoiceLayer.updateConfig?.({ autoRestart: true });
     state.playbackGeneration += 1;
     interruptionIssuedForUtterance = false;
+    resetDeferredTurnTracking();
 
-    updateRoomStatus('ready', 'Call live', 'Agent is greeting you.');
-    setSubtitle('human', 'Muted for intro.', 'idle');
-    setSubtitle('agent', 'Joining…', 'ready');
+    updateRoomStatus('loading', 'Connecting call', 'Waiting for the agent greeting to start.');
+    setSubtitle('human', 'Stand by…', 'idle');
+    setSubtitle('agent', 'Connecting…', 'ready');
+    renderCallSnapshot();
     renderSessionSnapshot();
     renderTranscriptList();
     renderDebugSnapshot();
@@ -1126,6 +2452,7 @@ export function createSessionController({
       state.activeUtteranceText = '';
       state.transcriptPreview = '';
       state.processingReplies = false;
+      resetDeferredTurnTracking();
 
       if (state.session?.id) {
         try {
@@ -1216,14 +2543,20 @@ export function createSessionController({
     return utteranceId;
   }
 
-  async function syncInterimTranscript(text) {
+  async function syncInterimTranscript(text, { phase = 'interim' } = {}) {
     if (!state.session?.id || !state.activeCall) {
       return;
     }
 
     const nextText = `${text || ''}`.trim();
+    if (isLikelyLocalHelloEcho(nextText)) {
+      return;
+    }
     if (nextText) {
       clearScheduledLocalHello({ releaseLock: true });
+      if (avatarSpeech.getSnapshot().active && activeLocalHelloText) {
+        avatarSpeech.stop({ cancelVoice: true });
+      }
     }
     state.transcriptPreview = nextText;
     if (!nextText) {
@@ -1241,17 +2574,135 @@ export function createSessionController({
     setSubtitle('human', nextText, 'listening');
     state.activeUtteranceId ||= await beginUserUtterance();
     state.activeUtteranceText = nextText;
+    if (phase === 'sentence') {
+      await startSpeculativeTurn(nextText, 'voice-sentence');
+    } else if (phase === 'interim') {
+      scheduleInterimSpeculativeTurn(nextText);
+    }
     renderDebugSnapshot();
   }
 
-  async function finalizeUserUtterance(transcript, source) {
-    await ensureSessionReady();
+  async function startSpeculativeTurn(transcript, source = 'voice-sentence') {
+    if (!state.session?.id || !state.activeCall) {
+      return { interrupted: true };
+    }
+
     const cleanedTranscript = `${transcript || ''}`.trim();
+    if (!cleanedTranscript) {
+      return { interrupted: true };
+    }
+    if (
+      state.endingCall ||
+      state.callEndingDimmed ||
+      state.startupGreetingActive ||
+      state.processingReplies ||
+      state.agentThinkingActive ||
+      state.currentTurnId
+    ) {
+      return { interrupted: true };
+    }
+    if (
+      cleanedTranscript === lastSpeculativeTranscript ||
+      cleanedTranscript === queuedSpeculativeTranscript
+    ) {
+      return { skipped: true };
+    }
+
+    if (activeSpeculativeAbortController) {
+      queuedSpeculativeTranscript = cleanedTranscript;
+      queuedSpeculativeSource = source;
+      return { queued: true };
+    }
+
+    lastSpeculativeTranscript = cleanedTranscript;
+    lastSpeculativeBoundaryIndex = findLastStrongBoundaryIndex(cleanedTranscript);
+    const requestController = new AbortController();
+    activeSpeculativeAbortController = requestController;
+    const generation = speculativePlaybackGeneration;
+    addLog('info', 'Sent speculative human turn to Codex.', {
+      source,
+      transcript: cleanedTranscript,
+    });
+
+    const maybeStartQueuedSpeculativeTurn = () => {
+      if (
+        activeSpeculativeAbortController ||
+        !queuedSpeculativeTranscript ||
+        !state.activeCall ||
+        state.endingCall ||
+        state.callEndingDimmed ||
+        state.startupGreetingActive ||
+        state.processingReplies ||
+        state.agentThinkingActive ||
+        state.currentTurnId
+      ) {
+        return;
+      }
+
+      const nextTranscript = queuedSpeculativeTranscript;
+      const nextSource = queuedSpeculativeSource || source;
+      queuedSpeculativeTranscript = '';
+      queuedSpeculativeSource = '';
+      void startSpeculativeTurn(nextTranscript, nextSource);
+    };
+
+    try {
+      const payload = await postJson(
+        `/api/call/sessions/${encodeURIComponent(state.session.id)}/speculative-turns`,
+        {
+          text: cleanedTranscript,
+          source,
+        },
+        { signal: requestController.signal },
+      );
+
+      if (
+        activeSpeculativeAbortController !== requestController ||
+        generation !== speculativePlaybackGeneration
+      ) {
+        return {
+          ...payload,
+          interrupted: true,
+        };
+      }
+
+      activeSpeculativeAbortController = null;
+      maybeStartQueuedSpeculativeTurn();
+      if (payload.interrupted || !payload.speculativeReply) {
+        return payload;
+      }
+
+      await playSpeculativeReply(payload.speculativeReply, generation);
+      maybeStartQueuedSpeculativeTurn();
+      return payload;
+    } catch (error) {
+      if (activeSpeculativeAbortController === requestController) {
+        activeSpeculativeAbortController = null;
+      }
+
+      if (error?.name === 'AbortError') {
+        return { interrupted: true };
+      }
+
+      addLog('error', 'Speculative Codex turn failed.', formatError(error));
+      throw error;
+    } finally {
+      maybeStartQueuedSpeculativeTurn();
+    }
+  }
+
+  async function finalizeUserUtterance(transcript, source) {
+    const cleanedTranscript = `${transcript || ''}`.trim();
+    if (isLikelyLocalHelloEcho(cleanedTranscript)) {
+      return;
+    }
+    await ensureSessionReady();
     if (!cleanedTranscript) {
       return;
     }
 
     clearScheduledLocalHello({ releaseLock: true });
+    cancelSpeculativeTurn({ stopSpeech: false, resetTranscript: true });
 
     startAgentThinkingTimer();
 
@@ -1274,6 +2725,7 @@ export function createSessionController({
     state.activeUtteranceText = '';
     state.transcriptPreview = '';
     state.processingReplies = true;
+    scheduleThinkingPromptLoop(INITIAL_THINKING_PROMPT_DELAY_MS);
     setSubtitle('human', cleanedTranscript, 'final');
     setSubtitle('agent', 'Thinking…', 'thinking');
     renderSessionSnapshot();
@@ -1285,6 +2737,11 @@ export function createSessionController({
       transcript: cleanedTranscript,
     });
     syncAmbientMotion();
+    const reservePromise = maybeScheduleAgentSelfReserve({
+      turnId: utteranceId,
+      text: cleanedTranscript,
+      requestController,
+    }).catch(() => null);
 
     try {
       const payload = await postJson(
@@ -1305,6 +2762,7 @@ export function createSessionController({
         return;
       }
 
+      clearPendingReservePlayback({ stopSpeech: true });
       state.activeReplyAbortController = null;
       state.processingReplies = false;
       applySessionPayload(payload);
@@ -1313,16 +2771,41 @@ export function createSessionController({
       renderDebugSnapshot();
       renderAgentStatus();
 
-      if (payload.interrupted || !payload.turn?.agentReply) {
+      if (payload.softTimedOut && payload.deferredTurnId) {
         stopAgentThinkingTimer();
-        setSubtitle('agent', 'Interrupted. Listening…', 'interrupted');
+        trackDeferredTurn(payload.deferredTurnId);
+        await playSoftTimeoutNotice();
+        setSubtitle('agent', 'Still working in the background.', 'thinking');
+        await resumeHumanListeningIfAllowed({ updateSubtitle: true }).catch((error) => {
+          addLog(
+            'error',
+            'Speech recognition failed to resume after deferred turn handoff.',
+            formatError(error),
+          );
+        });
         syncAmbientMotion();
         return;
       }
 
+      if (payload.interrupted || !payload.turn?.agentReply) {
+        stopAgentThinkingTimer();
+        setSubtitle('agent', 'Interrupted. Listening…', 'interrupted');
+        await resumeHumanListeningIfAllowed({ updateSubtitle: true }).catch((error) => {
+          addLog('error', 'Speech recognition failed to resume after interruption.', formatError(error));
+        });
+        syncAmbientMotion();
+        return;
+      }
+
+      recordAgentSelfTurnComplete({
+        turnId: payload.turn.id,
+        userText: cleanedTranscript,
+        agentText: payload.turn.agentReply.text,
+      });
       await playTurnReply(payload.turn);
     } catch (error) {
       state.processingReplies = false;
+      clearPendingReservePlayback({ stopSpeech: true });
       stopAgentThinkingTimer();
       if (state.activeReplyAbortController === requestController) {
         state.activeReplyAbortController = null;
@@ -1333,6 +2816,13 @@ export function createSessionController({
       }
 
       setSubtitle('agent', 'Codex could not reply.', 'error');
+      await resumeHumanListeningIfAllowed({ updateSubtitle: true }).catch((resumeError) => {
+        addLog(
+          'error',
+          'Speech recognition failed to resume after Codex error.',
+          formatError(resumeError),
+        );
+      });
       renderSessionSnapshot();
       renderTranscriptList();
       renderDebugSnapshot();
@@ -1340,8 +2830,10 @@ export function createSessionController({
       addLog('error', 'Direct Codex turn failed.', formatError(error));
       throw error;
     } finally {
+      await reservePromise;
       state.activeUtteranceId = null;
       state.activeUtteranceText = '';
+      lastSpeculativeTranscript = '';
       interruptionIssuedForUtterance = false;
       syncAmbientMotion();
     }
@@ -1383,10 +2875,14 @@ export function createSessionController({
     }
     sendBestEffortSessionClose(reason);
     clearScheduledLocalHello({ releaseLock: true });
+    clearThinkingPromptLoop({ stopSpeech: true });
+    clearPendingReservePlayback({ stopSpeech: true });
     clearAmbientLoop();
     clearSpeechBeats();
+    cancelSpeculativeTurn({ stopSpeech: true, resetTranscript: true });
     humanVoiceLayer.stopListening();
     avatarSpeech.stop({ cancelVoice: true });
+    notifySpeechIdleWaiters();
     state.activeReplyAbortController?.abort?.();
     humanVoiceLayer.destroy();
     agentVoiceLayer.destroy();
@@ -1406,14 +2902,19 @@ export function createSessionController({
     syncWorkspaceSetup,
     loadProductionVoiceState,
     loadCodexState,
+    loadAvailablePlugins,
     loadWorkspaceSetup,
+    loadAgentSelfSettings,
+    saveAgentSelfSettings,
     resolveLinkedLaunch,
     refreshSession,
     enqueueHumanTurn,
+    startSpeculativeTurn,
     uploadVoiceSample,
     setVoiceSampleValidationMessage,
     interruptActiveReply,
     toggleMicrophoneMuted,
+    shouldAcceptVoiceInput,
     endCall,
     maybeStartLaunchCall,
     destroy,

@@ -4,31 +4,77 @@ import assert from 'node:assert/strict';
 import { bindAppEvents } from './events.js';
 
 class FakeElement extends EventTarget {
-  constructor({ value = '', files = null } = {}) {
+  constructor({ value = '', files = null, tagName = 'INPUT' } = {}) {
     super();
     this.value = value;
     this.files = files;
     this.disabled = false;
     this.textContent = '';
+    this.open = false;
+    this.hidden = false;
+    this.tagName = tagName;
+  }
+
+  showModal() {
+    this.open = true;
+  }
+
+  close() {
+    this.open = false;
   }
 }
 
 function createDom() {
+  const bundledModelSelect = new FakeElement({ value: 'bhf-1-2' });
+  bundledModelSelect.selectedOptions = [{ textContent: 'BHF 1.2' }];
   return {
     joinCall: new FakeElement(),
+    callCameraToggle: new FakeElement(),
+    callSpeakerToggle: new FakeElement(),
     callMicToggle: new FakeElement(),
     refreshInspector: new FakeElement(),
     typedInput: new FakeElement(),
     sendTyped: new FakeElement(),
     clearTyped: new FakeElement(),
-    bundledModelSelect: new FakeElement({ value: 'bhf-1-2' }),
+    bundledModelSelect,
     stageSelect: new FakeElement(),
     emoteSelect: new FakeElement(),
     gestureSelect: new FakeElement(),
     voiceSampleFile: new FakeElement(),
     previewVoiceSample: new FakeElement(),
     previewCharacterAnimation: new FakeElement(),
+    continuitySettingsDialog: new FakeElement(),
+    continuitySettingsOpen: new FakeElement(),
+    continuitySettingsClose: new FakeElement(),
     callHistoryToggle: new FakeElement(),
+    agentModeSelect: new FakeElement({ value: 'standard', tagName: 'SELECT' }),
+    agentSelfName: new FakeElement(),
+    agentSelfPronouns: new FakeElement(),
+    agentSelfPersonality: new FakeElement(),
+    agentSelfInterests: new FakeElement(),
+    agentSelfPrompt: new FakeElement(),
+    continuitySettingsSave: new FakeElement(),
+    continuitySettingsDirty: new FakeElement(),
+    smoothGestureTransitionsToggle: new FakeElement(),
+    pluginSettingsDialog: new FakeElement({ tagName: 'DIALOG' }),
+    pluginSettingsOpen: new FakeElement(),
+    pluginSettingsClose: new FakeElement(),
+    pluginSettingsSave: new FakeElement(),
+    codexPluginList: Object.assign(new FakeElement(), {
+      replaceChildren(...children) {
+        this.children = children;
+      },
+      querySelectorAll() {
+        return [];
+      },
+    }),
+    codexPluginEmpty: new FakeElement(),
+    advancedSettingsDialog: new FakeElement({ tagName: 'DIALOG' }),
+    advancedSettingsOpen: new FakeElement(),
+    advancedSettingsClose: new FakeElement(),
+    advancedSettingsSave: new FakeElement(),
+    advancedControlComputer: Object.assign(new FakeElement(), { checked: false }),
+    advancedComplexTasks: Object.assign(new FakeElement(), { checked: false }),
   };
 }
 
@@ -216,6 +262,55 @@ test('bindAppEvents routes setup preview buttons to the local preview controller
   assert.equal(animationPreviewCount, 1);
 });
 
+test('bindAppEvents opens and closes the continuity popup', () => {
+  globalThis.window = Object.assign(new EventTarget(), {
+    confirm() {
+      return true;
+    },
+  });
+
+  const dom = createDom();
+
+  bindAppEvents({
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      uploadVoiceSample: async () => {},
+      syncSessionSetup() {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+    },
+    persistState() {},
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.continuitySettingsOpen.dispatchEvent(new Event('click'));
+  assert.equal(dom.continuitySettingsDialog.open, true);
+  assert.equal(dom.continuitySettingsSave.disabled, true);
+
+  dom.continuitySettingsClose.dispatchEvent(new Event('click'));
+  assert.equal(dom.continuitySettingsDialog.open, false);
+});
+
 test('bindAppEvents syncs the selected character model to the workspace setup store', async () => {
   globalThis.window = new EventTarget();
 
@@ -263,6 +358,195 @@ test('bindAppEvents syncs the selected character model to the workspace setup st
   await Promise.resolve();
 
   assert.equal(syncedModelId, 'fbf-1-0');
+});
+
+test('bindAppEvents saves continuity settings only when the save button is pressed', async () => {
+  globalThis.window = Object.assign(new EventTarget(), {
+    confirm() {
+      return true;
+    },
+  });
+
+  const dom = createDom();
+  let savedSettings = null;
+
+  bindAppEvents({
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      uploadVoiceSample: async () => {},
+      saveAgentSelfSettings: async (settings) => {
+        savedSettings = settings;
+      },
+      syncSessionSetup() {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+    },
+    persistState() {},
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.continuitySettingsOpen.dispatchEvent(new Event('click'));
+  dom.agentModeSelect.value = 'continuity';
+  dom.agentSelfName.value = 'Moth';
+  dom.agentSelfPronouns.value = 'they/them';
+  dom.agentSelfPersonality.value = 'quietly observant';
+  dom.agentSelfInterests.value = 'memory, bridges';
+  dom.agentSelfPrompt.value = 'notice repetition';
+  dom.agentModeSelect.dispatchEvent(new Event('change'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(savedSettings, null);
+  assert.equal(dom.continuitySettingsSave.disabled, false);
+  assert.equal(dom.continuitySettingsDirty.hidden, false);
+
+  dom.continuitySettingsSave.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(savedSettings, {
+    agentMode: 'continuity',
+    selfProfile: {
+      name: 'Moth',
+      pronouns: 'they/them',
+      personality: 'quietly observant',
+      interests: 'memory, bridges',
+      selfPrompt: 'notice repetition',
+    },
+  });
+  assert.equal(dom.continuitySettingsDialog.open, false);
+  assert.equal(dom.continuitySettingsSave.disabled, true);
+  assert.equal(dom.continuitySettingsDirty.hidden, true);
+});
+
+test('bindAppEvents warns before closing dirty continuity settings without saving', () => {
+  let confirmCount = 0;
+  globalThis.window = Object.assign(new EventTarget(), {
+    confirm() {
+      confirmCount += 1;
+      return false;
+    },
+  });
+
+  const dom = createDom();
+
+  bindAppEvents({
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      uploadVoiceSample: async () => {},
+      syncSessionSetup() {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+    },
+    persistState() {},
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.continuitySettingsOpen.dispatchEvent(new Event('click'));
+  dom.agentSelfName.value = 'Unsaved';
+  dom.agentSelfName.dispatchEvent(new Event('input'));
+  dom.continuitySettingsClose.dispatchEvent(new Event('click'));
+
+  assert.equal(confirmCount, 1);
+  assert.equal(dom.continuitySettingsDialog.open, true);
+});
+
+test('bindAppEvents restores the saved continuity values when discard is confirmed', async () => {
+  globalThis.window = Object.assign(new EventTarget(), {
+    confirm() {
+      return true;
+    },
+  });
+
+  const dom = createDom();
+
+  bindAppEvents({
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      uploadVoiceSample: async () => {},
+      saveAgentSelfSettings: async () => {},
+      syncSessionSetup() {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+    },
+    persistState() {},
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.continuitySettingsOpen.dispatchEvent(new Event('click'));
+  dom.agentSelfName.value = 'Saved';
+  dom.agentSelfName.dispatchEvent(new Event('input'));
+  dom.continuitySettingsSave.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  dom.continuitySettingsOpen.dispatchEvent(new Event('click'));
+  dom.agentSelfName.value = 'Discard me';
+  dom.agentSelfName.dispatchEvent(new Event('input'));
+  dom.continuitySettingsClose.dispatchEvent(new Event('click'));
+
+  assert.equal(dom.continuitySettingsDialog.open, false);
+  assert.equal(dom.agentSelfName.value, 'Saved');
 });
 
 test('bindAppEvents toggles call history from the subtitle action button', () => {
@@ -316,6 +600,205 @@ test('bindAppEvents toggles call history from the subtitle action button', () =>
   assert.equal(renderCount, 1);
 });
 
+test('bindAppEvents loads live Codex plugins when opening the plugin dialog and persists the selection', async () => {
+  globalThis.window = new EventTarget();
+
+  const dom = createDom();
+  const state = {
+    callHistoryCollapsed: true,
+    preferences: {
+      bundledModelId: 'bhf-1-2',
+      enabledPluginIds: [],
+      enableControlComputer: false,
+      enableComplexTasks: false,
+    },
+    codex: {
+      availablePlugins: [],
+    },
+  };
+  let loadCount = 0;
+  let persistCount = 0;
+  let syncedWorkspaceSetup = null;
+  let syncSessionSetupCount = 0;
+
+  dom.codexPluginList.querySelectorAll = () => [
+    { dataset: { pluginId: 'figma@openai-curated' } },
+    { dataset: { pluginId: 'github@openai-curated' } },
+  ];
+
+  bindAppEvents({
+    state,
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      loadAvailablePlugins: async () => {
+        loadCount += 1;
+        state.codex.availablePlugins = [
+          {
+            id: 'github@openai-curated',
+            displayName: 'GitHub',
+            marketplace: 'openai-curated',
+            version: '1.0.0',
+            description: 'GitHub access',
+          },
+          {
+            id: 'figma@openai-curated',
+            displayName: 'Figma',
+            marketplace: 'openai-curated',
+            version: '1.0.0',
+            description: 'Figma access',
+          },
+        ];
+      },
+      syncWorkspaceSetup: async (payload) => {
+        syncedWorkspaceSetup = payload;
+      },
+      syncSessionSetup: async () => {
+        syncSessionSetupCount += 1;
+      },
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+      renderTranscriptList() {},
+    },
+    persistState() {
+      persistCount += 1;
+    },
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.pluginSettingsOpen.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(loadCount, 1);
+  assert.equal(dom.pluginSettingsDialog.open, true);
+  assert.match(dom.codexPluginList.textContent, /GitHub/);
+  assert.match(dom.codexPluginList.textContent, /Figma/);
+
+  dom.pluginSettingsSave.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(state.preferences.enabledPluginIds, [
+    'figma@openai-curated',
+    'github@openai-curated',
+  ]);
+  assert.equal(persistCount, 1);
+  assert.equal(syncSessionSetupCount, 1);
+  assert.equal(dom.pluginSettingsDialog.open, false);
+  assert.deepEqual(syncedWorkspaceSetup, {
+    activeModelId: 'bhf-1-2',
+    activeModelLabel: 'BHF 1.2',
+    enabledPluginIds: ['figma@openai-curated', 'github@openai-curated'],
+    enableControlComputer: false,
+    enableComplexTasks: false,
+  });
+});
+
+test('bindAppEvents persists advanced Codex tool toggles', async () => {
+  globalThis.window = new EventTarget();
+
+  const dom = createDom();
+  const state = {
+    callHistoryCollapsed: true,
+    preferences: {
+      bundledModelId: 'bhf-1-2',
+      enabledPluginIds: ['github@openai-curated'],
+      enableControlComputer: false,
+      enableComplexTasks: false,
+    },
+    codex: {
+      availablePlugins: [],
+    },
+  };
+  let persistCount = 0;
+  let syncedWorkspaceSetup = null;
+  let syncSessionSetupCount = 0;
+
+  bindAppEvents({
+    state,
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      syncWorkspaceSetup: async (payload) => {
+        syncedWorkspaceSetup = payload;
+      },
+      syncSessionSetup: async () => {
+        syncSessionSetupCount += 1;
+      },
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+      renderTranscriptList() {},
+    },
+    persistState() {
+      persistCount += 1;
+    },
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.advancedSettingsOpen.dispatchEvent(new Event('click'));
+  assert.equal(dom.advancedSettingsDialog.open, true);
+  assert.equal(dom.advancedControlComputer.checked, false);
+  assert.equal(dom.advancedComplexTasks.checked, false);
+
+  dom.advancedControlComputer.checked = true;
+  dom.advancedComplexTasks.checked = true;
+  dom.advancedSettingsSave.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(state.preferences.enableControlComputer, true);
+  assert.equal(state.preferences.enableComplexTasks, true);
+  assert.equal(persistCount, 1);
+  assert.equal(syncSessionSetupCount, 1);
+  assert.equal(dom.advancedSettingsDialog.open, false);
+  assert.deepEqual(syncedWorkspaceSetup, {
+    activeModelId: 'bhf-1-2',
+    activeModelLabel: 'BHF 1.2',
+    enabledPluginIds: ['github@openai-curated'],
+    enableControlComputer: true,
+    enableComplexTasks: true,
+  });
+});
+
 test('bindAppEvents routes the call mic button to the microphone toggle', async () => {
   globalThis.window = new EventTarget();
 
@@ -363,6 +846,130 @@ test('bindAppEvents routes the call mic button to the microphone toggle', async 
   await Promise.resolve();
 
   assert.equal(toggleCount, 1);
+});
+
+test('bindAppEvents routes the call camera button to the local camera toggle', async () => {
+  globalThis.window = new EventTarget();
+
+  const dom = createDom();
+  let toggleCount = 0;
+
+  bindAppEvents({
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    agentVoiceLayer: {
+      getSnapshot() {
+        return { speakReplies: true };
+      },
+      updateConfig() {},
+      cancelSpeech() {},
+    },
+    localCameraController: {
+      toggleEnabled: async () => {
+        toggleCount += 1;
+      },
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      toggleMicrophoneMuted: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      uploadVoiceSample: async () => {},
+      syncSessionSetup() {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+      renderTranscriptList() {},
+    },
+    persistState() {},
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.callCameraToggle.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(toggleCount, 1);
+});
+
+test('bindAppEvents routes the call speaker button to the speaker toggle', async () => {
+  globalThis.window = new EventTarget();
+
+  const dom = createDom();
+  const patches = [];
+  let cancelled = 0;
+
+  bindAppEvents({
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    agentVoiceLayer: {
+      getSnapshot() {
+        return { speakReplies: true };
+      },
+      updateConfig(patch) {
+        patches.push(patch);
+      },
+      cancelSpeech() {
+        cancelled += 1;
+      },
+    },
+    localCameraController: {
+      toggleEnabled: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      toggleMicrophoneMuted: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      uploadVoiceSample: async () => {},
+      syncSessionSetup() {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+      renderTranscriptList() {},
+      renderCallSnapshot() {},
+      renderAgentStatus() {},
+    },
+    persistState() {},
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.callSpeakerToggle.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(patches, [{ speakReplies: false }]);
+  assert.equal(cancelled, 1);
 });
 
 test('bindAppEvents clears the typed chat box immediately when sending', async () => {
@@ -419,4 +1026,55 @@ test('bindAppEvents clears the typed chat box immediately when sending', async (
 
   deferred.resolve();
   await Promise.resolve();
+});
+
+test('bindAppEvents updates the smooth gesture transition flag from settings', () => {
+  globalThis.window = new EventTarget();
+
+  const dom = createDom();
+  let nextEnabled = null;
+  let persistCount = 0;
+  dom.smoothGestureTransitionsToggle.checked = false;
+
+  bindAppEvents({
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+      setSmoothGestureTransitions(enabled) {
+        nextEnabled = enabled;
+      },
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      uploadVoiceSample: async () => {},
+      syncSessionSetup() {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+    },
+    persistState() {
+      persistCount += 1;
+    },
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.smoothGestureTransitionsToggle.dispatchEvent(new Event('change'));
+
+  assert.equal(nextEnabled, false);
+  assert.equal(persistCount, 1);
 });
