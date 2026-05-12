@@ -86,12 +86,14 @@
 ### Task 3: Build a Codex-facing `create_call_link` tool
 
 **Files:**
-- Create: `apps/codex-call-link-tool/server.mjs`
-- Create: `apps/codex-call-link-tool/README.md`
-- Create: `apps/codex-call-link-tool/server.test.mjs`
+- Create: `packages/call-link/index.mjs`
+- Create: `packages/call-link/mcp-http.mjs`
+- Create: `packages/call-link/index.test.mjs`
+- Create: `packages/call-link/mcp-http.test.mjs`
+- Modify: `apps/one-to-one-agent-room/server.mjs`
 - Modify: `README.md`
 
-- [ ] Create a small local Codex tool server that exposes `create_call_link`.
+- [ ] Expose `create_call_link` from the same `one-to-one-agent-room` runtime over MCP HTTP.
 - [ ] Validate what host metadata is available to the tool at runtime and capture the minimum required source context:
   - source Codex session id
   - source `CODEX_HOME`

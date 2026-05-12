@@ -29,6 +29,9 @@ export function createAvatarController({
         initialStageId: state.preferences.stageId,
         initialEmoteId: state.preferences.emoteId,
         initialGestureId: state.preferences.gestureId,
+        featureFlags: {
+          smoothGestureTransitions: state.preferences.smoothGestureTransitions !== false,
+        },
         onLog(level, message, details) {
           addLog(level, `[avatar] ${message}`, details);
         },
@@ -88,6 +91,9 @@ export function createAvatarController({
       },
       setSpeaking(active) {
         fallbackState.speaking = Boolean(active);
+        return this.getSnapshot();
+      },
+      setFeatureFlags() {
         return this.getSnapshot();
       },
       destroy() {},
@@ -214,6 +220,18 @@ export function createAvatarController({
     return resolvedGesture;
   }
 
+  function setSmoothGestureTransitions(enabled) {
+    const nextEnabled = enabled !== false;
+    state.preferences.smoothGestureTransitions = nextEnabled;
+    if (dom.smoothGestureTransitionsToggle) {
+      dom.smoothGestureTransitionsToggle.checked = nextEnabled;
+    }
+    avatarLayer.setFeatureFlags?.({
+      smoothGestureTransitions: nextEnabled,
+    });
+    return nextEnabled;
+  }
+
   function refreshSceneNote() {
     if (!dom.sceneNote) {
       return;
@@ -258,6 +276,7 @@ export function createAvatarController({
     selectStage,
     selectEmote,
     selectGesture,
+    setSmoothGestureTransitions,
     refreshSceneNote,
     syncGestureOptions,
     syncAvatarSnapshot,

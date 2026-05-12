@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>VRMA Studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/",
+          "@pixiv/three-vrm": "/vendor/@pixiv/three-vrm/three-vrm.module.js",
+          "@pixiv/three-vrm-animation": "/vendor/@pixiv/three-vrm-animation/three-vrm-animation.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="studio-shell">
+      <header class="menu-bar">
+        <div class="menu-cluster" id="menu-file">
+          <button class="menu-button" id="action-new" type="button">New</button>
+          <button class="menu-button" id="action-open-vrm" type="button">Open VRM</button>
+          <button class="menu-button" id="action-open-vrma" type="button">Open VRMA</button>
+          <button class="menu-button" id="action-save" type="button">Save</button>
+          <button class="menu-button" id="action-save-as" type="button">Save As</button>
+        </div>
+        <div class="menu-title">VRMA Studio</div>
+      </header>
+
+      <section class="workspace-shell">
+        <aside class="tool-rail" aria-label="Tool rail">
+          <button class="tool-button is-active" type="button">Sel</button>
+          <button class="tool-button" type="button">Rot</button>
+          <button class="tool-button" type="button">IK</button>
+          <button class="tool-button" type="button">Pole</button>
+        </aside>
+
+        <section class="viewport-panel">
+          <div class="viewport-stage">
+            <canvas id="viewport-canvas" aria-label="VRMA Studio viewport"></canvas>
+            <div class="viewport-overlay">
+              <button class="overlay-chip overlay-chip--button" id="display-mesh" type="button">Mesh</button>
+              <button class="overlay-chip overlay-chip--button" id="display-skeleton" type="button">Skeleton</button>
+              <button class="overlay-chip overlay-chip--button" id="display-bones" type="button">Bones</button>
+              <button class="overlay-chip overlay-chip--button" id="camera-snap" type="button">Snap 15°</button>
+            </div>
+          </div>
+        </section>
+
+        <aside id="inspector-panel" class="inspector-panel">
+          <div class="panel-header">Inspector</div>
+          <div class="panel-block">
+            <div class="panel-label">Selection</div>
+            <div class="panel-value" id="inspector-selection">No control selected</div>
+          </div>
+          <div class="panel-block">
+            <div class="panel-label">Clip</div>
+            <div class="panel-value" id="inspector-clip">No animation loaded</div>
+          </div>
+          <div class="panel-block">
+            <div class="panel-label">Keying</div>
+            <label class="checkbox-row">
+              <input id="auto-key-toggle" type="checkbox" />
+              <span>Auto-key</span>
+            </label>
+            <button class="menu-button menu-button--panel" id="action-add-key" type="button">Add Key</button>
+          </div>
+          <div class="panel-block">
+            <div class="panel-label">Preview</div>
+            <div class="panel-button-row">
+              <button class="menu-button menu-button--panel" id="action-play" type="button">Play</button>
+              <button class="menu-button menu-button--panel" id="action-pause" type="button">Pause</button>
+              <button class="menu-button menu-button--panel" id="action-stop" type="button">Stop</button>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="timeline-band">
+        <div class="track-detail">
+          <div class="track-detail-label">Selected Track</div>
+          <div class="track-detail-value" id="track-detail-value">Waiting for selection</div>
+        </div>
+        <section id="timeline-shell" class="timeline-shell">
+          <aside class="timeline-list" id="timeline-track-list">
+            <div class="timeline-track">No tracks loaded</div>
+          </aside>
+          <div class="timeline-grid" id="timeline-grid">
+            <div class="timeline-ruler" id="timeline-ruler"></div>
+            <div class="timeline-playhead" id="timeline-playhead" style="left: 0%"></div>
+          </div>
+        </section>
+      </section>
+
+      <footer id="status-bar" class="status-bar">
+        <span id="status-primary">Ready for VRM and VRMA load actions.</span>
+        <span id="status-secondary">Single clip · Humanoid tracks · Desktop-style spike</span>
+      </footer>
+
+      <input id="vrm-file-input" class="file-picker-input" type="file" accept=".vrm" aria-hidden="true" />
+      <input id="vrma-file-input" class="file-picker-input" type="file" accept=".vrma" aria-hidden="true" />
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

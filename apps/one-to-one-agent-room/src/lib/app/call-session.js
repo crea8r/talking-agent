@@ -14,6 +14,24 @@ function normalizeRuntimeConfig(runtimeConfig) {
   return runtimeConfig && typeof runtimeConfig === 'object' ? runtimeConfig : {};
 }
 
+function normalizePluginIds(values = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => normalizeString(value))
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+export function normalizeCodexCapabilityPolicy(formState = {}) {
+  return {
+    enabledPluginIds: normalizePluginIds(formState.enabledPluginIds),
+    enableControlComputer: formState.enableControlComputer === true,
+    enableComplexTasks: formState.enableComplexTasks === true,
+  };
+}
+
 function normalizeLaunchContext(runtimeConfig = {}, launchContext = {}) {
   const runtimeLaunch =
     runtimeConfig.launch && typeof runtimeConfig.launch === 'object' ? runtimeConfig.launch : {};
@@ -54,6 +72,22 @@ function buildAgentSetupMetadata(formState = {}) {
     voiceSampleSpeakerId: `${formState.voiceSampleSpeakerId || ''}`.trim(),
     voiceSampleSpeakerLabel: `${formState.voiceSampleSpeakerLabel || ''}`.trim(),
     activeModelId: `${formState.bundledModelId || ''}`.trim(),
+    codexCapabilityPolicy: normalizeCodexCapabilityPolicy(formState),
+  };
+}
+
+function buildAgentIdentityMetadata(agentSelfSettings = {}) {
+  const settings =
+    agentSelfSettings && typeof agentSelfSettings === 'object' ? agentSelfSettings : {};
+  const selfProfile =
+    settings.selfProfile && typeof settings.selfProfile === 'object' ? settings.selfProfile : {};
+  return {
+    mode: normalizeString(settings.agentMode) === 'continuity' ? 'continuity' : 'standard',
+    name: normalizeString(selfProfile.name),
+    pronouns: normalizeString(selfProfile.pronouns),
+    personality: normalizeString(selfProfile.personality),
+    interests: normalizeString(selfProfile.interests),
+    selfPrompt: normalizeString(selfProfile.selfPrompt),
   };
 }
 
@@ -90,7 +124,12 @@ export function getCallTitle(session, runtimeConfig = {}) {
   return `${session?.title || getCodexProjectTitle(runtimeConfig)}`.trim();
 }
 
-export function buildCallSessionKey(formState = {}, runtimeConfig = {}, launchContext = {}) {
+export function buildCallSessionKey(
+  formState = {},
+  runtimeConfig = {},
+  launchContext = {},
+  agentSelfSettings = {},
+) {
   const launch = normalizeLaunchContext(runtimeConfig, launchContext);
   return JSON.stringify({
     title: getCodexProjectTitle(runtimeConfig),
@@ -98,14 +137,22 @@ export function buildCallSessionKey(formState = {}, runtimeConfig = {}, launchCo
     humanName: normalizeString(formState.participantName),
     bundledModelId: normalizeString(formState.bundledModelId),
     voiceSampleProfileId: normalizeString(formState.voiceSampleProfileId),
+    codexCapabilityPolicy: normalizeCodexCapabilityPolicy(formState),
+    agentIdentity: buildAgentIdentityMetadata(agentSelfSettings),
     workspaceRoot: launch.workspaceRoot,
     app: 'one-to-one-agent-room',
   });
 }
 
-export function buildCallSessionPayload(formState = {}, runtimeConfig = {}, launchContext = {}) {
+export function buildCallSessionPayload(
+  formState = {},
+  runtimeConfig = {},
+  launchContext = {},
+  agentSelfSettings = {},
+) {
   const config = normalizeRuntimeConfig(runtimeConfig);
   const agentSetup = buildAgentSetupMetadata(formState);
+  const agentIdentity = buildAgentIdentityMetadata(agentSelfSettings);
   const launch = normalizeLaunchContext(runtimeConfig, launchContext);
   const title = normalizeString(launch.displayTitle || getCodexProjectTitle(runtimeConfig));
 
@@ -119,6 +166,7 @@ export function buildCallSessionPayload(formState = {}, runtimeConfig = {}, laun
       codexProjectName: title,
       reusablePackages: SESSION_REUSABLE_PACKAGES,
       agentSetup,
+      agentIdentity,
       launch,
       callMode: 'direct-codex-voice-avatar',
       codexContract: {
@@ -148,6 +196,9 @@ export function buildDefaultCallForm() {
     voiceSampleStatus: 'missing',
     voiceSampleSpeakerId: '',
     voiceSampleSpeakerLabel: '',
+    enabledPluginIds: [],
+    enableControlComputer: false,
+    enableComplexTasks: false,
   };
 }
 

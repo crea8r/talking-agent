@@ -1,0 +1,5 @@
+{
+  "name": "@talking-agent/vrma-core",
+  "private": true,
+  "type": "module"
+}

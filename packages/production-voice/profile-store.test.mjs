@@ -74,3 +74,21 @@ test('profile store keeps separate active samples per workspace scope', async ()
   assert.equal(beta.referenceOriginalFileName, 'beta.wav');
   assert.notEqual(alpha.id, beta.id);
 });
+
+test('profile store falls back to the default profile for new scopes', async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'production-voice-profile-'));
+  const store = createProductionVoiceProfileStore({ rootDir });
+
+  await store.saveProfile({
+    referenceOriginalFileName: 'default.wav',
+    referenceMimeType: 'audio/wav',
+    referenceBuffer: Buffer.from([1, 2, 3, 4]),
+    meloBaseSpeakerId: 'EN-US',
+    meloBaseSpeakerLabel: 'EN-US',
+  });
+
+  const summary = await store.getProfileSummary({ scopeKey: 'brand-new-workspace' });
+
+  assert.equal(summary.referenceOriginalFileName, 'default.wav');
+  assert.equal(summary.referenceAvailable, true);
+});

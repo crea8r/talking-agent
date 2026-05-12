@@ -23,6 +23,7 @@ import { createPresenter } from './lib/app/presenter.js';
 import { createAvatarController } from './lib/app/avatar-controller.js';
 import { createSessionController } from './lib/app/session-controller.js';
 import { createSetupPreviewController } from './lib/app/setup-preview.js';
+import { createLocalCameraController } from './lib/app/local-camera.js';
 import { bindAppEvents } from './lib/app/events.js';
 import { resolveLaunchContext } from './lib/app/launch-context.js';
 
@@ -44,6 +45,21 @@ store.activateScope(initialLaunchContext.workspaceKey);
 
 const { state, bundledModelMap, stageMap, emoteMap } = store;
 state.launchContext = initialLaunchContext;
+state.agentSelf ||= {
+  loading: false,
+  saving: false,
+  settings: {
+    agentMode: 'standard',
+    selfProfile: {
+      name: '',
+      pronouns: '',
+      personality: '',
+      interests: '',
+      selfPrompt: '',
+    },
+  },
+};
+state.localCameraSnapshot ||= null;
 const avatarDock = createAvatarDock({
   setupHost: dom.setupAvatarHost,
   callHost: dom.callAvatarHost,
@@ -99,11 +115,25 @@ const agentVoiceLayer = createProductionVoiceLayer({
   },
 });
 
+const localCameraController = createLocalCameraController({
+  videoElement: dom.callSelfVideo,
+  onStateChange(snapshot) {
+    state.localCameraSnapshot = snapshot;
+    presenter?.renderCallSnapshot?.();
+    presenter?.refreshActionButtons?.();
+    presenter?.renderDebugSnapshot?.();
+  },
+});
+state.localCameraSnapshot = localCameraController.getSnapshot();
+
 const humanVoiceLayer = createVoiceLayer({
   locale: state.preferences.humanLocale,
   autoRestart: true,
   speakReplies: false,
   getReply: async (transcript) => {
+    if (!sessionController.shouldAcceptVoiceInput({ allowDuringStartupGreeting: true })) {
+      return '';
+    }
     await sessionController.enqueueHumanTurn(transcript, 'voice');
     return 'Queued for Codex agent.';
   },
@@ -118,6 +148,8 @@ const avatarSpeech = createAvatarSpeechController({
   onStateChange(snapshot) {
     state.avatarSpeechSnapshot = snapshot;
     presenter.renderAgentStatus();
+    presenter.renderCallSnapshot();
+    presenter.refreshActionButtons();
     avatarController.syncAvatarSnapshot();
   },
 });
@@ -155,6 +187,7 @@ sessionController = createSessionController({
   renderSubtitles: presenter.renderSubtitles,
   renderDebugSnapshot: presenter.renderDebugSnapshot,
   renderAgentStatus: presenter.renderAgentStatus,
+  renderCallSnapshot: presenter.renderCallSnapshot,
   renderVoiceSampleState: presenter.renderVoiceSampleState,
   refreshActionButtons: presenter.refreshActionButtons,
   syncVoiceSampleProfile: store.syncVoiceSampleProfile,
@@ -193,10 +226,17 @@ humanVoiceLayer.setHandlers({
         : 0;
     presenter.renderCallSnapshot();
   },
-  onTranscript({ text, isFinal }) {
-    state.transcriptPreview = text || '';
-    if (!isFinal) {
-      void sessionController.syncInterimTranscript(text);
+  onTranscript({ text, isFinal, phase }) {
+    if (!sessionController.shouldAcceptVoiceInput({ allowDuringStartupGreeting: true })) {
+      state.transcriptPreview = '';
+      presenter.renderHumanStatus();
+      return;
+    }
+    const transcriptPhase = phase || (isFinal ? 'final' : 'interim');
+    if (transcriptPhase === 'sentence' || transcriptPhase === 'interim') {
+      void sessionController.syncInterimTranscript(text, {
+        phase: transcriptPhase,
+      });
     }
     presenter.renderHumanStatus();
   },
@@ -209,6 +249,8 @@ agentVoiceLayer.setHandlers({
   onStateChange(snapshot) {
     state.agentVoiceSnapshot = snapshot;
     presenter.renderAgentStatus();
+    presenter.renderCallSnapshot();
+    presenter.refreshActionButtons();
     presenter.renderDebugSnapshot();
   },
   onLog(entry) {
@@ -223,6 +265,7 @@ function initialize() {
   applyLaunchContext(state.launchContext);
   store.hydrateInputs(dom);
   renderSetupControls();
+  renderAgentSelfControls();
   avatarController.refreshSceneNote();
   avatarController.syncAvatarSnapshot();
   presenter.renderVoiceSampleState();
@@ -236,9 +279,11 @@ function initialize() {
     state,
     screenNavigator,
     humanVoiceLayer,
+    agentVoiceLayer,
     avatarController,
     sessionController,
     setupPreviewController,
+    localCameraController,
     presenter,
     persistState: () => store.persistState(dom),
     addLog: logger.addLog,
@@ -259,6 +304,32 @@ function renderSetupControls() {
     resolveGesturePreset(state.preferences.bundledModelId, state.preferences.gestureId)?.id ||
       GESTURES[0].id,
   );
+}
+
+function renderAgentSelfControls() {
+  const settings = state.agentSelf?.settings || {};
+  const profile = settings.selfProfile || {};
+  if (dom.smoothGestureTransitionsToggle) {
+    dom.smoothGestureTransitionsToggle.checked = state.preferences.smoothGestureTransitions !== false;
+  }
+  if (dom.agentModeSelect) {
+    dom.agentModeSelect.value = settings.agentMode === 'continuity' ? 'continuity' : 'standard';
+  }
+  if (dom.agentSelfName) {
+    dom.agentSelfName.value = profile.name || '';
+  }
+  if (dom.agentSelfPronouns) {
+    dom.agentSelfPronouns.value = profile.pronouns || '';
+  }
+  if (dom.agentSelfPersonality) {
+    dom.agentSelfPersonality.value = profile.personality || '';
+  }
+  if (dom.agentSelfInterests) {
+    dom.agentSelfInterests.value = profile.interests || '';
+  }
+  if (dom.agentSelfPrompt) {
+    dom.agentSelfPrompt.value = profile.selfPrompt || '';
+  }
 }
 
 function applyLaunchContext(launchContext) {
@@ -286,8 +357,10 @@ async function boot() {
     applyLaunchContext(resolvedLaunchContext);
     store.ensureDefaults();
     store.hydrateInputs(dom);
+    await sessionController.loadAgentSelfSettings();
     await sessionController.loadWorkspaceSetup();
     renderSetupControls();
+    renderAgentSelfControls();
     store.persistState(dom);
 
     if (resolvedLaunchContext.callStatus === 'ended' || resolvedLaunchContext.callStatus === 'retry-needed') {
@@ -334,6 +407,9 @@ async function boot() {
       appMode: state.runtimeConfig.appMode,
     });
     await sessionController.maybeStartLaunchCall();
+    await localCameraController.syncCallState({
+      activeCall: state.activeCall,
+    });
   } catch (error) {
     presenter.updateRoomStatus(
       'error',

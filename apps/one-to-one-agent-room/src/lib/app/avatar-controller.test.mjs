@@ -128,3 +128,111 @@ test('selectBundledModel queues the last requested model while an earlier load i
   assert.equal(state.preferences.bundledModelId, 'fbf-1-0');
   assert.equal(dom.activeAvatar.textContent, 'Green Fairy');
 });
+
+test('smooth transition flag is forwarded to the avatar layer and can be updated', () => {
+  globalThis.document = {
+    createElement() {
+      return {
+        value: '',
+        textContent: '',
+        title: '',
+      };
+    },
+  };
+
+  const featureFlagCalls = [];
+  const avatarLayer = {
+    getSnapshot() {
+      return {
+        modelId: 'bhf-1-2',
+        modelLabel: 'Red Tinker Bell',
+        gestureId: 'Pose',
+        emoteId: 'neutral',
+        mouthCue: 'rest',
+        lookTargetLabel: 'center',
+      };
+    },
+    loadModel() {
+      return Promise.resolve(this.getSnapshot());
+    },
+    setStage() {},
+    setEmote() {},
+    setGesture() {},
+    setMouthCue() {},
+    setSpeaking() {},
+    setFeatureFlags(flags) {
+      featureFlagCalls.push(flags);
+    },
+    destroy() {},
+  };
+
+  const dom = {
+    agentCanvas: {},
+    stageShell: { style: { setProperty() {} } },
+    bundledModelSelect: { value: 'bhf-1-2' },
+    stageSelect: { value: 'neon-loft' },
+    emoteSelect: { value: 'neutral' },
+    gestureSelect: {
+      value: 'Pose',
+      replaceChildren() {},
+      append() {},
+    },
+    activeAvatar: { textContent: '' },
+    activeEmote: { textContent: '' },
+    activeGesture: { textContent: '' },
+    activeMouth: { textContent: '' },
+    lookTarget: { textContent: '' },
+    sceneNote: { textContent: '' },
+  };
+
+  const state = {
+    preferences: {
+      bundledModelId: 'bhf-1-2',
+      stageId: 'neon-loft',
+      emoteId: 'neutral',
+      gestureId: 'Pose',
+      smoothGestureTransitions: true,
+    },
+    modelLoading: false,
+  };
+
+  const controller = createAvatarController({
+    dom,
+    state,
+    createAvatarLayer(options) {
+      featureFlagCalls.push(options.featureFlags);
+      return avatarLayer;
+    },
+    bundledModelMap: new Map([
+      ['bhf-1-2', { id: 'bhf-1-2', label: 'Red Tinker Bell', path: '/models/Bhf_1_2.vrm' }],
+    ]),
+    stageMap: new Map([['neon-loft', { id: 'neon-loft', note: '' }]]),
+    emoteMap: new Map([['neutral', { id: 'neutral', label: 'Neutral', note: '' }]]),
+    getGesturePresets() {
+      return [{ id: 'Pose', label: 'Pose' }];
+    },
+    resolveGesturePreset() {
+      return { id: 'Pose', label: 'Pose', note: '' };
+    },
+    defaultModel: { id: 'bhf-1-2', label: 'Red Tinker Bell', path: '/models/Bhf_1_2.vrm' },
+    getSelectedBundledModel() {
+      return { id: 'bhf-1-2', label: 'Red Tinker Bell', path: '/models/Bhf_1_2.vrm' };
+    },
+    persistState() {},
+    formatError(error) {
+      return error;
+    },
+    addLog() {},
+    refreshActionButtons() {},
+  });
+
+  controller.setSmoothGestureTransitions(false);
+
+  assert.deepEqual(featureFlagCalls[0], {
+    smoothGestureTransitions: true,
+  });
+  assert.deepEqual(featureFlagCalls[1], {
+    smoothGestureTransitions: false,
+  });
+  assert.equal(state.preferences.smoothGestureTransitions, false);
+});

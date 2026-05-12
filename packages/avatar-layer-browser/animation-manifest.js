@@ -20,12 +20,12 @@ export const ANIMATION_MANIFEST = [
     'Subtle scanning and listening motion with alert but low energy body movement.',
     ['listen', 'listening', 'waiting', 'observing', 'ambient attention'],
   ),
-  entry(
-    'Thinking',
-    'Thinking.vrma',
-    'Reflective pause motion for considering an answer or searching for the right words.',
-    ['thinking', 'hesitation', 'problem solving', 'reflection'],
-  ),
+  // entry(
+  //   'Thinking',
+  //   'Thinking.vrma',
+  //   'Reflective pause motion for considering an answer or searching for the right words.',
+  //   ['thinking', 'hesitation', 'problem solving', 'reflection'],
+  // ),
   entry(
     'Greeting',
     'Greeting.vrma',
@@ -92,12 +92,12 @@ export const ANIMATION_MANIFEST = [
     'Upbeat victory or encouragement beat.',
     ['cheer', 'success', 'hype', 'encouragement', 'rallying energy'],
   ),
-  entry(
-    'Jumping',
-    'Jumping.vrma',
-    'Uneasy, body swaying around',
-    ['listen', 'listening','wiggle', 'shaking'],
-  ),
+  // entry(
+  //   'Jumping',
+  //   'Jumping.vrma',
+  //   'Uneasy, body swaying around',
+  //   ['listen', 'listening','wiggle', 'shaking'],
+  // ),
   entry(
     'Sleepy',
     'Sleepy.vrma',

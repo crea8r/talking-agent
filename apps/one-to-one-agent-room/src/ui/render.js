@@ -84,62 +84,77 @@ export function renderTranscriptList(container, session) {
     return;
   }
 
+  const items = [];
+
   session.turns.forEach((turn) => {
-    const humanItem = document.createElement('li');
-    humanItem.className = 'turn-item';
-    humanItem.dataset.role = 'human';
-    humanItem.innerHTML = `
-      <div class="turn-head">
-        <span>${escapeHtml(formatTime(turn.createdAt))}</span>
-      </div>
-      <div class="turn-body">
-        <p>${escapeHtml(turn.transcript)}</p>
-      </div>
-    `;
-    container.append(humanItem);
+    items.push({
+      role: 'human',
+      createdAt: turn.createdAt,
+      html: `
+        <div class="turn-head">
+          <span>${escapeHtml(formatTime(turn.createdAt))}</span>
+        </div>
+        <div class="turn-body">
+          <p>${escapeHtml(turn.transcript)}</p>
+        </div>
+      `,
+    });
 
     if (turn.agentReply) {
-      const agentItem = document.createElement('li');
-      agentItem.className = 'turn-item';
-      agentItem.dataset.role = 'agent';
       const stateLabel = turn.agentReply.interruptedAt
         ? 'interrupted'
         : turn.agentReply.playedAt
           ? 'played'
           : 'ready';
-      agentItem.innerHTML = `
-        <div class="turn-head">
-          <span>${escapeHtml(formatTime(turn.agentReply.createdAt))}</span>
-        </div>
-        <div class="turn-body">
-          <p>${escapeHtml(turn.agentReply.subtitle || turn.agentReply.text)}</p>
-          <small>${escapeHtml(
-            `${turn.agentReply.emoteId || 'neutral'}${turn.agentReply.gestureId ? ` · ${turn.agentReply.gestureId}` : ''} · ${stateLabel}`,
-          )}</small>
-        </div>
-      `;
-      container.append(agentItem);
+      items.push({
+        role: 'agent',
+        createdAt: turn.agentReply.createdAt,
+        html: `
+          <div class="turn-head">
+            <span>${escapeHtml(formatTime(turn.agentReply.createdAt))}</span>
+          </div>
+          <div class="turn-body">
+            <p>${escapeHtml(turn.agentReply.subtitle || turn.agentReply.text)}</p>
+            <small>${escapeHtml(
+              `${turn.agentReply.emoteId || 'neutral'}${turn.agentReply.gestureId ? ` · ${turn.agentReply.gestureId}` : ''} · ${stateLabel}`,
+            )}</small>
+          </div>
+        `,
+      });
       return;
     }
 
-    const pendingItem = document.createElement('li');
-    pendingItem.className = 'turn-item';
-    pendingItem.dataset.role = 'agent';
     const pendingMessage =
       turn.status === 'interrupted'
         ? 'This turn was interrupted before the reply finished.'
         : turn.status === 'error'
           ? turn.errorText || 'Codex failed to answer this turn.'
           : 'Codex is thinking about a reply.';
-    pendingItem.innerHTML = `
-      <div class="turn-head">
-        <span>${escapeHtml(formatTime(turn.createdAt))}</span>
-      </div>
-      <div class="turn-body">
-        <p>${escapeHtml(pendingMessage)}</p>
-      </div>
-    `;
-    container.append(pendingItem);
+    items.push({
+      role: 'agent',
+      createdAt: turn.createdAt,
+      html: `
+        <div class="turn-head">
+          <span>${escapeHtml(formatTime(turn.createdAt))}</span>
+        </div>
+        <div class="turn-body">
+          <p>${escapeHtml(pendingMessage)}</p>
+        </div>
+      `,
+    });
+  });
+
+  items
+    .sort(
+      (left, right) =>
+        new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime(),
+    )
+    .forEach((item) => {
+    const humanItem = document.createElement('li');
+    humanItem.className = 'turn-item';
+    humanItem.dataset.role = item.role;
+    humanItem.innerHTML = item.html;
+    container.append(humanItem);
   });
 }
 

@@ -5,6 +5,8 @@ import {
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const SpeechSynthesisSupported =
   typeof window.speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined';
+const VOICE_TURN_PAUSE_FINALIZE_AFTER_INTERIM_MS = 2200;
+const VOICE_TURN_PAUSE_FINALIZE_AFTER_FINAL_MS = 1200;
 
 export function createVoiceLayer(initialConfig = {}) {
   const state = {
@@ -19,6 +21,7 @@ export function createVoiceLayer(initialConfig = {}) {
     analyserData: null,
     rafId: null,
     recognitionRestartTimerId: null,
+    recognitionPauseTimerId: null,
     manualRecognitionStop: false,
     recognitionRestartHandledByTurn: false,
     activeTurn: null,
@@ -85,6 +88,14 @@ export function createVoiceLayer(initialConfig = {}) {
     }
 
     return { value: error };
+  }
+
+  function joinTranscriptParts(...parts) {
+    return parts
+      .flat()
+      .map((part) => `${part || ''}`.trim())
+      .filter(Boolean)
+      .join(' ');
   }
 
   function getStatusLabel() {
@@ -163,6 +174,15 @@ export function createVoiceLayer(initialConfig = {}) {
     state.recognitionRestartTimerId = null;
   }
 
+  function clearRecognitionPauseTimer() {
+    if (!state.recognitionPauseTimerId) {
+      return;
+    }
+
+    window.clearTimeout(state.recognitionPauseTimerId);
+    state.recognitionPauseTimerId = null;
+  }
+
   function setLastError(error) {
     state.lastError = formatError(error);
     emitStateChange();
@@ -173,11 +193,13 @@ export function createVoiceLayer(initialConfig = {}) {
     emitStateChange();
   }
 
-  function setLastTranscript(text, isFinal = false) {
+  function setLastTranscript(text, isFinal = false, details = {}) {
     state.lastTranscript = text;
     state.handlers.onTranscript?.({
       text,
       isFinal,
+      phase: details.phase || (isFinal ? 'final' : 'interim'),
+      segmentText: details.segmentText || '',
       at: wallClock(),
     });
     emitStateChange();
@@ -186,6 +208,56 @@ export function createVoiceLayer(initialConfig = {}) {
   function setLastReply(text) {
     state.lastReply = text;
     emitStateChange();
+  }
+
+  function getActiveTurnTranscript() {
+    return joinTranscriptParts(
+      state.activeTurn?.transcript || '',
+      state.activeTurn?.interimTranscript || '',
+    );
+  }
+
+  function finalizeRecognitionTurn(trigger = 'pause') {
+    const transcript = getActiveTurnTranscript();
+    if (!transcript) {
+      return false;
+    }
+
+    const startedAt = state.activeTurn?.startedAt || now();
+    state.activeTurn = null;
+    clearRecognitionPauseTimer();
+
+    if (state.listening) {
+      stopListening({ updateStatus: false, suppressAutoRestart: true });
+    }
+
+    emitLog(
+      'info',
+      trigger === 'pause' ? 'Pause-finalized transcript received.' : 'Final transcript received.',
+      { transcript },
+    );
+    processTurn(transcript, 'voice', startedAt).catch((error) => {
+      setLastError(error);
+      emitLog('error', 'Voice turn processing failed.', state.lastError);
+    });
+    return true;
+  }
+
+  function scheduleRecognitionPauseFinalize() {
+    const transcript = getActiveTurnTranscript();
+    clearRecognitionPauseTimer();
+    if (!transcript) {
+      return;
+    }
+
+    const delayMs = state.activeTurn?.hasFinalizedChunk
+      ? VOICE_TURN_PAUSE_FINALIZE_AFTER_FINAL_MS
+      : VOICE_TURN_PAUSE_FINALIZE_AFTER_INTERIM_MS;
+
+    state.recognitionPauseTimerId = window.setTimeout(() => {
+      state.recognitionPauseTimerId = null;
+      finalizeRecognitionTurn('pause');
+    }, delayMs);
   }
 
   function findVoiceByName(name) {
@@ -473,6 +545,7 @@ export function createVoiceLayer(initialConfig = {}) {
     }
 
     clearRecognitionRestartTimer();
+    clearRecognitionPauseTimer();
     state.manualRecognitionStop = !suppressAutoRestart;
     state.recognitionRestartHandledByTurn = suppressAutoRestart;
 
@@ -492,7 +565,7 @@ export function createVoiceLayer(initialConfig = {}) {
 
     const recognition = new SpeechRecognition();
     recognition.lang = state.config.locale;
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
@@ -503,38 +576,66 @@ export function createVoiceLayer(initialConfig = {}) {
 
     recognition.onspeechstart = () => {
       if (!state.activeTurn) {
-        state.activeTurn = { startedAt: now() };
+        state.activeTurn = {
+          startedAt: now(),
+          transcript: '',
+          interimTranscript: '',
+          hasFinalizedChunk: false,
+        };
       }
       emitLog('info', 'Speech detected.');
     };
 
     recognition.onresult = (event) => {
+      state.activeTurn ||= {
+        startedAt: now(),
+        transcript: '',
+        interimTranscript: '',
+        hasFinalizedChunk: false,
+      };
       let interim = '';
-      let finalTranscript = '';
+      let finalizedChunk = '';
 
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const result = event.results[index];
         const transcript = result[0]?.transcript?.trim() || '';
         if (result.isFinal) {
-          finalTranscript += transcript;
+          finalizedChunk = joinTranscriptParts(finalizedChunk, transcript);
         } else {
-          interim += transcript;
+          interim = joinTranscriptParts(interim, transcript);
         }
       }
 
-      if (interim) {
-        setLastTranscript(interim, false);
+      if (finalizedChunk) {
+        state.activeTurn.transcript = joinTranscriptParts(
+          state.activeTurn.transcript,
+          finalizedChunk,
+        );
+        state.activeTurn.interimTranscript = '';
+        state.activeTurn.hasFinalizedChunk = true;
+        emitLog('info', 'Sentence transcript received.', {
+          transcript: finalizedChunk,
+          cumulativeTranscript: state.activeTurn.transcript,
+        });
+        setLastTranscript(state.activeTurn.transcript, false, {
+          phase: 'sentence',
+          segmentText: finalizedChunk,
+        });
       }
 
-      if (finalTranscript) {
-        const startedAt = state.activeTurn?.startedAt || now();
-        state.activeTurn = null;
-        emitLog('info', 'Final transcript received.', { transcript: finalTranscript });
-        stopListening({ updateStatus: false, suppressAutoRestart: true });
-        processTurn(finalTranscript, 'voice', startedAt).catch((error) => {
-          setLastError(error);
-          emitLog('error', 'Voice turn processing failed.', state.lastError);
-        });
+      if (interim) {
+        state.activeTurn.interimTranscript = interim;
+        setLastTranscript(
+          joinTranscriptParts(state.activeTurn.transcript, interim),
+          false,
+          { phase: 'interim' },
+        );
+      } else if (finalizedChunk) {
+        state.activeTurn.interimTranscript = '';
+      }
+
+      if (finalizedChunk || interim) {
+        scheduleRecognitionPauseFinalize();
       }
     };
 
@@ -550,13 +651,25 @@ export function createVoiceLayer(initialConfig = {}) {
 
     recognition.onend = () => {
       state.listening = false;
+      clearRecognitionPauseTimer();
       emitLog('info', 'Speech recognition ended.');
       emitStateChange();
 
       const manualStop = state.manualRecognitionStop;
-      const handledByTurn = state.recognitionRestartHandledByTurn;
+      const pendingTranscript = !manualStop ? getActiveTurnTranscript() : '';
+      const startedAt = state.activeTurn?.startedAt || now();
+      const handledByTurn = state.recognitionRestartHandledByTurn || Boolean(pendingTranscript);
+      state.activeTurn = null;
       state.manualRecognitionStop = false;
       state.recognitionRestartHandledByTurn = false;
+
+      if (pendingTranscript) {
+        emitLog('info', 'Final transcript received.', { transcript: pendingTranscript });
+        processTurn(pendingTranscript, 'voice', startedAt).catch((error) => {
+          setLastError(error);
+          emitLog('error', 'Voice turn processing failed.', state.lastError);
+        });
+      }
 
       const fatalRecognitionErrors = new Set([
         'not-allowed',
@@ -595,6 +708,7 @@ export function createVoiceLayer(initialConfig = {}) {
 
     state.lastError = null;
     clearRecognitionRestartTimer();
+    clearRecognitionPauseTimer();
     state.manualRecognitionStop = false;
     state.recognitionRestartHandledByTurn = false;
 
@@ -651,6 +765,7 @@ export function createVoiceLayer(initialConfig = {}) {
   function destroy() {
     cancelSpeech();
     clearRecognitionRestartTimer();
+    clearRecognitionPauseTimer();
     stopListening({ updateStatus: false });
 
     if (state.rafId) {
