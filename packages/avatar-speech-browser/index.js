@@ -133,6 +133,7 @@ export function createAvatarSpeechController({
       speechPitch = 1,
       characterId = '',
       mood = '',
+      preparedSpeech = null,
       onPlaybackStart = null,
       onPlaybackEnd = null,
     } = {},
@@ -222,6 +223,7 @@ export function createAvatarSpeechController({
         speechPitch: resolvedRenderProfile.speechPitch,
         characterId: resolvedRenderProfile.characterId,
         mood: resolvedRenderProfile.mood,
+        preparedSpeech,
       });
     } finally {
       if (state.sessionId === sessionId) {

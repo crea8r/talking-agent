@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createSessionController } from './session-controller.js';
-import { getHelloPhrases } from './hello-sequence.js';
 
 function createDeferred() {
   let resolve;
@@ -49,6 +48,12 @@ function createManualTimers() {
       return [...timeouts.values()].map((task) => task.delay).sort((left, right) => left - right);
     },
   };
+}
+
+async function flushMicrotasks(count = 8) {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 function createHarness({
@@ -263,6 +268,30 @@ function createHarness({
     fetchJson: async () => ({}),
     postJson: async (url, body) => {
       postCalls.push({ url, body });
+      if (url.endsWith('/startup-greeting')) {
+        const turn = {
+          id: 'turn-startup',
+          source: 'startup',
+          transcript: 'Hello.',
+          status: 'replied',
+          agentReply: {
+            text: 'Hello. The call is live and I am with you.',
+            subtitle: 'Hello. The call is live and I am with you.',
+            mood: 'warm',
+            emoteId: 'warm',
+            gestureId: 'Greeting',
+            animationSequence: [{ gestureId: 'Greeting', atRatio: 0 }],
+            followUps: [],
+          },
+        };
+        return {
+          session: {
+            ...state.session,
+            turns: [...state.session.turns, turn],
+          },
+          turn,
+        };
+      }
       return {
         session: {
           ...state.session,
@@ -310,38 +339,23 @@ function createHarness({
   };
 }
 
-test('getHelloPhrases returns 100 prepared greetings', () => {
-  assert.equal(getHelloPhrases().length, 100);
-});
-
-test('starting a call schedules and plays a local hello without a Codex turn', async () => {
+test('starting a call requests a Codex startup greeting and opens the mic only after playback ends', async () => {
   const harness = createHarness({ random: () => 0 });
-
-  await harness.controller.handlePrimaryCallAction();
+  const startPromise = harness.controller.handlePrimaryCallAction();
+  await flushMicrotasks();
 
   assert.equal(harness.state.activeCall, true);
   assert.equal(harness.state.startupGreetingActive, true);
+  assert.equal(harness.state.startupGreetingIndicator.active, false);
+  assert.equal(harness.state.startupGreetingIndicator.remainingSeconds, 45);
   assert.equal(harness.getListening(), false);
-  assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(0), true);
+  assert.equal(
+    harness.postCalls.some((call) => call.url.endsWith('/startup-greeting')),
+    true,
+  );
+  assert.deepEqual(harness.spokenTexts, ['Hello. The call is live and I am with you.']);
   assert.equal(harness.controller.shouldAcceptVoiceInput(), false);
   assert.equal(harness.controller.shouldAcceptVoiceInput({ allowDuringStartupGreeting: true }), false);
-  assert.deepEqual(harness.spokenTexts, []);
-  assert.deepEqual(harness.roomStatuses.at(-1), {
-    stateValue: 'loading',
-    title: 'Connecting call',
-    detail: 'Waiting for the agent greeting to start.',
-  });
-
-  harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
-
-  assert.deepEqual(harness.spokenTexts, [getHelloPhrases()[0]]);
-  assert.equal(harness.postCalls.some((call) => call.url.endsWith('/turns')), false);
-  assert.match(harness.state.subtitles.agent.text, /great to see you|glad you are here|welcome/i);
-  assert.equal(harness.selectedEmotes.length > 0, true);
-  assert.equal(harness.selectedGestures.length > 0, true);
-  assert.equal(harness.state.startupGreetingActive, true);
-  assert.equal(harness.getListening(), false);
   assert.deepEqual(harness.roomStatuses.at(-1), {
     stateValue: 'ready',
     title: 'Call live',
@@ -349,12 +363,11 @@ test('starting a call schedules and plays a local hello without a Codex turn', a
   });
 
   harness.speechDeferred.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await startPromise;
+  await flushMicrotasks(4);
 
   assert.equal(harness.state.startupGreetingActive, false);
+  assert.equal(harness.state.startupGreetingIndicator.active, false);
   assert.equal(harness.getListening(), true);
   assert.deepEqual(harness.roomStatuses.at(-1), {
     stateValue: 'ready',
@@ -363,39 +376,35 @@ test('starting a call schedules and plays a local hello without a Codex turn', a
   });
 });
 
-test('startup hello keeps the microphone closed until playback completes', async () => {
+test('startup greeting keeps the microphone closed until playback completes', async () => {
   const harness = createHarness({ random: () => 0.4 });
-
-  await harness.controller.handlePrimaryCallAction();
-  assert.equal(harness.getListening(), false);
-
-  harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
+  const startPromise = harness.controller.handlePrimaryCallAction();
+  await flushMicrotasks();
 
   assert.equal(harness.spokenTexts.length, 1);
   assert.equal(harness.state.startupGreetingActive, true);
   assert.equal(harness.getListening(), false);
   assert.equal(harness.stopCount(), 0);
+
+  harness.speechDeferred.resolve();
+  await startPromise;
 });
 
-test('startup hello still resumes listening when playback end fires before avatar speech clears active', async () => {
+test('startup greeting still resumes listening when playback end fires before avatar speech clears active', async () => {
   const harness = createHarness({
     random: () => 0.2,
     playbackEndBeforeSpeechStops: true,
   });
 
-  await harness.controller.handlePrimaryCallAction();
-  harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
+  const startPromise = harness.controller.handlePrimaryCallAction();
+  await flushMicrotasks();
 
   assert.equal(harness.state.startupGreetingActive, true);
   assert.equal(harness.getListening(), false);
 
   harness.speechDeferred.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await startPromise;
+  await flushMicrotasks(4);
 
   assert.equal(harness.state.startupGreetingActive, false);
   assert.equal(harness.getListening(), true);

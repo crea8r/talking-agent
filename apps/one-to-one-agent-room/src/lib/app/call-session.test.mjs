@@ -88,6 +88,7 @@ test('buildCallSessionPayload describes the direct codex voice-avatar contract',
   assert.equal(payload.metadata.agentIdentity.interests, 'outgoing, sport');
   assert.equal(payload.metadata.agentIdentity.selfPrompt, 'dream about sky');
   assert.equal(payload.metadata.codexContract.turnRoute, '/api/call/sessions/:id/turns');
+  assert.deepEqual(payload.metadata.codexContract.turnFields, ['spokenText', 'mood', 'animationSequence']);
   assert.equal(payload.metadata.runtimeHints.directCodexExec, true);
   assert.equal(payload.metadata.runtimeHints.browserSpeechSynthesis, false);
 });

@@ -118,6 +118,142 @@ function isLinkedCallLaunch(launch = {}) {
   return normalizeString(launch?.mode) === 'linked-call' && normalizeString(launch?.launchId);
 }
 
+const AFFIRMATIVE_TURN_TEXT = new Set([
+  'yes',
+  'yeah',
+  'yep',
+  'sure',
+  'yes please',
+  'sure please',
+  'please do',
+  'go ahead',
+  'do it',
+  'i want',
+  'yes i want',
+  'okay yes',
+]);
+
+function clipText(text = '', maxLength = 96) {
+  const cleaned = normalizeString(text).replace(/\s+/g, ' ');
+  if (!cleaned || cleaned.length <= maxLength) {
+    return cleaned;
+  }
+  return `${cleaned.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function isAffirmativeTurnText(text = '') {
+  const cleaned = normalizeString(text)
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return AFFIRMATIVE_TURN_TEXT.has(cleaned);
+}
+
+function extractActionSummaryFromQuestion(text = '') {
+  const cleaned = normalizeString(text).replace(/\s+/g, ' ');
+  if (!cleaned) {
+    return '';
+  }
+
+  const patterns = [
+    /do you want me to\s+(.+?)\??$/i,
+    /would you like me to\s+(.+?)\??$/i,
+    /should I\s+(.+?)\??$/i,
+    /shall I\s+(.+?)\??$/i,
+    /want me to\s+(.+?)\??$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (match?.[1]) {
+      return clipText(match[1].replace(/[.?!]+$/g, ''));
+    }
+  }
+  return '';
+}
+
+function buildTurnOperationSummary(session, transcript = '') {
+  const cleanedTranscript = clipText(
+    normalizeString(transcript)
+      .replace(/[.?!]+$/g, '')
+      .replace(/^(okay|ok|please|well)\s+/i, '')
+      .replace(/^(can|could|would|will|do)\s+you\s+/i, '')
+      .replace(/^i\s+want\s+you\s+to\s+/i, '')
+      .replace(/^i\s+want\s+to\s+/i, ''),
+  );
+  if (!cleanedTranscript) {
+    return '';
+  }
+
+  if (isAffirmativeTurnText(cleanedTranscript)) {
+    const previousTurns = [...(session?.turns || [])].reverse();
+    const previousSummary = previousTurns
+      .map((turn) => normalizeString(turn?.operation?.summary))
+      .find(Boolean);
+    if (previousSummary) {
+      return clipText(previousSummary);
+    }
+
+    const previousQuestion = previousTurns
+      .map((turn) => extractActionSummaryFromQuestion(turn?.agentReply?.text || ''))
+      .find(Boolean);
+    if (previousQuestion) {
+      return clipText(previousQuestion);
+    }
+  }
+
+  const wordCount = cleanedTranscript.split(/\s+/).filter(Boolean).length;
+  return wordCount >= 2 || cleanedTranscript.length >= 12 ? cleanedTranscript : '';
+}
+
+function createTurnOperation(session, transcript = '') {
+  const summary = buildTurnOperationSummary(session, transcript);
+  if (!summary) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  return {
+    summary,
+    phase: 'accepted',
+    statusText: '',
+    toolName: '',
+    startedAt: now,
+    updatedAt: now,
+    deferredAt: null,
+    completedAt: null,
+    blockedAt: null,
+    failedAt: null,
+    interruptedAt: null,
+  };
+}
+
+function touchTurnOperation(turn, patch = {}) {
+  if (!turn?.operation || !patch || typeof patch !== 'object') {
+    return;
+  }
+
+  Object.assign(turn.operation, patch, {
+    updatedAt: patch.updatedAt || new Date().toISOString(),
+  });
+}
+
+function getCurrentOperationTurn(session) {
+  const currentTurnId = normalizeString(session?.agent?.currentTurnId);
+  if (currentTurnId) {
+    const currentTurn = session?.turns?.find((turn) => turn.id === currentTurnId) || null;
+    if (currentTurn) {
+      return currentTurn;
+    }
+  }
+
+  return (
+    [...(session?.turns || [])]
+      .reverse()
+      .find((turn) => turn?.status === 'processing' || (turn?.operation && !turn.operation.completedAt)) || null
+  );
+}
+
 export function createDirectSessionRuntime({
   agentRunner,
   callRecordStore = null,
@@ -136,6 +272,7 @@ export function createDirectSessionRuntime({
   const activeRequests = new Map();
   const deferredRequests = new Map();
   const activeSpeculativeRequests = new Map();
+  const sessionEventUnsubscribers = new Map();
 
   function getRequiredSession(sessionId) {
     const session = sessions.get(normalizeString(sessionId));
@@ -194,18 +331,23 @@ export function createDirectSessionRuntime({
     return true;
   }
 
-  function markTurnInterrupted(turn, reason) {
-    if (!turn) {
-      return;
-    }
-
-    turn.status = 'interrupted';
-    turn.interruptedAt ||= new Date().toISOString();
-    turn.errorText ||= normalizeString(reason);
-    if (turn.agentReply && !turn.agentReply.interruptedAt) {
-      turn.agentReply.interruptedAt = turn.interruptedAt;
-    }
+function markTurnInterrupted(turn, reason) {
+  if (!turn) {
+    return;
   }
+
+  turn.status = 'interrupted';
+  turn.interruptedAt ||= new Date().toISOString();
+  turn.errorText ||= normalizeString(reason);
+  touchTurnOperation(turn, {
+    phase: 'interrupted',
+    statusText: normalizeString(reason),
+    interruptedAt: turn.interruptedAt,
+  });
+  if (turn.agentReply && !turn.agentReply.interruptedAt) {
+    turn.agentReply.interruptedAt = turn.interruptedAt;
+  }
+}
 
   function resolveRequestDisposition(sessionId, requestId) {
     const activeRequest = activeRequests.get(sessionId) || null;
@@ -219,6 +361,99 @@ export function createDirectSessionRuntime({
     }
 
     return 'missing';
+  }
+
+  function clearSessionEventSubscription(sessionId = '') {
+    const key = normalizeString(sessionId);
+    const unsubscribe = sessionEventUnsubscribers.get(key);
+    if (typeof unsubscribe === 'function') {
+      unsubscribe();
+    }
+    sessionEventUnsubscribers.delete(key);
+  }
+
+  function normalizeCodexSignal(signal = {}) {
+    const kind = normalizeString(signal.kind);
+    const text = normalizeString(signal.text);
+    if (!kind || !text) {
+      return null;
+    }
+
+    const eventType =
+      kind === 'notice'
+        ? 'codex.notice'
+        : kind === 'tool-start'
+          ? 'codex.tool_started'
+          : kind === 'tool-finish'
+            ? 'codex.tool_finished'
+            : kind === 'auth-required'
+              ? 'codex.auth_required'
+              : kind === 'log'
+                ? 'codex.log'
+                : 'codex.notification';
+
+    return {
+      eventType,
+      details: {
+        kind,
+        level: normalizeString(signal.level) || 'info',
+        text,
+        speakText: normalizeString(signal.speakText),
+        source: normalizeString(signal.source) || 'codex-worker',
+        method: normalizeString(signal.method),
+        payloadType: normalizeString(signal.payloadType),
+        toolName: normalizeString(signal.toolName),
+      },
+    };
+  }
+
+  function ensureSessionEventSubscription(session) {
+    const sessionId = normalizeString(session?.id);
+    if (!sessionId || sessionEventUnsubscribers.has(sessionId) || typeof agentRunner.subscribeSessionEvents !== 'function') {
+      return;
+    }
+
+    const unsubscribe = agentRunner.subscribeSessionEvents({
+      sessionId,
+      listener: (signal) => {
+        const activeSession = sessions.get(sessionId);
+        const normalized = activeSession ? normalizeCodexSignal(signal) : null;
+        if (!activeSession || !normalized) {
+          return;
+        }
+        activeSession.updatedAt = new Date().toISOString();
+        const operationTurn = getCurrentOperationTurn(activeSession);
+        if (operationTurn?.operation) {
+          if (normalized.eventType === 'codex.notice') {
+            touchTurnOperation(operationTurn, {
+              phase: 'working',
+              statusText: normalizeString(normalized.details.text),
+            });
+          } else if (normalized.eventType === 'codex.tool_started') {
+            touchTurnOperation(operationTurn, {
+              phase: 'using-tool',
+              statusText: normalizeString(normalized.details.text),
+              toolName: normalizeString(normalized.details.toolName),
+            });
+          } else if (normalized.eventType === 'codex.tool_finished') {
+            touchTurnOperation(operationTurn, {
+              phase: 'working',
+              statusText: normalizeString(normalized.details.text),
+              toolName: normalizeString(normalized.details.toolName),
+            });
+          } else if (normalized.eventType === 'codex.auth_required') {
+            touchTurnOperation(operationTurn, {
+              phase: 'blocked',
+              statusText: normalizeString(normalized.details.text),
+              blockedAt: new Date().toISOString(),
+              toolName: normalizeString(normalized.details.toolName),
+            });
+          }
+        }
+        recordEvent(activeSession, normalized.eventType, normalized.details);
+      },
+    });
+    sessionEventUnsubscribers.set(sessionId, typeof unsubscribe === 'function' ? unsubscribe : () => {});
   }
 
   async function recordPlaybackEvent({
@@ -268,8 +503,17 @@ export function createDirectSessionRuntime({
         normalizedPhase === 'ended' && turnCompleted !== false;
       if (normalizedPhase === 'started') {
         turn.agentReply.playbackStartedAt ||= now;
+        touchTurnOperation(turn, {
+          phase: 'speaking',
+          statusText: details.text || 'Speaking reply.',
+        });
       } else if (shouldMarkTurnCompleted) {
         turn.agentReply.playedAt ||= now;
+        touchTurnOperation(turn, {
+          phase: 'completed',
+          statusText: '',
+          completedAt: now,
+        });
       }
     }
 
@@ -345,6 +589,7 @@ export function createDirectSessionRuntime({
     };
 
     sessions.set(session.id, session);
+    ensureSessionEventSubscription(session);
     if (!isLinkedCallLaunch(launch)) {
       await agentRunner.resetSession({ sessionId: session.id }).catch(() => {});
     }
@@ -387,7 +632,7 @@ export function createDirectSessionRuntime({
     return buildPayload(session, activeRequests.get(session.id) || null);
   }
 
-  async function setCallState({ sessionId, state, reason = '' } = {}) {
+  async function setCallState({ sessionId, state, reason = '', skipWarmup = false } = {}) {
     const session = getRequiredSession(sessionId);
     session.state = normalizeString(state) || session.state;
     session.updatedAt = new Date().toISOString();
@@ -396,7 +641,7 @@ export function createDirectSessionRuntime({
       reason: normalizeString(reason),
     });
 
-    if (session.state === 'live' && typeof agentRunner.startSessionWarmup === 'function') {
+    if (!skipWarmup && session.state === 'live' && typeof agentRunner.startSessionWarmup === 'function') {
       try {
         const warmup = await agentRunner.startSessionWarmup({ session });
         if (warmup?.requestId) {
@@ -450,6 +695,11 @@ export function createDirectSessionRuntime({
     });
 
     const activeTurn = session.turns.find((turn) => turn.id === activeRequest.turnId) || null;
+    touchTurnOperation(activeTurn, {
+      phase: 'background',
+      statusText: normalizeString(reason) || 'Still working in the background.',
+      deferredAt: new Date().toISOString(),
+    });
     session.agent.status = session.state === 'live' ? 'listening' : 'idle';
     session.agent.currentTurnId = null;
     session.updatedAt = new Date().toISOString();
@@ -487,6 +737,11 @@ export function createDirectSessionRuntime({
       .find((turn) => turn.agentReply && !turn.agentReply.playedAt && !turn.agentReply.interruptedAt);
     if (speakingTurn) {
       speakingTurn.agentReply.interruptedAt = new Date().toISOString();
+      touchTurnOperation(speakingTurn, {
+        phase: 'interrupted',
+        statusText: normalizeString(reason),
+        interruptedAt: speakingTurn.agentReply.interruptedAt,
+      });
     }
 
     session.agent.status = session.state === 'live' ? 'listening' : 'idle';
@@ -617,6 +872,7 @@ export function createDirectSessionRuntime({
       status: 'processing',
       interruptedAt: null,
       errorText: '',
+      operation: createTurnOperation(session, transcript),
       agentReply: null,
     };
 
@@ -640,6 +896,10 @@ export function createDirectSessionRuntime({
       abort: replyHandle.abort,
     };
     activeRequests.set(session.id, activeRequest);
+    touchTurnOperation(turn, {
+      phase: 'thinking',
+      statusText: 'Thinking about the request.',
+    });
     recordEvent(session, 'codex.started', {
       turnId: turn.id,
       requestId: replyHandle.requestId,
@@ -691,6 +951,10 @@ export function createDirectSessionRuntime({
         clearDeferredRequest(session.id, replyHandle.requestId);
       }
       session.updatedAt = new Date().toISOString();
+      touchTurnOperation(turn, {
+        phase: disposition === 'deferred' ? 'background' : 'reply-ready',
+        statusText: disposition === 'deferred' ? 'Reply ready in the background.' : 'Reply ready.',
+      });
       recordEvent(session, 'codex.completed', {
         turnId: turn.id,
         requestId: replyHandle.requestId,
@@ -725,6 +989,11 @@ export function createDirectSessionRuntime({
 
       turn.status = 'error';
       turn.errorText = error instanceof Error ? error.message : 'Codex reply failed.';
+      touchTurnOperation(turn, {
+        phase: 'failed',
+        statusText: turn.errorText,
+        failedAt: new Date().toISOString(),
+      });
       if (disposition === 'active') {
         session.agent.status = 'error';
         session.agent.currentTurnId = null;
@@ -866,6 +1135,8 @@ export function createDirectSessionRuntime({
         retryNeeded: true,
         failureReason,
       });
+    } finally {
+      clearSessionEventSubscription(session.id);
     }
   }
 

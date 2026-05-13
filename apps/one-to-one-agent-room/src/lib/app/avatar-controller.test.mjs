@@ -236,3 +236,113 @@ test('smooth transition flag is forwarded to the avatar layer and can be updated
   });
   assert.equal(state.preferences.smoothGestureTransitions, false);
 });
+
+test('camera distance preference is forwarded to the avatar layer and can be updated', () => {
+  globalThis.document = {
+    createElement() {
+      return {
+        value: '',
+        textContent: '',
+        title: '',
+      };
+    },
+  };
+
+  const cameraDistanceCalls = [];
+  const avatarLayer = {
+    getSnapshot() {
+      return {
+        modelId: 'bhf-1-2',
+        modelLabel: 'Red Tinker Bell',
+        gestureId: 'Pose',
+        emoteId: 'neutral',
+        mouthCue: 'rest',
+        lookTargetLabel: 'center',
+        cameraDistance: 1,
+      };
+    },
+    loadModel() {
+      return Promise.resolve(this.getSnapshot());
+    },
+    setStage() {},
+    setEmote() {},
+    setGesture() {},
+    setMouthCue() {},
+    setSpeaking() {},
+    setFeatureFlags() {},
+    setCameraDistance(distance) {
+      cameraDistanceCalls.push(distance);
+    },
+    destroy() {},
+  };
+
+  const dom = {
+    agentCanvas: {},
+    stageShell: { style: { setProperty() {} } },
+    bundledModelSelect: { value: 'bhf-1-2' },
+    stageSelect: { value: 'neon-loft' },
+    emoteSelect: { value: 'neutral' },
+    gestureSelect: {
+      value: 'Pose',
+      replaceChildren() {},
+      append() {},
+    },
+    cameraDistanceInput: { value: '1' },
+    cameraDistanceValue: { textContent: '' },
+    activeAvatar: { textContent: '' },
+    activeEmote: { textContent: '' },
+    activeGesture: { textContent: '' },
+    activeMouth: { textContent: '' },
+    lookTarget: { textContent: '' },
+    sceneNote: { textContent: '' },
+  };
+
+  const state = {
+    preferences: {
+      bundledModelId: 'bhf-1-2',
+      stageId: 'neon-loft',
+      emoteId: 'neutral',
+      gestureId: 'Pose',
+      cameraDistance: 1,
+    },
+    modelLoading: false,
+  };
+
+  const controller = createAvatarController({
+    dom,
+    state,
+    createAvatarLayer(options) {
+      cameraDistanceCalls.push(options.initialCameraDistance);
+      return avatarLayer;
+    },
+    bundledModelMap: new Map([
+      ['bhf-1-2', { id: 'bhf-1-2', label: 'Red Tinker Bell', path: '/models/Bhf_1_2.vrm' }],
+    ]),
+    stageMap: new Map([['neon-loft', { id: 'neon-loft', note: '' }]]),
+    emoteMap: new Map([['neutral', { id: 'neutral', label: 'Neutral', note: '' }]]),
+    getGesturePresets() {
+      return [{ id: 'Pose', label: 'Pose' }];
+    },
+    resolveGesturePreset() {
+      return { id: 'Pose', label: 'Pose', note: '' };
+    },
+    defaultModel: { id: 'bhf-1-2', label: 'Red Tinker Bell', path: '/models/Bhf_1_2.vrm' },
+    getSelectedBundledModel() {
+      return { id: 'bhf-1-2', label: 'Red Tinker Bell', path: '/models/Bhf_1_2.vrm' };
+    },
+    persistState() {},
+    formatError(error) {
+      return error;
+    },
+    addLog() {},
+    refreshActionButtons() {},
+  });
+
+  controller.setCameraDistance(1.15);
+
+  assert.equal(cameraDistanceCalls[0], 1);
+  assert.equal(cameraDistanceCalls[1], 1.15);
+  assert.equal(state.preferences.cameraDistance, 1.15);
+  assert.equal(dom.cameraDistanceInput.value, '1.15');
+  assert.equal(dom.cameraDistanceValue.textContent, '115%');
+});

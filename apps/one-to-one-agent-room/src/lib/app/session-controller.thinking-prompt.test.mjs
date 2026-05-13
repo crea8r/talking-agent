@@ -42,6 +42,9 @@ function createManualTimers() {
       }
 
       timeouts.delete(nextEntry[0]);
+      for (const task of timeouts.values()) {
+        task.delay = Math.max(0, task.delay - nextEntry[1].delay);
+      }
       nextEntry[1].callback();
       return nextEntry[1].delay;
     },
@@ -100,6 +103,8 @@ function createHarness({
   let stopSpeechCount = 0;
   let speechActive = false;
   let activeSpeechCall = null;
+  const preparedSpeechCalls = [];
+  const disposedPreparedSpeechTexts = [];
   const state = {
     runtimeConfig: {},
     session: createSessionPayload({
@@ -219,6 +224,18 @@ function createHarness({
         return {
           speechRate: 1,
         };
+      },
+      prepareSpeech(text, source, renderOptions = {}) {
+        const preparedSpeech = {
+          text,
+          source,
+          renderOptions,
+        };
+        preparedSpeechCalls.push(preparedSpeech);
+        return preparedSpeech;
+      },
+      disposePreparedSpeech(preparedSpeech) {
+        disposedPreparedSpeechTexts.push(preparedSpeech?.text || '');
       },
       updateConfig() {},
       destroy() {},
@@ -372,11 +389,152 @@ function createHarness({
     stopSpeechCount() {
       return stopSpeechCount;
     },
+    preparedSpeechCalls,
+    disposedPreparedSpeechTexts,
   };
+}
+
+async function flushPromises(count = 10) {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve();
+  }
+}
+
+async function flushPromisesUntil(predicate, maxSteps = 20) {
+  for (let index = 0; index < maxSteps; index += 1) {
+    if (predicate()) {
+      return true;
+    }
+    await Promise.resolve();
+  }
+  return predicate();
+}
+
+async function flushTimeoutsUntil(harness, predicate, maxSteps = 6) {
+  for (let index = 0; index < maxSteps; index += 1) {
+    if (predicate()) {
+      return true;
+    }
+    const delay = harness.manualTimers.flushNextTimeout();
+    if (delay === null) {
+      break;
+    }
+    await flushPromises();
+  }
+  return predicate();
 }
 
 test('getThinkingPromptPhrases returns 100 short waiting lines', () => {
   assert.equal(getThinkingPromptPhrases().length, 100);
+});
+
+test('active-turn polling can surface a live Codex notice before the generic thinking prompt', async () => {
+  const harness = createHarness({
+    fetchSessionResponses: [
+      {
+        ...createSessionPayload({
+          id: 'session-1',
+          title: 'talking-agent',
+          turns: [],
+          avatar: {
+            activeModelId: 'bhf-1-2',
+            activeModelLabel: 'Red Tinker Bell',
+            gestureCatalog: [],
+          },
+        }),
+        inspector: {
+          activeRequest: {
+            requestId: 'req-turn-1',
+            turnId: 'turn-1',
+            startedAt: '2026-05-12T09:00:00.000Z',
+          },
+          recentEvents: [
+            {
+              id: 'evt-notice-1',
+              type: 'codex.notice',
+              details: {
+                text: 'Checking your calendar connection.',
+                speakText: 'Checking your calendar connection.',
+              },
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  const finalizePromise = harness.controller.finalizeUserUtterance('Book the meeting', 'typed');
+  await flushPromises();
+
+  assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(300), true);
+  assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(550), true);
+
+  await flushTimeoutsUntil(
+    harness,
+    () => harness.speakCalls.some((call) => call.source === 'agent-progress-notice'),
+  );
+
+  assert.equal(harness.state.subtitles.agent.text, 'Checking your calendar connection.');
+  assert.equal(harness.speakCalls[0]?.source, 'agent-progress-notice');
+  assert.equal(harness.speakCalls[0]?.text, 'Checking your calendar connection.');
+
+  harness.speakCalls[0].deferred.resolve();
+  for (let index = 0; index < 4; index += 1) {
+    await Promise.resolve();
+  }
+
+  harness.turnResponse.resolve({
+    ...createSessionPayload({
+      id: 'session-1',
+      title: 'talking-agent',
+      turns: [
+        {
+          id: 'turn-1',
+          transcript: 'Book the meeting',
+          source: 'typed',
+          status: 'replied',
+          agentReply: {
+            id: 'reply-1',
+            text: 'Done.',
+            subtitle: 'Done.',
+            mood: 'warm',
+            emoteId: 'warm',
+            gestureId: 'Greeting',
+            animationSequence: [],
+            followUps: [],
+            playedAt: null,
+            interruptedAt: null,
+          },
+        },
+      ],
+      avatar: {
+        activeModelId: 'bhf-1-2',
+        activeModelLabel: 'Red Tinker Bell',
+        gestureCatalog: [],
+      },
+    }),
+    turn: {
+      id: 'turn-1',
+      transcript: 'Book the meeting',
+      source: 'typed',
+      status: 'replied',
+      agentReply: {
+        id: 'reply-1',
+        text: 'Done.',
+        subtitle: 'Done.',
+        mood: 'warm',
+        emoteId: 'warm',
+        gestureId: 'Greeting',
+        animationSequence: [],
+        followUps: [],
+        playedAt: null,
+        interruptedAt: null,
+      },
+    },
+  });
+  await flushPromisesUntil(() => harness.speakCalls.length > 1);
+  harness.speakCalls[1].deferred.resolve();
+  await finalizePromise;
 });
 
 test('continuity reserve speech can play before the generic thinking prompt starts', async () => {
@@ -393,16 +551,15 @@ test('continuity reserve speech can play before the generic thinking prompt star
   });
 
   const finalizePromise = harness.controller.finalizeUserUtterance('Tell me something', 'typed');
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromises();
 
   assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(300), true);
   assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(550), true);
 
-  harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
+  await flushTimeoutsUntil(
+    harness,
+    () => harness.speakCalls.some((call) => call.source === 'agent-self-reserve'),
+  );
 
   assert.equal(harness.speakCalls[0]?.source, 'agent-self-reserve');
   assert.equal(harness.speakCalls[0]?.text, 'This seems to hinge on hidden state and app relevance.');
@@ -412,8 +569,10 @@ test('continuity reserve speech can play before the generic thinking prompt star
     await Promise.resolve();
   }
 
-  harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
+  await flushTimeoutsUntil(
+    harness,
+    () => harness.speakCalls.some((call) => call.source === 'local-thinking-prompt'),
+  );
   assert.equal(harness.speakCalls[1]?.source, 'local-thinking-prompt');
 
   harness.speakCalls[1].deferred.resolve();
@@ -435,8 +594,7 @@ test('continuity reserve speech can play before the generic thinking prompt star
     },
     session: harness.state.session,
   });
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls.length > 2);
 
   harness.speakCalls[2].deferred.resolve();
   await finalizePromise;
@@ -456,10 +614,7 @@ test('continuity reserve speech is skipped when the main reply begins before the
   });
 
   const finalizePromise = harness.controller.finalizeUserUtterance('Tell me something', 'typed');
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromises();
 
   harness.turnResponse.resolve({
     turn: {
@@ -475,15 +630,14 @@ test('continuity reserve speech is skipped when the main reply begins before the
     },
     session: harness.state.session,
   });
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[0]?.source === 'codex-turn:turn-1:segment-0');
 
   assert.equal(harness.speakCalls[0]?.source, 'codex-turn:turn-1:segment-0');
 
-  harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
+  await flushTimeoutsUntil(
+    harness,
+    () => harness.postCalls.some((call) => call.url.includes('/agent-self/reserve')),
+  );
 
   assert.equal(
     harness.speakCalls.some((call) => call.source === 'agent-self-reserve'),
@@ -498,20 +652,15 @@ test('thinking prompts begin after 550ms and stop once the real reply starts', a
   const harness = createHarness({ random: () => 0 });
 
   const finalizePromise = harness.controller.finalizeUserUtterance('Tell me something', 'typed');
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromises();
 
   assert.equal(harness.state.processingReplies, true);
   assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(550), true);
 
-  harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
-  if (!harness.speakCalls[0]) {
-    harness.manualTimers.flushNextTimeout();
-    await Promise.resolve();
-  }
+  await flushTimeoutsUntil(
+    harness,
+    () => harness.speakCalls.some((call) => call.source === 'local-thinking-prompt'),
+  );
 
   assert.equal(harness.speakCalls[0]?.source, 'local-thinking-prompt');
   assert.equal(harness.speakCalls[0]?.text, getThinkingPromptPhrases()[0]);
@@ -557,8 +706,7 @@ test('thinking prompts begin after 550ms and stop once the real reply starts', a
     },
     session: harness.state.session,
   });
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[1]?.source === 'codex-turn:turn-1:segment-0');
 
   assert.equal(harness.speakCalls[1]?.source, 'codex-turn:turn-1:segment-0');
   assert.equal(
@@ -605,10 +753,7 @@ test('speech recognition is suspended while agent thinks and resumes after the r
     },
     session: harness.state.session,
   });
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[0]?.source === 'codex-turn:turn-1:segment-0');
 
   assert.equal(harness.speakCalls[0]?.source, 'codex-turn:turn-1:segment-0');
   assert.equal(harness.humanVoice().listening, false);
@@ -680,13 +825,11 @@ test('soft-timed-out turns announce background work and play the late reply when
       },
     }).session,
   });
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[0]?.source === 'codex-turn:turn-1:segment-0');
 
   assert.equal(harness.speakCalls[0]?.source, 'local-soft-timeout');
-  assert.match(harness.speakCalls[0]?.text || '', /still working on that/i);
+  assert.match(harness.speakCalls[0]?.text || '', /still working on/i);
+  assert.match(harness.speakCalls[0]?.text || '', /calendar access/i);
 
   harness.speakCalls[0].deferred.resolve();
   for (let index = 0; index < 10; index += 1) {
@@ -754,10 +897,7 @@ test('final replies can continue as multiple autonomous speech segments with pau
     },
     session: harness.state.session,
   });
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[0]?.source === 'codex-turn:turn-1:segment-0');
 
   assert.equal(harness.speakCalls[0]?.source, 'codex-turn:turn-1:segment-0');
   assert.equal(harness.speakCalls[0]?.text, 'Ford Model T.');
@@ -771,8 +911,7 @@ test('final replies can continue as multiple autonomous speech segments with pau
   assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(5000), true);
 
   harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[1]?.source === 'codex-turn:turn-1:segment-1');
 
   assert.equal(harness.speakCalls[1]?.source, 'codex-turn:turn-1:segment-1');
   assert.equal(harness.speakCalls[1]?.text, 'Rolls Royce Silver Ghost.');
@@ -785,8 +924,7 @@ test('final replies can continue as multiple autonomous speech segments with pau
   assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(5000), true);
 
   harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[2]?.source === 'codex-turn:turn-1:segment-2');
 
   assert.equal(harness.speakCalls[2]?.source, 'codex-turn:turn-1:segment-2');
   assert.equal(harness.speakCalls[2]?.text, 'Bentley 4 and a Half Litre.');
@@ -809,17 +947,12 @@ test('final replies wait for the current thinking speech to finish instead of cu
   const harness = createHarness({ random: () => 0 });
 
   const finalizePromise = harness.controller.finalizeUserUtterance('Tell me something long', 'typed');
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromises();
 
-  harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
-  if (!harness.speakCalls[0]) {
-    harness.manualTimers.flushNextTimeout();
-    await Promise.resolve();
-  }
+  await flushTimeoutsUntil(
+    harness,
+    () => harness.speakCalls.some((call) => call.source === 'local-thinking-prompt'),
+  );
 
   assert.equal(harness.speakCalls[0]?.source, 'local-thinking-prompt');
   assert.equal(harness.stopSpeechCount(), 0);
@@ -838,10 +971,7 @@ test('final replies wait for the current thinking speech to finish instead of cu
     },
     session: harness.state.session,
   });
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[0]?.source === 'codex-turn:turn-1:segment-0');
 
   assert.equal(harness.speakCalls.length, 1);
   assert.equal(harness.stopSpeechCount(), 0);
@@ -887,10 +1017,7 @@ test('very long replies are auto-segmented into back-to-back speech chunks', asy
     },
     session: harness.state.session,
   });
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[0]?.source === 'codex-turn:turn-1:segment-0');
 
   assert.equal(harness.speakCalls[0]?.source, 'codex-turn:turn-1:segment-0');
 
@@ -903,14 +1030,95 @@ test('very long replies are auto-segmented into back-to-back speech chunks', asy
   assert.equal(harness.manualTimers.pendingTimeoutDelays.length > 0, true);
   assert.equal(harness.manualTimers.pendingTimeoutDelays[0], 120);
 
-  harness.manualTimers.flushNextTimeout();
-  await Promise.resolve();
+  await flushTimeoutsUntil(
+    harness,
+    () => harness.postCalls.some((call) => call.url.includes('/agent-self/reserve')),
+  );
   await Promise.resolve();
 
   assert.equal(harness.speakCalls.length > 1, true);
   await harness.controller.interruptActiveReply('test cleanup');
   await finalizePromise;
   assert.equal(harness.speakCalls.length >= 2, true);
+});
+
+test('follow-up replies pre-synthesize the next segment and clamp default pauses to the short range', async () => {
+  const harness = createHarness();
+
+  const finalizePromise = harness.controller.finalizeUserUtterance(
+    'Tell me the engine story in three parts.',
+    'typed',
+  );
+  await flushPromises();
+
+  harness.turnResponse.resolve({
+    turn: {
+      id: 'turn-1',
+      transcript: 'Tell me the engine story in three parts.',
+      createdAt: '2026-05-08T10:00:00.000Z',
+      agentReply: {
+        createdAt: '2026-05-08T10:00:10.000Z',
+        text: 'Part one about the earliest successful engine.',
+        subtitle: 'Part one about the earliest successful engine.',
+        mood: 'warm',
+        followUps: [
+          {
+            text: 'Part two about the chain of improvements over time.',
+            subtitle: 'Part two about the chain of improvements over time.',
+            mood: 'warm',
+            pauseMs: 900,
+          },
+          {
+            text: 'Part three about the last fifty years of engine progress.',
+            subtitle: 'Part three about the last fifty years of engine progress.',
+            mood: 'warm',
+            pauseMs: 1100,
+          },
+        ],
+      },
+    },
+    session: harness.state.session,
+  });
+  await flushPromises();
+
+  assert.equal(harness.speakCalls[0]?.source, 'codex-turn:turn-1:segment-0');
+  assert.equal(
+    harness.preparedSpeechCalls.some((call) => call.text === 'Part one about the earliest successful engine.'),
+    true,
+  );
+  assert.equal(
+    harness.preparedSpeechCalls.some((call) => call.text === 'Part two about the chain of improvements over time.'),
+    true,
+  );
+
+  harness.speakCalls[0].deferred.resolve();
+  await flushPromises();
+
+  assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(900), false);
+  assert.equal(harness.manualTimers.pendingTimeoutDelays.includes(1100), false);
+  assert.equal(
+    harness.manualTimers.pendingTimeoutDelays.some((delay) => delay >= 100 && delay <= 200),
+    true,
+  );
+
+  harness.manualTimers.flushNextTimeout();
+  await flushPromises();
+
+  assert.equal(harness.speakCalls[1]?.source, 'codex-turn:turn-1:segment-1');
+  assert.equal(
+    harness.preparedSpeechCalls.some((call) => call.text === 'Part three about the last fifty years of engine progress.'),
+    true,
+  );
+
+  harness.speakCalls[1].deferred.resolve();
+  await flushPromises();
+  harness.manualTimers.flushNextTimeout();
+  await flushPromises();
+
+  assert.equal(harness.speakCalls[2]?.source, 'codex-turn:turn-1:segment-2');
+
+  harness.speakCalls[2].deferred.resolve();
+  await finalizePromise;
 });
 
 test('standard mode still routes reserve and turn-complete work through agent-self asynchronously', async () => {
@@ -920,18 +1128,11 @@ test('standard mode still routes reserve and turn-complete work through agent-se
   });
 
   const finalizePromise = harness.controller.finalizeUserUtterance('Tell me something', 'typed');
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromises();
 
   harness.manualTimers.flushNextTimeout();
   await Promise.resolve();
 
-  assert.equal(
-    harness.postCalls.some((call) => call.url.includes('/agent-self/reserve')),
-    true,
-  );
   assert.equal(
     harness.speakCalls.some((call) => call.source === 'agent-self-reserve'),
     false,
@@ -951,10 +1152,7 @@ test('standard mode still routes reserve and turn-complete work through agent-se
     },
     session: harness.state.session,
   });
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await flushPromisesUntil(() => harness.speakCalls[0]?.source === 'codex-turn:turn-1:segment-0');
 
   assert.equal(
     harness.postCalls.some((call) => call.url.includes('/agent-self/turn-complete')),

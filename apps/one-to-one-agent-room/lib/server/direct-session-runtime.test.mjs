@@ -14,48 +14,52 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
-function createRuntime() {
+function createRuntime({ agentRunnerOverrides = {} } = {}) {
   const activeAborts = [];
+  const baseAgentRunner = {
+    async resetSession() {},
+    async startReply({ turn }) {
+      return {
+        requestId: `req-${turn.id}`,
+        abort(reason) {
+          activeAborts.push(reason);
+          return true;
+        },
+        promise: Promise.resolve({
+          text: `Reply to ${turn.transcript}`,
+          subtitle: `Reply to ${turn.transcript}`,
+          mood: 'warm',
+          emoteId: 'warm',
+          gestureId: 'Greeting',
+          animationSequence: [{ gestureId: 'Greeting', atRatio: 0 }],
+          rawText: '{"spokenText":"ok"}',
+          runMode: 'initial',
+        }),
+      };
+    },
+    async startSpeculativeReply({ transcript }) {
+      return {
+        requestId: `spec-${transcript}`,
+        abort() {
+          return true;
+        },
+        promise: Promise.resolve({
+          text: `Maybe ${transcript}`,
+          subtitle: `Maybe ${transcript}`,
+          mood: 'warm',
+          emoteId: 'warm',
+          gestureId: 'Greeting',
+          animationSequence: [{ gestureId: 'Greeting', atRatio: 0 }],
+          rawText: '{"spokenText":"maybe"}',
+          runMode: 'speculative',
+        }),
+      };
+    },
+  };
   const runtime = createDirectSessionRuntime({
     agentRunner: {
-      async resetSession() {},
-      async startReply({ turn }) {
-        return {
-          requestId: `req-${turn.id}`,
-          abort(reason) {
-            activeAborts.push(reason);
-            return true;
-          },
-          promise: Promise.resolve({
-            text: `Reply to ${turn.transcript}`,
-            subtitle: `Reply to ${turn.transcript}`,
-            mood: 'warm',
-            emoteId: 'warm',
-            gestureId: 'Greeting',
-            animationSequence: [{ gestureId: 'Greeting', atRatio: 0 }],
-            rawText: '{"spokenText":"ok"}',
-            runMode: 'initial',
-          }),
-        };
-      },
-      async startSpeculativeReply({ transcript }) {
-        return {
-          requestId: `spec-${transcript}`,
-          abort() {
-            return true;
-          },
-          promise: Promise.resolve({
-            text: `Maybe ${transcript}`,
-            subtitle: `Maybe ${transcript}`,
-            mood: 'warm',
-            emoteId: 'warm',
-            gestureId: 'Greeting',
-            animationSequence: [{ gestureId: 'Greeting', atRatio: 0 }],
-            rawText: '{"spokenText":"maybe"}',
-            runMode: 'speculative',
-          }),
-        };
-      },
+      ...baseAgentRunner,
+      ...agentRunnerOverrides,
     },
     modelsById: new Map([
       ['bhf-1-2', { id: 'bhf-1-2', label: 'Red Tinker Bell' }],
@@ -200,6 +204,174 @@ test('runtime starts a hidden Codex warmup when the call becomes live', async ()
   assert.deepEqual(warmupCalls, [sessionId]);
   assert.equal(live.session.state, 'live');
   assert.ok(live.session.events.some((event) => event.type === 'codex.warmup_started'));
+});
+
+test('runtime can mark the call live without starting hidden warmup', async () => {
+  const warmupCalls = [];
+  const runtime = createDirectSessionRuntime({
+    agentRunner: {
+      async resetSession() {},
+      async startSessionWarmup({ session }) {
+        warmupCalls.push(session.id);
+        return {
+          started: true,
+          requestId: 'warmup-1',
+          promise: Promise.resolve(),
+        };
+      },
+      async startReply({ turn }) {
+        return {
+          requestId: `req-${turn.id}`,
+          abort() {
+            return true;
+          },
+          promise: Promise.resolve({
+            text: `Reply to ${turn.transcript}`,
+            subtitle: `Reply to ${turn.transcript}`,
+            mood: 'warm',
+            emoteId: 'warm',
+            gestureId: 'Greeting',
+            animationSequence: [{ gestureId: 'Greeting', atRatio: 0 }],
+            rawText: '{"spokenText":"ok"}',
+            runMode: 'initial',
+          }),
+        };
+      },
+    },
+    modelsById: new Map([
+      ['bhf-1-2', { id: 'bhf-1-2', label: 'Red Tinker Bell' }],
+    ]),
+    gestureCatalogByModel: {
+      'bhf-1-2': [{ id: 'Greeting', intent: 'greet', bestFor: ['hello'] }],
+    },
+    defaultModelId: 'bhf-1-2',
+    projectTitle: 'talking-agent',
+  });
+
+  const created = await runtime.createSession({});
+  const sessionId = created.session.id;
+  const live = await runtime.setCallState({ sessionId, state: 'live', skipWarmup: true });
+  await Promise.resolve();
+
+  assert.deepEqual(warmupCalls, []);
+  assert.equal(live.session.state, 'live');
+  assert.equal(live.session.events.some((event) => event.type === 'codex.warmup_started'), false);
+});
+
+test('runtime records worker notifications in the session event timeline', async () => {
+  let sessionListener = null;
+  const runtime = createDirectSessionRuntime({
+    agentRunner: {
+      async resetSession() {},
+      subscribeSessionEvents({ listener }) {
+        sessionListener = listener;
+        return () => {
+          sessionListener = null;
+        };
+      },
+      async startReply({ turn }) {
+        return {
+          requestId: `req-${turn.id}`,
+          abort() {
+            return true;
+          },
+          promise: Promise.resolve({
+            text: `Reply to ${turn.transcript}`,
+            subtitle: `Reply to ${turn.transcript}`,
+            mood: 'warm',
+            emoteId: 'warm',
+            gestureId: 'Greeting',
+            animationSequence: [{ gestureId: 'Greeting', atRatio: 0 }],
+            rawText: '{"spokenText":"ok"}',
+            runMode: 'resume',
+          }),
+        };
+      },
+    },
+    modelsById: new Map([
+      ['bhf-1-2', { id: 'bhf-1-2', label: 'Red Tinker Bell' }],
+    ]),
+    gestureCatalogByModel: {
+      'bhf-1-2': [{ id: 'Greeting', intent: 'greet', bestFor: ['hello'] }],
+    },
+    defaultModelId: 'bhf-1-2',
+    projectTitle: 'talking-agent',
+  });
+
+  const created = await runtime.createSession({});
+  const sessionId = created.session.id;
+  sessionListener?.({
+    kind: 'notice',
+    level: 'info',
+    text: 'Checking your calendar connection.',
+    speakText: 'Checking your calendar connection.',
+    source: 'mcp-notification',
+  });
+  sessionListener?.({
+    kind: 'log',
+    level: 'warn',
+    text: 'warning: connector is slow',
+    source: 'mcp-stderr',
+  });
+  const payload = await runtime.getSession(sessionId);
+
+  assert.equal(payload.session.events[0].type, 'codex.log');
+  assert.equal(payload.session.events[0].details.text, 'warning: connector is slow');
+  assert.equal(payload.session.events[1].type, 'codex.notice');
+  assert.equal(payload.session.events[1].details.speakText, 'Checking your calendar connection.');
+});
+
+test('runtime tracks a generic operation summary across defer and background completion', async () => {
+  const replyDeferred = createDeferred();
+  const { runtime } = createRuntime({
+    agentRunnerOverrides: {
+      async startReply() {
+        return {
+          requestId: 'req-op-1',
+          abort() {
+            return true;
+          },
+          promise: replyDeferred.promise,
+        };
+      },
+    },
+  });
+
+  const created = await runtime.createSession({});
+  const sessionId = created.session.id;
+  await runtime.setCallState({ sessionId, state: 'live' });
+  const submitPromise = runtime.submitHumanTurn({
+    sessionId,
+    text: 'save the airplane report to Google Drive',
+    source: 'voice',
+  });
+  await Promise.resolve();
+
+  const active = await runtime.getSession(sessionId);
+  const activeTurn = active.session.turns.at(-1);
+  assert.equal(activeTurn.operation.summary, 'save the airplane report to Google Drive');
+  assert.equal(activeTurn.operation.phase, 'thinking');
+
+  const deferred = await runtime.deferActiveTurn({
+    sessionId,
+    reason: 'Still working in the background.',
+  });
+  assert.equal(deferred.turn.operation.phase, 'background');
+  assert.equal(deferred.turn.operation.statusText, 'Still working in the background.');
+
+  replyDeferred.resolve({
+    text: 'Done. I saved it.',
+    subtitle: 'Done. I saved it.',
+    mood: 'warm',
+    animationSequence: [],
+    followUps: [],
+    rawText: '{"spokenText":"Done. I saved it."}',
+    runMode: 'resume',
+  });
+  const completed = await submitPromise;
+  assert.equal(completed.turn.operation.summary, 'save the airplane report to Google Drive');
+  assert.equal(completed.turn.operation.phase, 'background');
+  assert.equal(completed.turn.operation.statusText, 'Reply ready in the background.');
 });
 
 test('runtime interrupt marks the latest reply interrupted', async () => {

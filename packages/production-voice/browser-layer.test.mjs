@@ -103,3 +103,96 @@ test('runTextTurn waits for audio playback start before firing hooks and resolve
   assert.equal(layer.getSnapshot().speaking, false);
   assert.equal(revokedUrl, 'blob:production-voice');
 });
+
+test('prepared speech can be synthesized ahead of playback and reused without a second synth request', async () => {
+  let startPlayback = null;
+  let activeAudio = null;
+  let revokedUrl = '';
+  const synthCalls = [];
+
+  class FakeAudio {
+    constructor(src) {
+      this.src = src;
+      this.listeners = new Map();
+      this.paused = true;
+      activeAudio = this;
+    }
+
+    addEventListener(type, handler) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.push(handler);
+      this.listeners.set(type, handlers);
+    }
+
+    removeEventListener(type, handler) {
+      const handlers = this.listeners.get(type) || [];
+      this.listeners.set(
+        type,
+        handlers.filter((entry) => entry !== handler),
+      );
+    }
+
+    async play() {
+      return new Promise((resolve) => {
+        startPlayback = () => {
+          this.paused = false;
+          resolve();
+        };
+      });
+    }
+
+    pause() {
+      this.paused = true;
+    }
+
+    dispatch(type) {
+      for (const handler of this.listeners.get(type) || []) {
+        handler();
+      }
+    }
+  }
+
+  const layer = createProductionVoiceLayer({
+    synthesizeSpeech: async ({ text }) => {
+      synthCalls.push(text);
+      return {
+        audioBase64: Buffer.from(`audio:${text}`).toString('base64'),
+        mimeType: 'audio/wav',
+      };
+    },
+    AudioImpl: FakeAudio,
+    urlApi: {
+      createObjectURL() {
+        return 'blob:production-voice';
+      },
+      revokeObjectURL(url) {
+        revokedUrl = url;
+      },
+    },
+  });
+
+  const preparedSpeech = await layer.prepareSpeech('Hello from prepared speech.', 'bridge-action:test');
+  assert.deepEqual(synthCalls, ['Hello from prepared speech.']);
+
+  const turnPromise = layer.runTextTurn(
+    'Hello from prepared speech.',
+    'bridge-action:test',
+    {},
+    {
+      preparedSpeech,
+      characterId: 'bhf-1-2',
+    },
+  );
+
+  while (!startPlayback) {
+    await Promise.resolve();
+  }
+
+  assert.deepEqual(synthCalls, ['Hello from prepared speech.']);
+
+  startPlayback();
+  activeAudio.dispatch('ended');
+  await turnPromise;
+
+  assert.equal(revokedUrl, 'blob:production-voice');
+});

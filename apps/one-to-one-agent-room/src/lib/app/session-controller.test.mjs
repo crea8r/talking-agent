@@ -3,1062 +3,145 @@ import assert from 'node:assert/strict';
 
 import { createSessionController } from './session-controller.js';
 
-test('handlePrimaryCallAction opens the connect prompt and prepares a session', async () => {
-  const statusUpdates = [];
-  let posted = false;
-  let dialogOpened = false;
-  let promptFocused = false;
-
-  globalThis.window = {
-    setTimeout,
-    clearTimeout,
-    setInterval() {
-      return 1;
-    },
-    clearInterval() {},
-    requestAnimationFrame(callback) {
-      callback();
-    },
-  };
-
-  const state = {
-    runtimeConfig: {
-      codexProjectName: 'talking-agent',
-    },
-    room: null,
-    session: null,
-    sessionPollId: 0,
-    sessionKey: '',
-    sessionPreparing: false,
-    modelLoading: false,
-    processingReplies: false,
-    preferences: {
-      voiceName: '',
-      speechRate: 1,
-      speechPitch: 1,
-    },
-  };
-
-  const controller = createSessionController({
-    state,
-    roomLayer: {
-      installSdkLogging() {},
-      attachRoomListeners() {},
-      async disconnectRoom() {},
-      async mintToken() {
-        return { token: 'token' };
-      },
-      async connectRoom() {},
-    },
-    roomClass: class {},
-    videoPresets: {
-      h720: {
-        resolution: {},
-      },
-    },
-    logLevel: 'info',
-    screenNavigator: {
-      show() {},
-    },
-    humanVoiceLayer: {
-      stopListening() {},
-      destroy() {},
-    },
-    agentVoiceLayer: {
-      destroy() {},
-      getSnapshot() {
-        return { speechSynthesisSupported: true };
-      },
-    },
-    avatarSpeech: {
-      stop() {},
-      getSnapshot() {
-        return { active: false };
-      },
-      async speakText() {},
-    },
-    avatarLayer: {
-      destroy() {},
-      getSnapshot() {
-        return {};
-      },
-    },
-    dom: {
-      connectPromptDialog: {
-        open: false,
-        showModal() {
-          dialogOpened = true;
-          this.open = true;
-        },
-      },
-      connectPromptBody: {
-        focus() {
-          promptFocused = true;
-        },
-        select() {},
-      },
-      localIdentity: { textContent: '' },
-      remoteCount: { textContent: '' },
-      lastAgentReply: { textContent: '' },
-    },
-    stageMap: new Map(),
-    emoteMap: new Map(),
-    selectStage() {},
-    selectEmote() {},
-    selectGesture() {},
-    collectFormState() {
-      return {
-        livekitUrl: 'ws://127.0.0.1:7880',
-        roomName: 'talking-agent-call',
-        identity: 'human-room-host',
-        participantName: 'Human Caller',
-        enableCamera: true,
-        enableMicrophone: true,
-      };
-    },
-    fetchJson: async () => ({
-      session: {
-        id: 'session-1',
-        title: 'talking-agent',
-        agent: {
-          label: 'Codex OpenAI',
-          lastSeenAt: null,
-        },
-        metrics: {
-          pendingTurns: 0,
-          unplayedReplies: 0,
-        },
-        turns: [],
-      },
-    }),
-    postJson: async () => {
-      posted = true;
-      return {
-        session: {
-          id: 'session-1',
-          title: 'talking-agent',
-          agent: {
-            label: 'Codex OpenAI',
-            lastSeenAt: null,
-          },
-          metrics: {
-            pendingTurns: 0,
-            unplayedReplies: 0,
-          },
-          turns: [],
-        },
-      };
-    },
-    addLog() {},
-    formatError(error) {
-      return error;
-    },
-    renderLocalStage() {},
-    renderRoomSnapshot() {},
-    renderBridgeSnapshot() {},
-    renderTranscriptList() {},
-    renderDebugSnapshot() {},
-    renderAgentStatus() {},
-    refreshActionButtons() {},
-    updateRoomStatus(stateValue, title, detail) {
-      statusUpdates.push({ stateValue, title, detail });
-    },
-  });
-
-  await controller.handlePrimaryCallAction();
-
-  assert.equal(posted, true);
-  assert.equal(dialogOpened, true);
-  assert.equal(promptFocused, true);
-  assert.deepEqual(statusUpdates[0], {
-    stateValue: 'loading',
-    title: 'Agent setup',
-    detail: 'Opening the bridge steps and preparing a call session for the agent.',
-  });
-  assert.equal(state.session?.id, 'session-1');
-});
-
-test('handlePrimaryCallAction stays safe before runtime config finishes loading', async () => {
-  const statusUpdates = [];
-  let posted = false;
-
-  globalThis.window = {
-    setTimeout,
-    clearTimeout,
-    setInterval() {
-      return 1;
-    },
-    clearInterval() {},
-    requestAnimationFrame(callback) {
-      callback();
-    },
-  };
-
-  const state = {
-    runtimeConfig: null,
-    room: null,
-    session: null,
-    sessionPollId: 0,
-    sessionKey: '',
-    sessionPreparing: false,
-    modelLoading: false,
-    processingReplies: false,
-    preferences: {
-      voiceName: '',
-      speechRate: 1,
-      speechPitch: 1,
-    },
-  };
-
-  const logs = [];
-  const controller = createSessionController({
-    state,
-    roomLayer: {
-      installSdkLogging() {},
-      attachRoomListeners() {},
-      async disconnectRoom() {},
-      async mintToken() {
-        return { token: 'token' };
-      },
-      async connectRoom() {},
-    },
-    roomClass: class {},
-    videoPresets: {
-      h720: {
-        resolution: {},
-      },
-    },
-    logLevel: 'info',
-    screenNavigator: {
-      show() {},
-    },
-    humanVoiceLayer: {
-      stopListening() {},
-      destroy() {},
-    },
-    agentVoiceLayer: {
-      destroy() {},
-      getSnapshot() {
-        return { speechSynthesisSupported: true };
-      },
-    },
-    avatarSpeech: {
-      stop() {},
-      getSnapshot() {
-        return { active: false };
-      },
-      async speakText() {},
-    },
-    avatarLayer: {
-      destroy() {},
-      getSnapshot() {
-        return {};
-      },
-    },
-    dom: {
-      connectPromptDialog: {
-        open: false,
-        showModal() {
-          this.open = true;
-        },
-      },
-      connectPromptBody: {
-        focus() {},
-        select() {},
-      },
-      localIdentity: { textContent: '' },
-      remoteCount: { textContent: '' },
-      lastAgentReply: { textContent: '' },
-    },
-    stageMap: new Map(),
-    emoteMap: new Map(),
-    selectStage() {},
-    selectEmote() {},
-    selectGesture() {},
-    collectFormState() {
-      return {
-        livekitUrl: 'ws://127.0.0.1:7880',
-        roomName: 'talking-agent-call',
-        identity: 'human-room-host',
-        participantName: 'Human Caller',
-        enableCamera: true,
-        enableMicrophone: true,
-      };
-    },
-    fetchJson: async () => ({ session: null }),
-    postJson: async () => {
-      posted = true;
-      return { session: null };
-    },
-    addLog(level, message) {
-      logs.push({ level, message });
-    },
-    formatError(error) {
-      return error;
-    },
-    renderLocalStage() {},
-    renderRoomSnapshot() {},
-    renderBridgeSnapshot() {},
-    renderTranscriptList() {},
-    renderDebugSnapshot() {},
-    renderAgentStatus() {},
-    refreshActionButtons() {},
-    updateRoomStatus(stateValue, title, detail) {
-      statusUpdates.push({ stateValue, title, detail });
-    },
-  });
-
-  await controller.handlePrimaryCallAction();
-
-  assert.equal(posted, false);
-  assert.deepEqual(statusUpdates.at(-1), {
-    stateValue: 'loading',
-    title: 'Loading project',
-    detail: 'Runtime config is still loading. Try Connect Agent again in a moment.',
-  });
-  assert.deepEqual(logs.at(-1), {
-    level: 'warn',
-    message: 'Connect Agent clicked before runtime config finished loading.',
-  });
-});
-
-test('handlePrimaryCallAction keeps the live room on the Call screen after connect', async () => {
-  const shownScreens = [];
-
-  globalThis.window = {
-    setTimeout,
-    clearTimeout,
-    setInterval() {
-      return 1;
-    },
-    clearInterval() {},
-    requestAnimationFrame(callback) {
-      callback();
-    },
-  };
-
-  const state = {
-    runtimeConfig: {
-      codexProjectName: 'talking-agent',
-    },
-    room: null,
+function createSessionPayload({
+  id = 'session-1',
+  title = 'talking-agent',
+  state = 'idle',
+  turns = [],
+} = {}) {
+  return {
     session: {
-      id: 'session-1',
-      title: 'talking-agent',
-      agent: {
-        id: 'codex-openai',
-        label: 'Codex OpenAI',
-        lastSeenAt: new Date().toISOString(),
-      },
+      id,
+      title,
+      state,
+      turns,
       metrics: {
         pendingTurns: 0,
+        turnCount: turns.length,
         unplayedReplies: 0,
       },
-      turns: [],
-    },
-    sessionPollId: 0,
-    sessionKey: 'session-key',
-    sessionPreparing: false,
-    modelLoading: false,
-    processingReplies: false,
-    preferences: {
-      voiceName: '',
-      speechRate: 1,
-      speechPitch: 1,
-    },
-  };
-
-  class FakeRoom {
-    constructor() {
-      this.state = 'connected';
-      this.name = 'talking-agent-call';
-      this.remoteParticipants = new Map();
-      this.localParticipant = {
-        identity: 'human-room-host',
-        name: 'Human Caller',
-      };
-    }
-  }
-
-  const controller = createSessionController({
-    state,
-    roomLayer: {
-      installSdkLogging() {},
-      attachRoomListeners() {},
-      async disconnectRoom() {},
-      async mintToken() {
-        return { token: 'token' };
-      },
-      async connectRoom() {},
-    },
-    roomClass: FakeRoom,
-    videoPresets: {
-      h720: {
-        resolution: {},
-      },
-    },
-    logLevel: 'info',
-    screenNavigator: {
-      show(screenId) {
-        shownScreens.push(screenId);
-      },
-    },
-    humanVoiceLayer: {
-      stopListening() {},
-      destroy() {},
-    },
-    agentVoiceLayer: {
-      destroy() {},
-      getSnapshot() {
-        return { speechSynthesisSupported: true };
-      },
-    },
-    avatarSpeech: {
-      stop() {},
-      getSnapshot() {
-        return { active: false };
-      },
-      async speakText() {},
-    },
-    avatarLayer: {
-      destroy() {},
-      getSnapshot() {
-        return {};
-      },
-    },
-    dom: {
-      connectPromptDialog: {
-        open: false,
-        showModal() {},
-      },
-      connectPromptBody: {
-        focus() {},
-        select() {},
-      },
-      localIdentity: { textContent: '' },
-      remoteCount: { textContent: '' },
-      lastAgentReply: { textContent: '' },
-    },
-    stageMap: new Map(),
-    emoteMap: new Map(),
-    selectStage() {},
-    selectEmote() {},
-    selectGesture() {},
-    collectFormState() {
-      return {
-        livekitUrl: 'ws://127.0.0.1:7880',
-        roomName: 'talking-agent-call',
-        identity: 'human-room-host',
-        participantName: 'Human Caller',
-        enableCamera: true,
-        enableMicrophone: true,
-      };
-    },
-    fetchJson: async (url) => {
-      if (url.startsWith('/api/probe-livekit')) {
-        return {
-          reachable: true,
-          probeUrl: 'http://127.0.0.1:7880',
-          status: 200,
-          statusText: 'OK',
-        };
-      }
-
-      return { session: state.session };
-    },
-    postJson: async () => ({ ok: true }),
-    addLog() {},
-    formatError(error) {
-      return error;
-    },
-    renderLocalStage() {},
-    renderRoomSnapshot() {},
-    renderBridgeSnapshot() {},
-    renderTranscriptList() {},
-    renderDebugSnapshot() {},
-    renderAgentStatus() {},
-    refreshActionButtons() {},
-    updateRoomStatus() {},
-  });
-
-  await controller.handlePrimaryCallAction();
-
-  assert.deepEqual(shownScreens, ['setup']);
-});
-
-test('handlePrimaryCallAction restores the Call lobby when room connect fails', async () => {
-  const roomSnapshots = [];
-
-  globalThis.window = {
-    setTimeout,
-    clearTimeout,
-    setInterval() {
-      return 1;
-    },
-    clearInterval() {},
-    requestAnimationFrame(callback) {
-      callback();
-    },
-  };
-
-  const state = {
-    runtimeConfig: {
-      codexProjectName: 'talking-agent',
-    },
-    room: null,
-    session: {
-      id: 'session-1',
-      title: 'talking-agent',
       agent: {
         id: 'codex-openai',
         label: 'Codex OpenAI',
-        lastSeenAt: new Date().toISOString(),
-      },
-      metrics: {
-        pendingTurns: 0,
-        unplayedReplies: 0,
-      },
-      turns: [],
-    },
-    sessionPollId: 0,
-    sessionKey: 'session-key',
-    sessionPreparing: false,
-    modelLoading: false,
-    processingReplies: false,
-    preferences: {
-      voiceName: '',
-      speechRate: 1,
-      speechPitch: 1,
-    },
-  };
-
-  class FakeRoom {
-    constructor() {
-      this.state = 'connecting';
-      this.name = 'talking-agent-call';
-      this.remoteParticipants = new Map();
-      this.localParticipant = {
-        identity: 'human-room-host',
-        name: 'Human Caller',
-      };
-    }
-  }
-
-  const controller = createSessionController({
-    state,
-    roomLayer: {
-      installSdkLogging() {},
-      attachRoomListeners() {},
-      async disconnectRoom() {},
-      async mintToken() {
-        return { token: 'token' };
-      },
-      async connectRoom() {
-        throw new Error('connect failed');
-      },
-    },
-    roomClass: FakeRoom,
-    videoPresets: {
-      h720: {
-        resolution: {},
-      },
-    },
-    logLevel: 'info',
-    screenNavigator: {
-      show() {},
-    },
-    humanVoiceLayer: {
-      stopListening() {},
-      destroy() {},
-    },
-    agentVoiceLayer: {
-      destroy() {},
-      getSnapshot() {
-        return { speechSynthesisSupported: true };
-      },
-    },
-    avatarSpeech: {
-      stop() {},
-      getSnapshot() {
-        return { active: false };
-      },
-      async speakText() {},
-    },
-    avatarLayer: {
-      destroy() {},
-      getSnapshot() {
-        return {};
-      },
-    },
-    dom: {
-      connectPromptDialog: {
-        open: false,
-        showModal() {},
-      },
-      connectPromptBody: {
-        focus() {},
-        select() {},
-      },
-      localIdentity: { textContent: '' },
-      remoteCount: { textContent: '' },
-      lastAgentReply: { textContent: '' },
-    },
-    stageMap: new Map(),
-    emoteMap: new Map(),
-    selectStage() {},
-    selectEmote() {},
-    selectGesture() {},
-    collectFormState() {
-      return {
-        livekitUrl: 'ws://127.0.0.1:7880',
-        roomName: 'talking-agent-call',
-        identity: 'human-room-host',
-        participantName: 'Human Caller',
-        enableCamera: true,
-        enableMicrophone: true,
-      };
-    },
-    fetchJson: async (url) => {
-      if (url.startsWith('/api/probe-livekit')) {
-        return {
-          reachable: true,
-          probeUrl: 'http://127.0.0.1:7880',
-          status: 200,
-          statusText: 'OK',
-        };
-      }
-
-      return { session: state.session };
-    },
-    postJson: async () => ({ ok: true }),
-    addLog() {},
-    formatError(error) {
-      return error;
-    },
-    renderLocalStage() {},
-    renderRoomSnapshot() {
-      roomSnapshots.push(Boolean(state.room));
-    },
-    renderBridgeSnapshot() {},
-    renderTranscriptList() {},
-    renderDebugSnapshot() {},
-    renderAgentStatus() {},
-    refreshActionButtons() {},
-    updateRoomStatus() {},
-  });
-
-  await assert.rejects(() => controller.handlePrimaryCallAction(), /connect failed/);
-
-  assert.equal(state.room, null);
-  assert.equal(roomSnapshots.at(-1), false);
-});
-
-test('prepareLobbySession starts a local freshness ticker alongside bridge polling', async () => {
-  const intervalCallbacks = [];
-  let roomRenderCount = 0;
-  let bridgeRenderCount = 0;
-  let agentRenderCount = 0;
-
-  globalThis.window = {
-    setTimeout,
-    clearTimeout,
-    setInterval(callback) {
-      intervalCallbacks.push(callback);
-      return intervalCallbacks.length;
-    },
-    clearInterval() {},
-    requestAnimationFrame(callback) {
-      callback();
-    },
-  };
-
-  const state = {
-    runtimeConfig: {
-      codexProjectName: 'talking-agent',
-    },
-    room: null,
-    session: null,
-    sessionPollId: 0,
-    sessionKey: '',
-    sessionPreparing: false,
-    modelLoading: false,
-    processingReplies: false,
-    preferences: {
-      voiceName: '',
-      speechRate: 1,
-      speechPitch: 1,
-    },
-  };
-
-  const controller = createSessionController({
-    state,
-    roomLayer: {
-      installSdkLogging() {},
-      attachRoomListeners() {},
-      async disconnectRoom() {},
-      async mintToken() {
-        return { token: 'token' };
-      },
-      async connectRoom() {},
-    },
-    roomClass: class {},
-    videoPresets: {
-      h720: {
-        resolution: {},
-      },
-    },
-    logLevel: 'info',
-    screenNavigator: {
-      show() {},
-    },
-    humanVoiceLayer: {
-      stopListening() {},
-      destroy() {},
-    },
-    agentVoiceLayer: {
-      destroy() {},
-      getSnapshot() {
-        return { speechSynthesisSupported: true };
-      },
-    },
-    avatarSpeech: {
-      stop() {},
-      getSnapshot() {
-        return { active: false };
-      },
-      async speakText() {},
-    },
-    avatarLayer: {
-      destroy() {},
-      getSnapshot() {
-        return {};
-      },
-    },
-    dom: {
-      connectPromptDialog: null,
-      connectPromptBody: null,
-      localIdentity: { textContent: '' },
-      remoteCount: { textContent: '' },
-      lastAgentReply: { textContent: '' },
-    },
-    stageMap: new Map(),
-    emoteMap: new Map(),
-    selectStage() {},
-    selectEmote() {},
-    selectGesture() {},
-    collectFormState() {
-      return {
-        livekitUrl: 'ws://127.0.0.1:7880',
-        roomName: 'talking-agent-call',
-        identity: 'human-room-host',
-        participantName: 'Human Caller',
-        enableCamera: true,
-        enableMicrophone: true,
-      };
-    },
-    fetchJson: async () => ({
-      session: {
-        id: 'session-1',
-        title: 'talking-agent',
-        agent: {
-          label: 'Codex OpenAI',
-          lastSeenAt: null,
-        },
-        metrics: {
-          pendingTurns: 0,
-          unplayedReplies: 0,
-        },
-        turns: [],
-      },
-    }),
-    postJson: async () => ({
-      session: {
-        id: 'session-1',
-        title: 'talking-agent',
-        agent: {
-          label: 'Codex OpenAI',
-          lastSeenAt: null,
-        },
-        metrics: {
-          pendingTurns: 0,
-          unplayedReplies: 0,
-        },
-        turns: [],
-      },
-    }),
-    addLog() {},
-    formatError(error) {
-      return error;
-    },
-    renderLocalStage() {},
-    renderRoomSnapshot() {
-      roomRenderCount += 1;
-    },
-    renderBridgeSnapshot() {
-      bridgeRenderCount += 1;
-    },
-    renderTranscriptList() {},
-    renderDebugSnapshot() {},
-    renderAgentStatus() {
-      agentRenderCount += 1;
-    },
-    refreshActionButtons() {},
-    updateRoomStatus() {},
-  });
-
-  await controller.prepareLobbySession({ force: true });
-
-  assert.equal(intervalCallbacks.length, 2);
-
-  intervalCallbacks[0]();
-  intervalCallbacks[1]();
-
-  assert.ok(roomRenderCount > 0);
-  assert.ok(bridgeRenderCount > 0);
-  assert.ok(agentRenderCount > 0);
-});
-
-test('agent reply scene changes wait for playback start before switching the avatar mood', async () => {
-  const intervalCallbacks = [];
-  const avatarSelections = [];
-  const pollResponse = {
-    session: {
-      id: 'session-1',
-      title: 'talking-agent',
-      agent: {
-        id: 'codex-openai',
-        label: 'Codex OpenAI',
-        lastSeenAt: '2026-05-01T00:00:00.000Z',
+        status: 'idle',
+        currentTurnId: null,
+        lastReplyAt: null,
+        lastError: '',
       },
       avatar: {
         activeModelId: 'bhf-1-2',
+        activeModelLabel: 'Red Tinker Bell',
+        gestureCatalog: [],
       },
-      metrics: {
-        pendingTurns: 0,
-        unplayedReplies: 1,
-      },
-      turns: [
-        {
-          id: 'turn-1',
-          source: 'voice',
-          transcript: 'say hello',
-          createdAt: '2026-05-01T00:00:00.000Z',
-          status: 'replied',
-          human: {
-            identity: 'human-room-host',
-            name: 'Human Caller',
-          },
-          agentReply: {
-            id: 'reply-1',
-            text: 'Hello there.',
-            createdAt: '2026-05-01T00:00:01.000Z',
-            playedAt: null,
-            agentId: 'codex-openai',
-            agentLabel: 'Codex OpenAI',
-            emoteId: 'warm',
-            gestureId: 'explain',
-            stageId: 'studio',
-            mood: 'happy',
-          },
-        },
-      ],
     },
   };
-  let speechOptions = null;
-  let resolveSpeech = null;
+}
 
-  globalThis.window = {
-    setTimeout,
-    clearTimeout,
-    setInterval(callback) {
-      intervalCallbacks.push(callback);
-      return intervalCallbacks.length;
-    },
-    clearInterval() {},
-    requestAnimationFrame(callback) {
-      callback();
-    },
+function cloneFormState(formState) {
+  return {
+    ...formState,
+    enabledPluginIds: [...formState.enabledPluginIds],
+  };
+}
+
+function createHarness({
+  runtimeConfig = { codexProjectName: 'talking-agent' },
+  launchContext = { mode: 'manual' },
+  productionVoiceReady = true,
+  productionVoiceBackendRunning = true,
+  codexBackendRunning = true,
+} = {}) {
+  const postCalls = [];
+  let nextSessionNumber = 1;
+  const formState = {
+    humanIdentity: 'human-caller',
+    participantName: 'Human Caller',
+    humanLocale: 'en-US',
+    bundledModelId: 'bhf-1-2',
+    voiceSampleFileName: productionVoiceReady ? 'voice.wav' : '',
+    voiceSampleProfileId: productionVoiceReady ? 'voice-profile-1' : '',
+    voiceSampleStatus: productionVoiceReady ? 'ready' : 'missing',
+    enabledPluginIds: ['tool-a'],
+    enableControlComputer: true,
+    enableComplexTasks: false,
   };
 
   const state = {
-    runtimeConfig: {
-      codexProjectName: 'talking-agent',
-    },
-    room: null,
+    runtimeConfig,
+    launchContext,
     session: null,
-    sessionPollId: 0,
     sessionKey: '',
     sessionPreparing: false,
-    modelLoading: false,
+    activeCall: false,
+    endingCall: false,
+    callEndingDimmed: false,
+    startupGreetingActive: false,
+    humanMicMuted: false,
+    humanMicLevel: 0,
+    currentTurnId: null,
+    playbackGeneration: 0,
+    activeReplyAbortController: null,
+    activeUtteranceId: null,
+    activeUtteranceText: '',
+    transcriptPreview: '',
     processingReplies: false,
+    agentThinkingActive: false,
+    agentThinkingElapsedTenths: 0,
+    modelLoading: false,
+    subtitles: {
+      human: {
+        mode: 'idle',
+        text: 'Waiting',
+      },
+      agent: {
+        mode: 'idle',
+        text: 'Offline',
+      },
+    },
     preferences: {
-      voiceName: '',
-      speechRate: 1,
-      speechPitch: 1,
-      bundledModelId: 'bhf-1-2',
+      bundledModelId: formState.bundledModelId,
+      humanLocale: formState.humanLocale,
+      gestureId: 'Pose',
+      emoteId: 'neutral',
+      voiceSampleFileName: formState.voiceSampleFileName,
+      voiceSampleProfileId: formState.voiceSampleProfileId,
+      voiceSampleStatus: formState.voiceSampleStatus,
+    },
+    productionVoice: {
+      loading: false,
+      uploading: false,
+      backendRunning: productionVoiceBackendRunning,
+      profile: {
+        referenceAvailable: productionVoiceReady,
+      },
+      validationMessage: '',
+    },
+    codex: {
+      loading: false,
+      backendRunning: codexBackendRunning,
+      backendDetail: codexBackendRunning ? '' : 'Codex exec is unavailable.',
+    },
+    agentSelf: {
+      loading: false,
+      saving: false,
+      settings: {
+        agentMode: 'standard',
+        selfProfile: {
+          name: '',
+          pronouns: '',
+          personality: '',
+          interests: '',
+          selfPrompt: '',
+        },
+      },
     },
   };
-
-  const controller = createSessionController({
-    state,
-    roomLayer: {
-      installSdkLogging() {},
-      attachRoomListeners() {},
-      async disconnectRoom() {},
-      async mintToken() {
-        return { token: 'token' };
-      },
-      async connectRoom() {},
-    },
-    roomClass: class {},
-    videoPresets: {
-      h720: {
-        resolution: {},
-      },
-    },
-    logLevel: 'info',
-    screenNavigator: {
-      show() {},
-    },
-    humanVoiceLayer: {
-      stopListening() {},
-      destroy() {},
-    },
-    agentVoiceLayer: {
-      destroy() {},
-      getSnapshot() {
-        return { speechSynthesisSupported: true };
-      },
-    },
-    avatarSpeech: {
-      stop() {},
-      getSnapshot() {
-        return { active: false };
-      },
-      async speakText(text, options) {
-        speechOptions = options;
-        await new Promise((resolve) => {
-          resolveSpeech = resolve;
-        });
-        return { text };
-      },
-    },
-    avatarLayer: {
-      destroy() {},
-      getSnapshot() {
-        return {};
-      },
-    },
-    dom: {
-      connectPromptDialog: {
-        open: false,
-        showModal() {},
-      },
-      connectPromptBody: {
-        focus() {},
-        select() {},
-      },
-      localIdentity: { textContent: '' },
-      remoteCount: { textContent: '' },
-      lastAgentReply: { textContent: '' },
-    },
-    stageMap: new Map([['studio', { id: 'studio' }]]),
-    emoteMap: new Map([['warm', { id: 'warm' }]]),
-    selectStage(stageId) {
-      avatarSelections.push({ type: 'stage', id: stageId });
-    },
-    selectEmote(emoteId) {
-      avatarSelections.push({ type: 'emote', id: emoteId });
-    },
-    selectGesture(gestureId) {
-      avatarSelections.push({ type: 'gesture', id: gestureId });
-    },
-    collectFormState() {
-      return {
-        livekitUrl: 'ws://127.0.0.1:7880',
-        roomName: 'talking-agent-call',
-        identity: 'human-room-host',
-        participantName: 'Human Caller',
-        enableCamera: true,
-        enableMicrophone: true,
-      };
-    },
-    fetchJson: async () => pollResponse,
-    postJson: async (url) => {
-      if (url === '/api/bridge/sessions') {
-        return {
-          session: {
-            id: 'session-1',
-            title: 'talking-agent',
-            agent: {
-              id: 'codex-openai',
-              label: 'Codex OpenAI',
-              lastSeenAt: '2026-05-01T00:00:00.000Z',
-            },
-            metrics: {
-              pendingTurns: 0,
-              unplayedReplies: 0,
-            },
-            turns: [],
-          },
-        };
-      }
-
-      return {
-        session: {
-          ...pollResponse.session,
-          turns: pollResponse.session.turns.map((turn) => ({
-            ...turn,
-            agentReply: {
-              ...turn.agentReply,
-              playedAt: '2026-05-01T00:00:02.000Z',
-            },
-          })),
-        },
-      };
-    },
-    addLog() {},
-    formatError(error) {
-      return error;
-    },
-    renderLocalStage() {},
-    renderRoomSnapshot() {},
-    renderBridgeSnapshot() {},
-    renderTranscriptList() {},
-    renderDebugSnapshot() {},
-    renderAgentStatus() {},
-    refreshActionButtons() {},
-    updateRoomStatus() {},
-  });
-
-  await controller.prepareLobbySession({ force: true });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(typeof speechOptions?.onPlaybackStart, 'function');
-  assert.equal(speechOptions?.characterId, 'bhf-1-2');
-  assert.equal(speechOptions?.mood, 'happy');
-  assert.deepEqual(avatarSelections, []);
-
-  speechOptions.onPlaybackStart();
-
-  assert.deepEqual(avatarSelections, [
-    { type: 'stage', id: 'studio' },
-    { type: 'emote', id: 'warm' },
-    { type: 'gesture', id: 'explain' },
-  ]);
-
-  resolveSpeech();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-});
-
-test('syncInterimTranscript starts one utterance and posts append-style deltas', async () => {
-  const posts = [];
 
   globalThis.window = {
     setTimeout,
     clearTimeout,
     setInterval() {
-      return 1;
+      return 0;
     },
     clearInterval() {},
     requestAnimationFrame(callback) {
@@ -1066,296 +149,173 @@ test('syncInterimTranscript starts one utterance and posts append-style deltas',
     },
   };
 
-  const state = {
-    runtimeConfig: null,
-    room: null,
-    session: {
-      id: 'session-1',
-      title: 'talking-agent',
-      agent: {
-        label: 'Codex OpenAI',
-        lastSeenAt: null,
-      },
-      metrics: {
-        pendingTurns: 0,
-        unplayedReplies: 0,
-      },
-      turns: [],
-    },
-    sessionPollId: 0,
-    sessionKey: '',
-    sessionPreparing: false,
-    modelLoading: false,
-    processingReplies: false,
-    activeUtteranceId: null,
-    activeUtteranceText: '',
-    preferences: {
-      voiceName: '',
-      speechRate: 1,
-      speechPitch: 1,
-    },
-  };
-
   const controller = createSessionController({
     state,
-    roomLayer: {
-      installSdkLogging() {},
-      attachRoomListeners() {},
-      async disconnectRoom() {},
-      async mintToken() {
-        return { token: 'token' };
-      },
-      async connectRoom() {},
-    },
-    roomClass: class {},
-    videoPresets: {
-      h720: {
-        resolution: {},
-      },
-    },
-    logLevel: 'info',
-    screenNavigator: {
-      show() {},
-    },
     humanVoiceLayer: {
       stopListening() {},
+      async startListening() {},
+      updateConfig() {},
+      getSnapshot() {
+        return {
+          recognitionSupported: true,
+          status: 'ready',
+          listening: false,
+        };
+      },
       destroy() {},
     },
     agentVoiceLayer: {
-      destroy() {},
       getSnapshot() {
-        return { speechSynthesisSupported: true };
+        return {
+          speechSynthesisSupported: true,
+        };
       },
+      resolveRenderProfile() {
+        return {
+          speechRate: 1,
+        };
+      },
+      updateConfig() {},
+      destroy() {},
     },
     avatarSpeech: {
-      stop() {},
       getSnapshot() {
-        return { active: false };
+        return {
+          active: false,
+        };
+      },
+      stop() {},
+      buildMouthTimeline() {
+        return {
+          durationMs: 1000,
+        };
       },
       async speakText() {},
     },
     avatarLayer: {
-      destroy() {},
       getSnapshot() {
-        return {};
+        return {
+          ready: true,
+          gestureId: 'Pose',
+          availableGestures: [],
+        };
       },
+      destroy() {},
     },
-    dom: {
-      connectPromptDialog: null,
-      connectPromptBody: null,
-      localIdentity: { textContent: '' },
-      remoteCount: { textContent: '' },
-      lastAgentReply: { textContent: '' },
-    },
+    dom: {},
     stageMap: new Map(),
     emoteMap: new Map(),
     selectStage() {},
     selectEmote() {},
     selectGesture() {},
     collectFormState() {
-      return {
-        livekitUrl: 'ws://127.0.0.1:7880',
-        roomName: 'talking-agent-call',
-        identity: 'human-room-host',
-        participantName: 'Human Caller',
-        enableCamera: true,
-        enableMicrophone: true,
-        bundledModelId: 'bhf-1-2',
-      };
+      return cloneFormState(formState);
     },
-    fetchJson: async () => ({ session: state.session }),
+    fetchJson: async () => ({}),
     postJson: async (url, body) => {
-      posts.push({ url, body });
-      return { session: state.session };
+      postCalls.push({ url, body });
+      if (url === '/api/call/sessions') {
+        return createSessionPayload({
+          id: `session-${nextSessionNumber++}`,
+          title: body?.title || 'talking-agent',
+        });
+      }
+      return createSessionPayload({
+        id: state.session?.id || 'session-unknown',
+        title: state.session?.title || 'talking-agent',
+        state: state.session?.state || 'idle',
+        turns: state.session?.turns || [],
+      });
     },
+    postFormData: async () => ({}),
     addLog() {},
     formatError(error) {
-      return error;
+      return error instanceof Error ? error.message : `${error || ''}`;
     },
-    renderLocalStage() {},
-    renderRoomSnapshot() {},
-    renderBridgeSnapshot() {},
+    renderSessionSnapshot() {},
     renderTranscriptList() {},
+    renderSubtitles() {},
     renderDebugSnapshot() {},
     renderAgentStatus() {},
+    renderVoiceSampleState() {},
     refreshActionButtons() {},
+    syncVoiceSampleProfile() {},
+    persistState() {},
     updateRoomStatus() {},
   });
 
-  await controller.syncInterimTranscript('hello');
-  await controller.syncInterimTranscript('hello there');
+  return {
+    controller,
+    state,
+    formState,
+    postCalls,
+  };
+}
 
-  assert.equal(posts[0].url, '/api/bridge/sessions/session-1/utterances/start');
-  assert.equal(posts[1].url, '/api/bridge/sessions/session-1/utterances/partial');
-  assert.equal(posts[1].body.delta, 'hello');
-  assert.equal(posts[2].url, '/api/bridge/sessions/session-1/utterances/partial');
-  assert.equal(posts[2].body.delta, ' there');
+test('prepareLobbySession creates and reuses a direct session while the setup key is unchanged', async () => {
+  const harness = createHarness();
+
+  await harness.controller.prepareLobbySession();
+
+  assert.equal(harness.state.session?.id, 'session-1');
+  assert.equal(harness.state.sessionPreparing, false);
+  assert.deepEqual(
+    harness.postCalls.map((call) => call.url),
+    ['/api/call/sessions', '/api/call/sessions/session-1/setup'],
+  );
+
+  await harness.controller.prepareLobbySession();
+
+  assert.deepEqual(
+    harness.postCalls.map((call) => call.url),
+    ['/api/call/sessions', '/api/call/sessions/session-1/setup'],
+  );
 });
 
-test('pollSession consumes pending actions through the new action endpoints', async () => {
-  const posts = [];
-  const avatarSelections = [];
-  const spoken = [];
+test('prepareLobbySession starts a new session when the call identity changes', async () => {
+  const harness = createHarness();
 
-  globalThis.window = {
-    setTimeout,
-    clearTimeout,
-    setInterval() {
-      return 1;
-    },
-    clearInterval() {},
-    requestAnimationFrame(callback) {
-      callback();
-    },
-  };
+  await harness.controller.prepareLobbySession();
+  harness.formState.participantName = 'Another Human';
+  await harness.controller.prepareLobbySession();
 
-  const state = {
-    runtimeConfig: null,
-    room: null,
-    session: {
-      id: 'session-1',
-      title: 'talking-agent',
-      agent: {
-        label: 'Codex OpenAI',
-        lastSeenAt: null,
-      },
-      metrics: {
-        pendingTurns: 0,
-        unplayedReplies: 0,
-      },
-      turns: [],
-    },
-    sessionPollId: 0,
-    sessionKey: '',
-    sessionPreparing: false,
-    modelLoading: false,
-    processingReplies: false,
-    activeUtteranceId: null,
-    activeUtteranceText: '',
-    preferences: {
-      voiceName: '',
-      speechRate: 1,
-      speechPitch: 1,
-    },
-  };
+  assert.equal(harness.state.session?.id, 'session-2');
+  assert.deepEqual(
+    harness.postCalls.map((call) => call.url),
+    [
+      '/api/call/sessions',
+      '/api/call/sessions/session-1/setup',
+      '/api/call/sessions',
+      '/api/call/sessions/session-2/setup',
+    ],
+  );
+});
 
-  const controller = createSessionController({
-    state,
-    roomLayer: {
-      installSdkLogging() {},
-      attachRoomListeners() {},
-      async disconnectRoom() {},
-      async mintToken() {
-        return { token: 'token' };
-      },
-      async connectRoom() {},
+test('handlePrimaryCallAction requires a WAV production voice sample before starting', async () => {
+  const harness = createHarness({ productionVoiceReady: false });
+
+  await assert.rejects(
+    () => harness.controller.handlePrimaryCallAction(),
+    /Upload a WAV production voice sample before starting the call\./,
+  );
+
+  assert.equal(harness.state.activeCall, false);
+  assert.equal(harness.postCalls.length, 0);
+});
+
+test('handlePrimaryCallAction rejects linked calls that already ended', async () => {
+  const harness = createHarness({
+    launchContext: {
+      mode: 'linked-call',
+      callStatus: 'ended',
     },
-    roomClass: class {},
-    videoPresets: {
-      h720: {
-        resolution: {},
-      },
-    },
-    logLevel: 'info',
-    screenNavigator: {
-      show() {},
-    },
-    humanVoiceLayer: {
-      stopListening() {},
-      destroy() {},
-    },
-    agentVoiceLayer: {
-      destroy() {},
-      getSnapshot() {
-        return { speechSynthesisSupported: true };
-      },
-    },
-    avatarSpeech: {
-      stop() {},
-      getSnapshot() {
-        return { active: false };
-      },
-      async speakText(text, options) {
-        spoken.push({ text, options });
-      },
-    },
-    avatarLayer: {
-      destroy() {},
-      getSnapshot() {
-        return {};
-      },
-    },
-    dom: {
-      connectPromptDialog: null,
-      connectPromptBody: null,
-      localIdentity: { textContent: '' },
-      remoteCount: { textContent: '' },
-      lastAgentReply: { textContent: '' },
-    },
-    stageMap: new Map([['studio', { id: 'studio' }]]),
-    emoteMap: new Map([['focused', { id: 'focused' }]]),
-    selectStage(id) {
-      avatarSelections.push(`stage:${id}`);
-    },
-    selectEmote(id) {
-      avatarSelections.push(`emote:${id}`);
-    },
-    selectGesture(id) {
-      avatarSelections.push(`gesture:${id}`);
-    },
-    collectFormState() {
-      return {
-        livekitUrl: 'ws://127.0.0.1:7880',
-        roomName: 'talking-agent-call',
-        identity: 'human-room-host',
-        participantName: 'Human Caller',
-        enableCamera: true,
-        enableMicrophone: true,
-        bundledModelId: 'bhf-1-2',
-      };
-    },
-    fetchJson: async () => ({
-      session: state.session,
-      pendingActions: [
-        {
-          actionId: 'a1',
-          type: 'anim',
-          stageId: 'studio',
-          emoteId: 'focused',
-          gestureId: 'Thinking',
-        },
-        {
-          actionId: 'a2',
-          type: 'speech',
-          text: 'Working on it.',
-          mood: 'focused',
-        },
-      ],
-    }),
-    postJson: async (url) => {
-      posts.push(url);
-      return { session: state.session };
-    },
-    addLog() {},
-    formatError(error) {
-      return error;
-    },
-    renderLocalStage() {},
-    renderRoomSnapshot() {},
-    renderBridgeSnapshot() {},
-    renderTranscriptList() {},
-    renderDebugSnapshot() {},
-    renderAgentStatus() {},
-    refreshActionButtons() {},
-    updateRoomStatus() {},
   });
 
-  await controller.pollSession();
+  await assert.rejects(
+    () => harness.controller.handlePrimaryCallAction(),
+    /This linked call has already ended\./,
+  );
 
-  assert.deepEqual(avatarSelections, ['stage:studio', 'emote:focused', 'gesture:Thinking']);
-  assert.equal(spoken[0].options.characterId, 'bhf-1-2');
-  assert.equal(spoken[0].options.mood, 'focused');
-  assert.equal(posts[0], '/api/bridge/sessions/session-1/actions/a1/completed');
-  assert.equal(posts[1], '/api/bridge/sessions/session-1/actions/a2/started');
-  assert.equal(posts[2], '/api/bridge/sessions/session-1/actions/a2/finished');
+  assert.equal(harness.state.activeCall, false);
+  assert.equal(harness.postCalls.length, 0);
 });

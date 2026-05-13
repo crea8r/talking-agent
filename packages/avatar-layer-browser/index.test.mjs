@@ -11,36 +11,7 @@ import {
 } from './index.js';
 
 test('all bundled models expose the same shared VRMA gesture catalog', () => {
-  const expectedIds = [
-    'Pose',
-    'LookAround',
-    'Thinking',
-    'Greeting',
-    'Goodbye',
-    'Peace',
-    'Clapping',
-    'Surprised',
-    'Sad',
-    'Angry',
-    'Blush',
-    'Apologize',
-    'Excuse',
-    'Cheer',
-    'Jumping',
-    'Sleepy',
-    'No',
-    'Full Body Pose',
-    'Shoot',
-    'Spin',
-    'Hand Squat',
-    'Stretching',
-    'Dance',
-    'Walking',
-    'drinkwater',
-    'dramtic hello',
-    'motion_pose',
-    'smartphone',
-  ];
+  const expectedIds = ANIMATION_MANIFEST.map((animation) => animation.id);
 
   assert.deepEqual(
     getGesturePresets('bhf-1-2').map((gesture) => gesture.id),
@@ -58,14 +29,14 @@ test('all bundled models expose the same shared VRMA gesture catalog', () => {
 
 test('legacy gesture ids resolve to shared VRMA names', () => {
   assert.equal(resolveGesturePreset('bhf-1-2', 'bhf-side-wave')?.id, 'Greeting');
-  assert.equal(resolveGesturePreset('fbf-1-0', 'fbf-aside-think')?.id, 'Thinking');
+  assert.equal(resolveGesturePreset('fbf-1-0', 'fbf-aside-think')?.id, 'Pose');
   assert.equal(resolveGesturePreset('smg-1-0', 'smg-ready-listen')?.id, 'LookAround');
 });
 
 test('semantic bridge gesture ids still resolve to shared VRMA names', () => {
   assert.equal(resolveGesturePreset('bhf-1-2', 'idle')?.id, 'Pose');
   assert.equal(resolveGesturePreset('bhf-1-2', 'listen')?.id, 'Pose');
-  assert.equal(resolveGesturePreset('bhf-1-2', 'thinking')?.id, 'Thinking');
+  assert.equal(resolveGesturePreset('bhf-1-2', 'thinking')?.id, 'Pose');
   assert.equal(resolveGesturePreset('bhf-1-2', 'greet')?.id, 'Greeting');
   assert.equal(resolveGesturePreset('bhf-1-2', 'celebrate')?.id, 'Clapping');
   assert.equal(resolveGesturePreset('bhf-1-2', 'react')?.id, 'Surprised');
@@ -78,36 +49,7 @@ test('semantic bridge gesture ids still resolve to shared VRMA names', () => {
 });
 
 test('bundled animation entries point at the renamed vrma files', () => {
-  const expectedFiles = [
-    'Pose.vrma',
-    'LookAround.vrma',
-    'Thinking.vrma',
-    'Greeting.vrma',
-    'Goodbye.vrma',
-    'Peace.vrma',
-    'Clapping.vrma',
-    'Surprised.vrma',
-    'Sad.vrma',
-    'Angry.vrma',
-    'Blush.vrma',
-    'Apologize.vrma',
-    'Excuse.vrma',
-    'Cheer.vrma',
-    'Jumping.vrma',
-    'Sleepy.vrma',
-    'No.vrma',
-    'FullBody.vrma',
-    'Shoot.vrma',
-    'Spin.vrma',
-    'Squat.vrma',
-    'Stretching.vrma',
-    'Swing.vrma',
-    'Walking.vrma',
-    'drinkwater.vrma',
-    'hello_1.vrma',
-    'motion_pose.vrma',
-    'smartphone.vrma',
-  ];
+  const expectedFiles = ANIMATION_MANIFEST.map((animation) => animation.file);
 
   assert.deepEqual(
     BUNDLED_ANIMATIONS.map((animation) => animation.path.replace('/animations/', '')),

@@ -14,7 +14,7 @@ import {
 } from '../../packages/avatar-layer-browser/index.js';
 import {
   createForkedCallExecutor,
-  createIsolatedCodexExecutor,
+  createPersistentCodexMcpWorker,
   listAvailablePlugins,
   resolveDefaultSourceCodexHome,
 } from '../../packages/codex-exec/index.mjs';
@@ -127,7 +127,7 @@ const agentSelf = createAgentSelf({
   rootDir: AGENT_SELF_STATE_DIR,
   appId: 'one-to-one-agent-room',
 });
-const isolatedCodexExecutor = createIsolatedCodexExecutor({
+const directCodexExecutor = createPersistentCodexMcpWorker({
   rootDir: CODEX_SESSION_ROOT,
   sourceCodexHome: CODEX_SOURCE_HOME,
   codexCommand: CODEX_COMMAND,
@@ -142,7 +142,7 @@ const forkedCallExecutor = createForkedCallExecutor({
   timeoutMs: Number.isFinite(CODEX_TIMEOUT_MS) ? CODEX_TIMEOUT_MS : 600_000,
 });
 const directCodexAgent = createDirectCodexAgent({
-  executor: isolatedCodexExecutor,
+  executor: directCodexExecutor,
   linkedCallExecutor: {
     startCallPrompt: forkedCallExecutor.startCallPrompt,
     runCallPrompt: forkedCallExecutor.runCallPrompt,
@@ -195,7 +195,7 @@ async function syncSessionCodexHomeCapabilities(session = {}) {
     return;
   }
 
-  await isolatedCodexExecutor.syncSessionCapabilities({
+  await directCodexExecutor.syncSessionCapabilities({
     sessionId: session.id,
     capabilityPolicy,
   });
@@ -609,7 +609,7 @@ const server = createServer(async (req, res) => {
         sessionRoute: '/api/call/sessions',
         stateRoute: '/api/codex/state',
         pluginsRoute: '/api/codex/plugins',
-        turnFields: ['spokenText', 'subtitle', 'mood', 'animationSequence'],
+        turnFields: ['spokenText', 'mood', 'animationSequence'],
       },
       workspaceSetup: {
         route: '/api/workspace-setup',
@@ -925,6 +925,7 @@ const server = createServer(async (req, res) => {
         sessionId: decodeURIComponent(stateMatch[1]),
         state: body.state,
         reason: body.reason,
+        skipWarmup: body.skipWarmup === true,
       });
       await persistSessionPayload(payload);
       sendJson(res, 200, payload);
@@ -971,6 +972,28 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, {
         ok: false,
         error: error instanceof Error ? error.message : 'Unable to interrupt the active reply.',
+      });
+    }
+    return;
+  }
+
+  const startupGreetingMatch = url.pathname.match(
+    /^\/api\/call\/sessions\/([^/]+)\/startup-greeting$/,
+  );
+  if (req.method === 'POST' && startupGreetingMatch) {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      const payload = await sessionRuntime.submitHumanTurn({
+        sessionId: decodeURIComponent(startupGreetingMatch[1]),
+        text: `${body?.text || 'Hello.'}`.trim() || 'Hello.',
+        source: 'startup',
+      });
+      await persistSessionPayload(payload);
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to create the startup greeting.',
       });
     }
     return;

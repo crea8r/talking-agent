@@ -171,7 +171,7 @@ export function buildCallSessionPayload(
       callMode: 'direct-codex-voice-avatar',
       codexContract: {
         turnRoute: '/api/call/sessions/:id/turns',
-        turnFields: ['spokenText', 'subtitle', 'mood', 'animationSequence'],
+        turnFields: ['spokenText', 'mood', 'animationSequence'],
         subtitlePolicy: 'show human interim/final subtitles plus browser-driven agent thinking text',
       },
       runtimeHints: {

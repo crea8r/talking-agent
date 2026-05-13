@@ -55,6 +55,38 @@ function buildAgentIdentityPromptLines(session = {}) {
   return lines;
 }
 
+function formatCapabilityName(value = '') {
+  const cleaned = normalizeString(value)
+    .replace(/@.+$/, '')
+    .split('/')
+    .at(-1);
+  return cleaned.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function buildCapabilitySummaryLines(session = {}) {
+  const policy = getCapabilityPolicy(session);
+  const pluginNames = Array.from(
+    new Set(
+      (Array.isArray(policy.enabledPluginIds) ? policy.enabledPluginIds : [])
+        .map((value) => formatCapabilityName(value))
+        .filter(Boolean),
+    ),
+  );
+  const lines = [];
+
+  if (pluginNames.length) {
+    lines.push(`Connected tools and apps available: ${pluginNames.join(', ')}.`);
+  }
+  if (policy.enableControlComputer) {
+    lines.push('Computer control tools available: shell_tool and shell_snapshot.');
+  }
+  if (policy.enableComplexTasks) {
+    lines.push('Complex task tools available: multi_agent, multi_agent_v2, and enable_fanout.');
+  }
+
+  return lines;
+}
+
 function formatHistory(turns = [], maxTurns = 6) {
   return turns
     .slice(-maxTurns)
@@ -74,28 +106,29 @@ function formatHistory(turns = [], maxTurns = 6) {
     .join('\n');
 }
 
-function formatGestureCatalog(gestures = []) {
-  return gestures
-    .map((gesture) => {
-      const description = normalizeString(gesture.description || gesture.intent || '');
-      const bestFor = Array.isArray(gesture.bestFor) ? gesture.bestFor.slice(0, 4).join(', ') : '';
-      const suffix = [description, bestFor ? `best for ${bestFor}` : ''].filter(Boolean).join('; ');
-      return `- ${gesture.id}${suffix ? `: ${suffix}` : ''}`;
-    })
-    .join('\n');
+function formatGestureIds(gestures = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(gestures) ? gestures : [])
+        .map((gesture) => normalizeString(gesture?.id))
+        .filter(Boolean),
+    ),
+  ).join(', ');
 }
 
-function buildReplyContractText() {
+function buildReplyContractText({ compact = false } = {}) {
+  const shape = compact
+    ? '{"spokenText":"...","mood":"warm","animationSequence":[],"followUps":[]}'
+    : '{"spokenText":"...","mood":"warm","animationSequence":[{"gestureId":"Greeting","atRatio":0.0}],"followUps":[{"spokenText":"...","mood":"warm","pauseMs":1200,"animationSequence":[{"gestureId":"Pose","atRatio":0.2}]}]}';
   return [
     'Return exactly one JSON object and nothing else.',
     'Use this shape:',
-    '{"spokenText":"...","subtitle":"...","mood":"warm","animationSequence":[{"gestureId":"Greeting","atRatio":0.0}],"followUps":[{"spokenText":"...","subtitle":"...","mood":"warm","pauseMs":1200,"animationSequence":[{"gestureId":"Pose","atRatio":0.2}]}]}',
+    shape,
     'Rules:',
     '- spokenText is required and should be natural spoken English only.',
-    '- subtitle is required and should match spokenText closely.',
     '- mood must be one of neutral, warm, focused, or playful.',
     '- animationSequence may contain 0 to 3 beats.',
-    '- Each beat must use only a gestureId from the available gesture list and an atRatio between 0 and 1.',
+    '- Each beat must use only a valid gestureId and an atRatio between 0 and 1.',
     '- followUps is optional and may contain 0 to 7 additional spoken segments.',
     '- Use followUps when the human explicitly asks for spaced delivery, multiple separate replies, or a countdown-like sequence.',
     '- Also use followUps when the answer is a long list, plan, or explanation that would sound too slow or dense as one block.',
@@ -114,25 +147,38 @@ function isLinkedCallLaunch(launch = {}) {
 }
 
 export function buildInitialTurnPrompt({ session, turn } = {}) {
-  const agentSetup = session?.metadata?.agentSetup || {};
   const historyBlock = formatHistory(
     (session?.turns || []).filter((entry) => entry.id !== turn?.id && entry.agentReply),
   );
-  const gestureBlock = formatGestureCatalog(session?.avatar?.gestureCatalog || []);
+  const gestureIds = formatGestureIds(session?.avatar?.gestureCatalog || []);
   const identityBlock = buildAgentIdentityPromptLines(session);
+  const capabilitySummary = buildCapabilitySummaryLines(session);
 
   return [
-    'You are the speaking avatar agent inside the one-to-one agent room.',
-    'This is a live voice call with one human and one agent avatar.',
-    'The human cannot see internal reasoning. Reply naturally, briefly, and conversationally.',
-    'Keep each reply to one to three short sentences.',
+    'You are the speaking avatar agent in a live voice call.',
     ...identityBlock,
+    'This is a live conversation with one human and one agent avatar.',
+    'This startup turn establishes the contract for the rest of the call. Keep that contract in memory for later turns.',
+    'The human usually does not need your internal reasoning, but you may briefly surface it when that makes communication clearer.',
+    'Speak naturally, briefly, and conversationally.',
+    'Normal replies should be one to three short sentences.',
+    'Action policy:',
+    '- If the human asks for current external information, connected-app data, or a real-world action, use the relevant tool or app before finalizing your answer.',
+    '- Do not pretend an action was completed.',
+    '- Do not say you saved, booked, checked, opened, searched, or created something unless a tool result in this turn confirms it.',
+    '- If one required detail is missing, ask exactly one short follow-up question.',
+    '- If a tool fails, say the concrete blocker briefly.',
+    '- Prefer acting over talking-about-acting.',
+    'Communication policy for actions:',
+    '- When you start a real tool or connected-app action, briefly say what you are about to do.',
+    '- If the action takes a while, briefly say the next meaningful status change.',
+    '- When an action is blocked, say the blocker plainly.',
+    '- Keep commentary short and only use it when it improves the human’s understanding of what is happening.',
+    ...capabilitySummary,
     `Character model: ${normalizeString(session?.avatar?.activeModelLabel || session?.avatar?.activeModelId || 'Default avatar')}`,
-    `Voice sample file: ${normalizeString(agentSetup.voiceSampleFileName || 'unknown')}`,
-    `Voice sample speaker: ${normalizeString(agentSetup.voiceSampleSpeakerLabel || 'unknown')}`,
     buildReplyContractText(),
-    gestureBlock ? 'Available gesture ids:' : '',
-    gestureBlock,
+    gestureIds ? `Valid gesture ids: ${gestureIds}` : '',
+    gestureIds ? 'Use Greeting for hello, Goodbye for signoff, and Pose when you need a neutral fallback.' : '',
     historyBlock ? 'Recent conversation:' : '',
     historyBlock,
     `Human: ${normalizeString(turn?.transcript)}`,
@@ -141,68 +187,59 @@ export function buildInitialTurnPrompt({ session, turn } = {}) {
 }
 
 export function buildResumeTurnPrompt({ session, turn } = {}) {
-  const gestureBlock = formatGestureCatalog(session?.avatar?.gestureCatalog || []);
-  const identityBlock = buildAgentIdentityPromptLines(session);
+  const gestureIds = formatGestureIds(session?.avatar?.gestureCatalog || []);
 
   return [
     'Continue the same live voice call.',
+    'Use the established session contract from startup.',
     'Reply naturally, briefly, and conversationally.',
-    ...identityBlock,
-    buildReplyContractText(),
-    gestureBlock ? 'Available gesture ids:' : '',
-    gestureBlock,
-    `Current character model: ${normalizeString(session?.avatar?.activeModelLabel || session?.avatar?.activeModelId || 'Default avatar')}`,
+    'Important action rule:',
+    '- If this request needs current external data or a connected-app action, use the relevant tool or app before finalizing your answer.',
+    '- Do not give a talk-only answer when the human is asking you to do something real.',
+    '- Only three valid outcomes exist: you did the action and report the result, you ask one short missing-detail question, or you report the exact tool failure or blocker.',
+    '- While performing a real action, keep the human informed with short commentary only at meaningful milestones.',
+    buildReplyContractText({ compact: true }),
+    gestureIds ? `Valid gesture ids: ${gestureIds}` : '',
     `Human: ${normalizeString(turn?.transcript)}`,
     'Agent JSON:',
   ].filter(Boolean).join('\n');
 }
 
 export function buildSpeculativeTurnPrompt({ session, transcript = '' } = {}) {
-  const agentSetup = session?.metadata?.agentSetup || {};
-  const historyBlock = formatHistory(session?.turns || []);
-  const gestureBlock = formatGestureCatalog(session?.avatar?.gestureCatalog || []);
-  const identityBlock = buildAgentIdentityPromptLines(session);
+  const gestureIds = formatGestureIds(session?.avatar?.gestureCatalog || []);
 
   return [
-    'You are the speaking avatar agent inside the one-to-one agent room.',
-    'This is a live voice call with one human and one agent avatar.',
+    'Continue the same live voice call.',
+    'Use the established session contract from startup.',
     'You are hearing a partial transcript while the human may still be speaking.',
     'Reply with one very short spoken line that keeps the exchange natural and engaged.',
     'Do not give a final answer, do not claim the work is complete, and do not make irreversible commitments.',
     'Prefer low-commitment acknowledgments, framing, or a brief preview of direction.',
-    ...identityBlock,
-    `Character model: ${normalizeString(session?.avatar?.activeModelLabel || session?.avatar?.activeModelId || 'Default avatar')}`,
-    `Voice sample file: ${normalizeString(agentSetup.voiceSampleFileName || 'unknown')}`,
-    `Voice sample speaker: ${normalizeString(agentSetup.voiceSampleSpeakerLabel || 'unknown')}`,
-    buildReplyContractText(),
-    gestureBlock ? 'Available gesture ids:' : '',
-    gestureBlock,
-    historyBlock ? 'Recent conversation:' : '',
-    historyBlock,
+    'Do not start tools, connected-app actions, or long plans from a speculative turn.',
+    buildReplyContractText({ compact: true }),
+    gestureIds ? `Valid gesture ids: ${gestureIds}` : '',
     `Human partial transcript so far: ${normalizeString(transcript)}`,
     'Agent JSON:',
   ].filter(Boolean).join('\n');
 }
 
 function buildWarmupPrompt({ session } = {}) {
-  const agentSetup = session?.metadata?.agentSetup || {};
-  const gestureBlock = formatGestureCatalog(session?.avatar?.gestureCatalog || []);
+  const gestureIds = formatGestureIds(session?.avatar?.gestureCatalog || []);
   const identityBlock = buildAgentIdentityPromptLines(session);
+  const capabilitySummary = buildCapabilitySummaryLines(session);
 
   return [
     'You are preparing for the next live voice call turn inside the one-to-one agent room.',
     'No human has spoken yet.',
-    'Load the spoken agent identity, visual character, and response contract for the upcoming call.',
+    'Load the spoken agent identity, visual character, action policy, and response contract for the upcoming call.',
     'Do not greet the human, ask a question, or continue the conversation.',
     ...identityBlock,
+    ...capabilitySummary,
     `Character model: ${normalizeString(session?.avatar?.activeModelLabel || session?.avatar?.activeModelId || 'Default avatar')}`,
-    `Voice sample file: ${normalizeString(agentSetup.voiceSampleFileName || 'unknown')}`,
-    `Voice sample speaker: ${normalizeString(agentSetup.voiceSampleSpeakerLabel || 'unknown')}`,
     buildReplyContractText(),
-    gestureBlock ? 'Available gesture ids:' : '',
-    gestureBlock,
+    gestureIds ? `Valid gesture ids: ${gestureIds}` : '',
     'Return exactly this JSON and nothing else:',
-    '{"spokenText":"Ready.","subtitle":"Ready.","mood":"warm","animationSequence":[{"gestureId":"Pose","atRatio":0.0}]}',
+    '{"spokenText":"Ready.","mood":"warm","animationSequence":[{"gestureId":"Pose","atRatio":0.0}]}',
   ].filter(Boolean).join('\n');
 }
 
@@ -439,6 +476,13 @@ export function createDirectCodexAgent({
     return executor.checkHealth();
   }
 
+  function subscribeSessionEvents({ sessionId, listener } = {}) {
+    if (typeof executor.subscribeSessionEvents !== 'function') {
+      return () => {};
+    }
+    return executor.subscribeSessionEvents({ sessionId, listener });
+  }
+
   async function resetSession({ sessionId } = {}) {
     await abortSessionWarmup({
       sessionId,
@@ -518,6 +562,20 @@ export function createDirectCodexAgent({
     return aborted === true;
   }
 
+  async function preemptSessionWarmupForTurn(sessionId = '') {
+    const cleanedSessionId = normalizeString(sessionId);
+    if (!cleanedSessionId || !sessionWarmups.has(cleanedSessionId)) {
+      return false;
+    }
+
+    await abortSessionWarmup({
+      sessionId: cleanedSessionId,
+      reason: 'A human turn arrived before the hidden warmup finished.',
+    }).catch(() => {});
+    await executor.resetSession?.({ sessionId: cleanedSessionId }).catch(() => {});
+    return true;
+  }
+
   async function startSpeculativeReply({ session, transcript } = {}) {
     if (typeof executor.startPrompt !== 'function' || typeof executor.resetSession !== 'function') {
       throw new Error('Speculative replies require an isolated executor with startPrompt and resetSession.');
@@ -564,7 +622,10 @@ export function createDirectCodexAgent({
         workspaceRoot,
       });
     } else {
-      await waitForSessionWarmup(session?.id);
+      const preemptedWarmup = await preemptSessionWarmupForTurn(session?.id);
+      if (!preemptedWarmup) {
+        await waitForSessionWarmup(session?.id);
+      }
       const initialPrompt = buildInitialTurnPrompt({ session, turn });
       const resumePrompt = buildResumeTurnPrompt({ session, turn });
       handle = await executor.startPrompt({
@@ -623,6 +684,7 @@ export function createDirectCodexAgent({
   return {
     abortSessionWarmup,
     checkHealth,
+    subscribeSessionEvents,
     startSessionWarmup,
     resetSession,
     startReply,

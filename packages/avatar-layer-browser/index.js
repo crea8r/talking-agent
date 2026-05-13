@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
   VRMExpressionPresetName,
   VRMHumanBoneName,
@@ -126,7 +127,7 @@ export const STAGES = [
   {
     id: 'neon-loft',
     label: 'Neon Loft',
-    note: 'Cyan key light with a magenta rim for a sci fi control room feel.',
+    note: 'Cyan neon lighting with deeper contrast and tighter shadows for a stylized control room read.',
     shell: {
       '--scene-bg-start': '#070d19',
       '--scene-bg-end': '#010308',
@@ -136,25 +137,27 @@ export const STAGES = [
       '--scene-pulse-b': 'rgba(91, 239, 255, 0.18)',
     },
     lights: {
-      exposure: 1.12,
+      exposure: 1.02,
       ambientSky: '#8ebfff',
       ambientGround: '#0a0c13',
-      ambientIntensity: 0.82,
+      ambientIntensity: 0.58,
       key: '#8cf6ff',
-      keyIntensity: 2.1,
+      keyIntensity: 2.35,
       keyPosition: [1.55, 1.9, 2.7],
       fill: '#ff8bc5',
-      fillIntensity: 1.1,
+      fillIntensity: 0.72,
       fillPosition: [-1.4, 1.15, 1.45],
       rim: '#6f7cff',
-      rimIntensity: 1.45,
+      rimIntensity: 1.12,
       rimPosition: [-1.25, 2.15, -2.2],
+      environmentIntensity: 0.94,
+      shadowOpacity: 0.24,
     },
   },
   {
     id: 'sunset-studio',
     label: 'Sunset Studio',
-    note: 'Warmer daylight read with softer contrast and cleaner skin light.',
+    note: 'Warm daylight portrait lighting with more contrast, cleaner skin light, and a grounded shadow read.',
     shell: {
       '--scene-bg-start': '#1c1423',
       '--scene-bg-end': '#080b14',
@@ -164,25 +167,57 @@ export const STAGES = [
       '--scene-pulse-b': 'rgba(118, 213, 255, 0.14)',
     },
     lights: {
-      exposure: 1.08,
+      exposure: 0.96,
       ambientSky: '#ffd4b1',
       ambientGround: '#191018',
-      ambientIntensity: 0.92,
+      ambientIntensity: 0.52,
       key: '#ffd6a8',
-      keyIntensity: 1.9,
-      keyPosition: [1.6, 1.85, 2.5],
+      keyIntensity: 2.45,
+      keyPosition: [1.42, 2.08, 2.28],
       fill: '#8ed6ff',
-      fillIntensity: 0.9,
-      fillPosition: [-1.5, 1.2, 1.7],
+      fillIntensity: 0.5,
+      fillPosition: [-1.72, 1.12, 1.28],
       rim: '#ff9b8c',
-      rimIntensity: 1.15,
-      rimPosition: [-1.1, 2.0, -2.1],
+      rimIntensity: 0.76,
+      rimPosition: [-1.02, 2.1, -2.18],
+      environmentIntensity: 1.08,
+      shadowOpacity: 0.32,
+    },
+  },
+  {
+    id: 'portrait-studio',
+    label: 'Portrait Studio',
+    note: 'Neutral portrait lighting with stronger key-to-fill contrast and sharper texture read.',
+    shell: {
+      '--scene-bg-start': '#151823',
+      '--scene-bg-end': '#05070d',
+      '--scene-grid': 'rgba(226, 232, 246, 0.06)',
+      '--scene-glow': 'rgba(178, 197, 235, 0.1)',
+      '--scene-pulse-a': 'rgba(255, 232, 206, 0.1)',
+      '--scene-pulse-b': 'rgba(173, 201, 255, 0.08)',
+    },
+    lights: {
+      exposure: 0.94,
+      ambientSky: '#dce7f8',
+      ambientGround: '#24232a',
+      ambientIntensity: 0.44,
+      key: '#fff0dc',
+      keyIntensity: 2.68,
+      keyPosition: [1.26, 2.14, 2.2],
+      fill: '#c6dbff',
+      fillIntensity: 0.38,
+      fillPosition: [-1.82, 1.08, 1.18],
+      rim: '#fff8ee',
+      rimIntensity: 0.62,
+      rimPosition: [-0.92, 2.22, -2.08],
+      environmentIntensity: 1.12,
+      shadowOpacity: 0.36,
     },
   },
   {
     id: 'midnight-hangar',
     label: 'Midnight Hangar',
-    note: 'Cooler blue steel lighting with harder edge separation and less warmth.',
+    note: 'Cool steel lighting with stronger edge separation, denser contrast, and less ambient wash.',
     shell: {
       '--scene-bg-start': '#060914',
       '--scene-bg-end': '#010205',
@@ -192,19 +227,21 @@ export const STAGES = [
       '--scene-pulse-b': 'rgba(122, 233, 255, 0.14)',
     },
     lights: {
-      exposure: 1,
+      exposure: 0.9,
       ambientSky: '#89b0ff',
       ambientGround: '#090a11',
-      ambientIntensity: 0.74,
+      ambientIntensity: 0.42,
       key: '#8fd8ff',
-      keyIntensity: 1.75,
-      keyPosition: [1.3, 1.8, 2.4],
+      keyIntensity: 2.2,
+      keyPosition: [1.24, 2.02, 2.24],
       fill: '#6f81ff',
-      fillIntensity: 0.82,
-      fillPosition: [-1.45, 1.0, 1.5],
+      fillIntensity: 0.46,
+      fillPosition: [-1.56, 1.0, 1.28],
       rim: '#bfe2ff',
-      rimIntensity: 1.3,
+      rimIntensity: 0.94,
       rimPosition: [-1.2, 2.2, -2.3],
+      environmentIntensity: 0.92,
+      shadowOpacity: 0.28,
     },
   },
 ];
@@ -428,10 +465,17 @@ export function resolveGesturePreset(
 }
 
 export const MOUTH_CUES = ['rest', 'aa', 'ih', 'ou', 'ee', 'oh'];
+export const DEFAULT_CAMERA_DISTANCE = 1;
+export const MIN_CAMERA_DISTANCE = 0.85;
+export const MAX_CAMERA_DISTANCE = 2;
 
 export const DEFAULT_AVATAR_FEATURE_FLAGS = Object.freeze({
   smoothGestureTransitions: true,
 });
+
+export function normalizeAvatarCameraDistance(value = DEFAULT_CAMERA_DISTANCE) {
+  return clamp(Number(value), MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE);
+}
 
 export function normalizeAvatarFeatureFlags(featureFlags = {}) {
   return {
@@ -480,6 +524,7 @@ export function createAvatarLayer({
   initialStageId = STAGES[0].id,
   initialEmoteId = EMOTES[0].id,
   initialGestureId = GESTURES[0].id,
+  initialCameraDistance = DEFAULT_CAMERA_DISTANCE,
   initialEnergy = 1,
   featureFlags = DEFAULT_AVATAR_FEATURE_FLAGS,
   pointerMode = 'look',
@@ -502,6 +547,7 @@ export function createAvatarLayer({
     currentMouthCue: 'rest',
     speaking: false,
     energy: clamp(initialEnergy, 0.65, 1.5),
+    cameraDistance: normalizeAvatarCameraDistance(initialCameraDistance),
     lookTargetLabel: 'center',
     isLoadingModel: false,
     poseSampleTimeMs: null,
@@ -674,6 +720,12 @@ export function createAvatarLayer({
     return getSnapshot();
   }
 
+  function setCameraDistance(distance = DEFAULT_CAMERA_DISTANCE) {
+    state.cameraDistance = normalizeAvatarCameraDistance(distance);
+    runtime.alignCameraToRig();
+    return getSnapshot();
+  }
+
   function setMouthCue(mouthCue) {
     state.currentMouthCue = MOUTH_CUES.includes(mouthCue) ? mouthCue : 'rest';
     return getSnapshot();
@@ -787,6 +839,7 @@ export function createAvatarLayer({
       mouthCue: state.currentMouthCue,
       speaking: state.speaking,
       energy: state.energy,
+      cameraDistance: state.cameraDistance,
       displayMode: state.displayMode,
       lookTargetLabel: state.lookTargetLabel,
       poseSampleTimeMs: state.poseSampleTimeMs,
@@ -810,6 +863,7 @@ export function createAvatarLayer({
     playPreviewClip,
     recenterGaze,
     resumePreviewClip,
+    setCameraDistance,
     setDisplayMode,
     setEmote,
     setEnergy: applyEnergy,
@@ -850,6 +904,8 @@ function createRendererRuntime({
   renderer.toneMappingExposure = 1.08;
   renderer.setClearColor(0x000000, 0);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   camera.position.set(0, 1.3, 1.62);
 
@@ -860,17 +916,45 @@ function createRendererRuntime({
   const lightTarget = new THREE.Object3D();
   const modelPivot = new THREE.Group();
   const lookTarget = new THREE.Object3D();
+  const shadowCatcher = new THREE.Mesh(
+    new THREE.CircleGeometry(2.5, 56),
+    new THREE.ShadowMaterial({
+      opacity: 0.26,
+    }),
+  );
+  const pmremGenerator = new THREE.PMREMGenerator(renderer);
+  const roomEnvironment = new RoomEnvironment();
+  const environmentTarget = pmremGenerator.fromScene(roomEnvironment, 0.04);
+
+  scene.environment = environmentTarget.texture;
+  shadowCatcher.rotation.x = -Math.PI * 0.5;
+  shadowCatcher.position.set(0, 0.002, 0);
+  shadowCatcher.receiveShadow = true;
+  shadowCatcher.renderOrder = -1;
+
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(1536, 1536);
+  keyLight.shadow.camera.near = 0.6;
+  keyLight.shadow.camera.far = 7;
+  keyLight.shadow.camera.left = -2;
+  keyLight.shadow.camera.right = 2;
+  keyLight.shadow.camera.top = 2.4;
+  keyLight.shadow.camera.bottom = -0.6;
+  keyLight.shadow.bias = -0.0004;
+  keyLight.shadow.normalBias = 0.03;
+  keyLight.shadow.radius = 2.5;
 
   lightTarget.position.set(0, 1.2, 0);
   keyLight.target = lightTarget;
   fillLight.target = lightTarget;
   rimLight.target = lightTarget;
 
-  scene.add(hemiLight, keyLight, fillLight, rimLight, lightTarget, modelPivot, lookTarget);
+  scene.add(hemiLight, keyLight, fillLight, rimLight, lightTarget, shadowCatcher, modelPivot, lookTarget);
 
   const runtime = {
     camera,
     currentVRM: null,
+    alignCameraToRig,
     rig: null,
     animation: {
       activeAction: null,
@@ -949,6 +1033,11 @@ function createRendererRuntime({
     stageShell?.removeEventListener('pointerleave', handlePointerLeave);
 
     clearCurrentVRM();
+    environmentTarget.dispose();
+    pmremGenerator.dispose();
+    roomEnvironment.dispose?.();
+    shadowCatcher.geometry.dispose();
+    shadowCatcher.material.dispose();
 
     renderer.dispose();
   }
@@ -1064,6 +1153,10 @@ function createRendererRuntime({
     runtime.blink.nextAt = performance.now() + 1200;
     runtime.display.skinnedMeshes = [];
     vrm.scene.traverse((object) => {
+      if (object.isMesh) {
+        object.castShadow = true;
+      }
+
       if (object.isSkinnedMesh) {
         runtime.display.skinnedMeshes.push(object);
       }
@@ -1301,6 +1394,8 @@ function createRendererRuntime({
   function applyStageLighting(stage) {
     const { lights } = stage;
     renderer.toneMappingExposure = lights.exposure;
+    scene.environmentIntensity = lights.environmentIntensity ?? 1;
+    shadowCatcher.material.opacity = lights.shadowOpacity ?? 0.26;
     hemiLight.color.set(lights.ambientSky);
     hemiLight.groundColor.set(lights.ambientGround);
     hemiLight.intensity = lights.ambientIntensity;
@@ -1319,6 +1414,26 @@ function createRendererRuntime({
     const root = vrm.scene;
     root.traverse((object) => {
       object.frustumCulled = false;
+      if (!object.isMesh) {
+        return;
+      }
+
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      materials.filter(Boolean).forEach((material) => {
+        [
+          material.map,
+          material.normalMap,
+          material.roughnessMap,
+          material.metalnessMap,
+          material.emissiveMap,
+          material.aoMap,
+        ]
+          .filter(Boolean)
+          .forEach((texture) => {
+            texture.anisotropy = Math.max(texture.anisotropy || 1, 8);
+            texture.needsUpdate = true;
+          });
+      });
     });
 
     const bounds = new THREE.Box3().setFromObject(root);
@@ -1384,8 +1499,9 @@ function createRendererRuntime({
   }
 
   function alignCameraToRig() {
+    const cameraDistance = normalizeAvatarCameraDistance(state.cameraDistance);
     if (!runtime.rig?.rawHead || !runtime.rig.rawChest) {
-      camera.position.set(0, 1.3, 1.62);
+      camera.position.set(0, 1.3, clamp(1.62 * cameraDistance, 1.18, 2.3));
       camera.lookAt(0, 1.18, 0);
       return;
     }
@@ -1400,9 +1516,11 @@ function createRendererRuntime({
       0.04,
     );
     const bustHeight = Math.max(0.75, runtime.rig.headWorld.y - runtime.rig.chestWorld.y + 0.55);
-    const distance = (bustHeight * 0.5) / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * 1.1;
+    const fitDistance =
+      (bustHeight * 0.5) / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * 1.1;
+    const distance = clamp(fitDistance * cameraDistance, 1.12, 2.45);
 
-    camera.position.set(0.02, target.y + 0.03, Math.min(2, Math.max(1.28, distance)));
+    camera.position.set(0.02, target.y + 0.03, distance);
     camera.lookAt(target);
   }
 

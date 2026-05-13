@@ -446,6 +446,11 @@ export function bindAppEvents({
     persistState();
   });
 
+  dom.cameraDistanceInput?.addEventListener('input', () => {
+    avatarController.setCameraDistance?.(Number(dom.cameraDistanceInput.value));
+    persistState();
+  });
+
   dom.continuitySettingsOpen?.addEventListener('click', () => {
     openContinuitySettings();
   });

@@ -146,6 +146,30 @@
               </label>
             </div>
 
+            <div class="setup-control">
+              <div class="setup-control-head">
+                <label for="camera-distance-input" class="setup-control-label">Framing</label>
+                <output id="camera-distance-value" class="setup-action-timer" for="camera-distance-input">
+                  100%
+                </output>
+              </div>
+              <input
+                id="camera-distance-input"
+                class="setup-range"
+                name="camera-distance-input"
+                type="range"
+                min="0.85"
+                max="2"
+                step="0.05"
+                value="1"
+              />
+              <div class="setup-range-scale" aria-hidden="true">
+                <span>Closer</span>
+                <span>Farther</span>
+              </div>
+              <p class="setup-range-hint">Pull the character closer to camera or give it more room in frame.</p>
+            </div>
+
             <section class="setup-control setup-control--continuity">
               <div class="setup-control-head">
                 <span class="setup-control-label">Settings</span>
@@ -215,8 +239,19 @@
                   <p id="call-empty-state-detail" class="call-empty-detail">Ready to start</p>
                 </div>
                 <div id="call-stage-loading" class="call-stage-loading" hidden>
-                  <span class="call-stage-spinner" aria-hidden="true"></span>
-                  <span id="call-stage-loading-label" class="call-stage-loading-label">Loading</span>
+                  <div class="call-stage-loading-card">
+                    <div class="call-stage-loading-visual" aria-hidden="true">
+                      <span class="call-stage-loading-ring"></span>
+                      <span class="call-stage-spinner"></span>
+                    </div>
+                    <p id="call-stage-loading-label" class="call-stage-loading-label">Loading</p>
+                    <p id="call-stage-loading-countdown" class="call-stage-loading-countdown" hidden>
+                      Est. 0:45
+                    </p>
+                    <p id="call-stage-loading-tip" class="call-stage-loading-tip" hidden>
+                      Tip: keep your first question short and direct.
+                    </p>
+                  </div>
                 </div>
               </div>
               <div class="call-self-cluster" hidden>
@@ -286,8 +321,7 @@
                 aria-live="polite"
                 hidden
               >
-                <span class="call-deferred-dot" aria-hidden="true"></span>
-                <span id="call-deferred-time" class="call-deferred-time"></span>
+                <div id="call-deferred-list" class="call-deferred-list"></div>
               </div>
               <div class="call-controls-stack">
                 <section

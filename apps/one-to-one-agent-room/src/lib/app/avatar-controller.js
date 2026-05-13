@@ -1,5 +1,20 @@
 import { renderSelectOptions } from '../../ui/render.js';
 
+const DEFAULT_CAMERA_DISTANCE = 1;
+
+function normalizeCameraDistance(value) {
+  const nextValue = Number(value);
+  if (!Number.isFinite(nextValue)) {
+    return DEFAULT_CAMERA_DISTANCE;
+  }
+
+  return Math.min(2, Math.max(0.85, nextValue));
+}
+
+function formatCameraDistanceValue(value) {
+  return `${Math.round(normalizeCameraDistance(value) * 100)}%`;
+}
+
 export function createAvatarController({
   dom,
   state,
@@ -29,6 +44,7 @@ export function createAvatarController({
         initialStageId: state.preferences.stageId,
         initialEmoteId: state.preferences.emoteId,
         initialGestureId: state.preferences.gestureId,
+        initialCameraDistance: state.preferences.cameraDistance,
         featureFlags: {
           smoothGestureTransitions: state.preferences.smoothGestureTransitions !== false,
         },
@@ -62,6 +78,7 @@ export function createAvatarController({
       mouthCue: 'rest',
       speaking: false,
       energy: 1,
+      cameraDistance: normalizeCameraDistance(state.preferences.cameraDistance),
       lookTargetLabel: 'center',
       error: error instanceof Error ? error.message : 'Avatar renderer failed to start.',
     };
@@ -94,6 +111,10 @@ export function createAvatarController({
         return this.getSnapshot();
       },
       setFeatureFlags() {
+        return this.getSnapshot();
+      },
+      setCameraDistance(distance) {
+        fallbackState.cameraDistance = normalizeCameraDistance(distance);
         return this.getSnapshot();
       },
       destroy() {},
@@ -232,6 +253,22 @@ export function createAvatarController({
     return nextEnabled;
   }
 
+  function setCameraDistance(distance, { persist = false } = {}) {
+    const nextDistance = normalizeCameraDistance(distance);
+    state.preferences.cameraDistance = nextDistance;
+    if (dom.cameraDistanceInput) {
+      dom.cameraDistanceInput.value = nextDistance.toFixed(2);
+    }
+    if (dom.cameraDistanceValue) {
+      dom.cameraDistanceValue.textContent = formatCameraDistanceValue(nextDistance);
+    }
+    avatarLayer.setCameraDistance?.(nextDistance);
+    if (persist) {
+      persistState();
+    }
+    return nextDistance;
+  }
+
   function refreshSceneNote() {
     if (!dom.sceneNote) {
       return;
@@ -273,6 +310,7 @@ export function createAvatarController({
     flushEarlyBootIssues,
     loadModel,
     selectBundledModel,
+    setCameraDistance,
     selectStage,
     selectEmote,
     selectGesture,

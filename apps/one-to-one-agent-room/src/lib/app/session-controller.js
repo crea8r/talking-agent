@@ -30,9 +30,22 @@ const AUTO_REPLY_SEGMENT_SENTENCE_THRESHOLD = 6;
 const AUTO_REPLY_SEGMENT_MAX_CHARS = 180;
 const AUTO_REPLY_SEGMENT_MAX_WORDS = 26;
 const AUTO_REPLY_SEGMENT_PAUSE_MS = 120;
+const SHORT_REPLY_PAUSE_MIN_MS = 100;
+const SHORT_REPLY_PAUSE_MAX_MS = 200;
+const SHORT_REPLY_PAUSE_FALLBACK_MS = 160;
+const ACTIVE_SESSION_POLL_INTERVAL_MS = 300;
 const BACKGROUND_TURN_POLL_INTERVAL_MS = 2_000;
+const STARTUP_GREETING_ESTIMATE_MS = 45_000;
+const STARTUP_GREETING_TICK_MS = 1_000;
+const STARTUP_GREETING_TIP_ROTATE_MS = 7_000;
 const SOFT_TIMEOUT_NOTICE_TEXT =
   "I'm still working on that, and it may take a while. We can talk about something else, and I'll come back when it's ready.";
+const STARTUP_GREETING_TIPS = [
+  'keep your first question short and direct for the fastest reply',
+  'you can switch between speaking and typing at any point in the call',
+  'ask for lists or step-by-step answers if you want shorter spoken chunks',
+  'long-running tasks can keep working in the background while you keep chatting',
+];
 
 const AMBIENT_KEYWORDS = {
   idle: ['idle', 'between replies', 'resting', 'neutral speaking', 'waiting', 'calm'],
@@ -104,6 +117,13 @@ export function createSessionController({
   let deferredTurnPollInFlight = false;
   let activeDeferredTurnPlaybackId = '';
   let deferredIndicatorTimerId = 0;
+  let startupGreetingIndicatorTimerId = 0;
+  let activeSessionPollTimerId = 0;
+  let activeSessionPollInFlight = false;
+  let queuedAgentSignalSpeech = null;
+  let agentSignalSpeechActive = false;
+  const seenAgentSignalEventIds = new Set();
+  const seenAgentSignalEventOrder = [];
 
   function getLaunchContext() {
     return state.launchContext && typeof state.launchContext === 'object'
@@ -195,12 +215,106 @@ export function createSessionController({
       : `utt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
+  function getStartupGreetingIndicatorState() {
+    if (!state.startupGreetingIndicator || typeof state.startupGreetingIndicator !== 'object') {
+      state.startupGreetingIndicator = {
+        active: false,
+        remainingSeconds: Math.ceil(STARTUP_GREETING_ESTIMATE_MS / 1000),
+        tipText: '',
+        statusText: '',
+        startedAt: 0,
+      };
+    }
+    return state.startupGreetingIndicator;
+  }
+
+  function updateStartupGreetingIndicator() {
+    const indicator = getStartupGreetingIndicatorState();
+    if (!indicator.active || !indicator.startedAt) {
+      return;
+    }
+
+    const elapsedMs = Math.max(0, Date.now() - indicator.startedAt);
+    const remainingMs = Math.max(0, STARTUP_GREETING_ESTIMATE_MS - elapsedMs);
+    const tipIndex =
+      Math.floor(elapsedMs / STARTUP_GREETING_TIP_ROTATE_MS) % STARTUP_GREETING_TIPS.length;
+    indicator.remainingSeconds = Math.ceil(remainingMs / 1000);
+    indicator.tipText = indicator.statusText || STARTUP_GREETING_TIPS[tipIndex];
+    renderCallSnapshot();
+  }
+
+  function stopStartupGreetingIndicator() {
+    if (startupGreetingIndicatorTimerId) {
+      timers.clearInterval?.(startupGreetingIndicatorTimerId);
+      startupGreetingIndicatorTimerId = 0;
+    }
+    const indicator = getStartupGreetingIndicatorState();
+    indicator.active = false;
+    indicator.startedAt = 0;
+    indicator.remainingSeconds = Math.ceil(STARTUP_GREETING_ESTIMATE_MS / 1000);
+    indicator.tipText = '';
+    indicator.statusText = '';
+    renderCallSnapshot();
+  }
+
+  function startStartupGreetingIndicator() {
+    stopStartupGreetingIndicator();
+    const indicator = getStartupGreetingIndicatorState();
+    indicator.active = true;
+    indicator.startedAt = Date.now();
+    indicator.remainingSeconds = Math.ceil(STARTUP_GREETING_ESTIMATE_MS / 1000);
+    indicator.statusText = '';
+    indicator.tipText = STARTUP_GREETING_TIPS[0];
+    updateStartupGreetingIndicator();
+    startupGreetingIndicatorTimerId = timers.setInterval?.(
+      updateStartupGreetingIndicator,
+      STARTUP_GREETING_TICK_MS,
+    ) || 0;
+  }
+
   function setSubtitle(role, text, mode) {
     state.subtitles[role] = {
       mode,
       text,
     };
     renderSubtitles();
+  }
+
+  function setStartupGreetingStatusText(text = '') {
+    const indicator = getStartupGreetingIndicatorState();
+    indicator.statusText = `${text || ''}`.trim();
+    indicator.tipText = indicator.statusText || STARTUP_GREETING_TIPS[0];
+    renderCallSnapshot();
+  }
+
+  function rememberAgentSignalEventId(eventId = '') {
+    const normalizedEventId = `${eventId || ''}`.trim();
+    if (!normalizedEventId || seenAgentSignalEventIds.has(normalizedEventId)) {
+      return false;
+    }
+    seenAgentSignalEventIds.add(normalizedEventId);
+    seenAgentSignalEventOrder.push(normalizedEventId);
+    while (seenAgentSignalEventOrder.length > 500) {
+      const removed = seenAgentSignalEventOrder.shift();
+      if (removed) {
+        seenAgentSignalEventIds.delete(removed);
+      }
+    }
+    return true;
+  }
+
+  function getAgentSignalEventText(event = {}) {
+    return `${event?.details?.text || ''}`.trim();
+  }
+
+  function getAgentSignalSpeakText(event = {}) {
+    return `${event?.details?.speakText || ''}`.trim();
+  }
+
+  function isDisplayableAgentSignalEvent(event = {}) {
+    return ['codex.notice', 'codex.tool_started', 'codex.tool_finished', 'codex.auth_required'].includes(
+      `${event?.type || ''}`.trim(),
+    );
   }
 
   function shouldAcceptVoiceInput({
@@ -327,16 +441,97 @@ export function createSessionController({
     pendingDeferredTurnPollTimerId = 0;
   }
 
+  function pickOperationSummary(turn = {}) {
+    return `${turn?.operation?.summary || turn?.transcript || ''}`.trim();
+  }
+
+  function pickOperationStatusText(turn = {}) {
+    return `${turn?.operation?.statusText || ''}`.trim();
+  }
+
+  function buildOperationStatusText(turn = {}, { background = false } = {}) {
+    const explicit = pickOperationStatusText(turn);
+    if (explicit) {
+      return explicit;
+    }
+
+    const phase = `${turn?.operation?.phase || ''}`.trim();
+    if (phase === 'using-tool') {
+      return 'Using a connected tool.';
+    }
+    if (phase === 'blocked') {
+      return 'Blocked and waiting on a fix.';
+    }
+    if (phase === 'speaking' || phase === 'reply-ready') {
+      return 'Reply ready.';
+    }
+    if (phase === 'failed') {
+      return 'The request failed.';
+    }
+    if (phase === 'interrupted') {
+      return 'Interrupted.';
+    }
+    if (background || phase === 'background') {
+      return 'Still working in the background.';
+    }
+    return 'Working on it.';
+  }
+
   function getDeferredIndicatorState() {
     if (!state.deferredIndicator || typeof state.deferredIndicator !== 'object') {
       state.deferredIndicator = {
         active: false,
         elapsedSeconds: 0,
         pendingCount: 0,
+        tasks: [],
       };
     }
 
     return state.deferredIndicator;
+  }
+
+  function parseOperationStartedAt(turn = {}) {
+    const turnId = `${turn?.id || ''}`.trim();
+    const startedAtCandidates = [
+      turn?.operation?.startedAt,
+      turn?.createdAt,
+      turnId ? deferredTurnStartedAtById.get(turnId) : 0,
+    ];
+    for (const candidate of startedAtCandidates) {
+      if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
+        return candidate;
+      }
+      const parsed = Date.parse(candidate || '');
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+    return Date.now();
+  }
+
+  function shouldShowActiveTask(turn = {}) {
+    if (!turn || typeof turn !== 'object') {
+      return false;
+    }
+
+    if (turn.status === 'processing') {
+      return true;
+    }
+
+    if (turn.agentReply && !turn.agentReply.playedAt && !turn.agentReply.interruptedAt) {
+      return true;
+    }
+
+    const phase = `${turn?.operation?.phase || ''}`.trim();
+    return [
+      'thinking',
+      'working',
+      'using-tool',
+      'background',
+      'blocked',
+      'reply-ready',
+      'speaking',
+    ].includes(phase);
   }
 
   function clearDeferredIndicatorTimer() {
@@ -351,34 +546,40 @@ export function createSessionController({
   function syncDeferredIndicator() {
     const indicator = getDeferredIndicatorState();
     const turns = Array.isArray(state.session?.turns) ? state.session.turns : [];
-    const turnsById = new Map(turns.map((turn) => [`${turn?.id || ''}`.trim(), turn]));
-    const unresolvedEntries = [...pendingDeferredTurnIds]
-      .map((turnId) => {
-        const turn = turnsById.get(turnId);
-        if (!turn || turn.status !== 'processing') {
-          return null;
-        }
-
+    const activeTasks = turns
+      .filter((turn) => shouldShowActiveTask(turn))
+      .map((turn) => {
+        const turnId = `${turn?.id || ''}`.trim();
+        const startedAt = parseOperationStartedAt(turn);
+        const background =
+          pendingDeferredTurnIds.has(turnId) || `${turn?.operation?.phase || ''}`.trim() === 'background';
         return {
-          turnId,
-          startedAt: deferredTurnStartedAtById.get(turnId) || Date.now(),
+          id: turnId,
+          label: pickOperationSummary(turn) || 'Working on your request',
+          detail: buildOperationStatusText(turn, { background }),
+          phase: `${turn?.operation?.phase || (background ? 'background' : 'working')}`.trim(),
+          background,
+          startedAt,
+          elapsedSeconds: Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
         };
       })
-      .filter(Boolean);
+      .sort((left, right) => left.startedAt - right.startedAt);
 
-    if (!unresolvedEntries.length) {
+    if (!activeTasks.length) {
       indicator.active = false;
       indicator.elapsedSeconds = 0;
       indicator.pendingCount = 0;
+      indicator.tasks = [];
       clearDeferredIndicatorTimer();
       renderCallSnapshot();
       return;
     }
 
-    const oldestStartedAt = Math.min(...unresolvedEntries.map((entry) => entry.startedAt));
+    const oldestStartedAt = Math.min(...activeTasks.map((task) => task.startedAt));
     indicator.active = true;
-    indicator.pendingCount = unresolvedEntries.length;
+    indicator.pendingCount = activeTasks.length;
     indicator.elapsedSeconds = Math.max(0, Math.floor((Date.now() - oldestStartedAt) / 1000));
+    indicator.tasks = activeTasks;
     if (!deferredIndicatorTimerId) {
       deferredIndicatorTimerId =
         timers.setInterval?.(() => {
@@ -398,17 +599,34 @@ export function createSessionController({
     indicator.active = false;
     indicator.elapsedSeconds = 0;
     indicator.pendingCount = 0;
+    indicator.tasks = [];
     clearDeferredIndicatorTimer();
+  }
+
+  function buildSoftTimeoutNoticeText(turnId = '') {
+    const normalizedTurnId = `${turnId || ''}`.trim();
+    const turn = normalizedTurnId
+      ? (state.session?.turns || []).find((entry) => `${entry?.id || ''}`.trim() === normalizedTurnId) || null
+      : null;
+    const summary = turn ? pickOperationSummary(turn) : `${getDeferredIndicatorState().tasks?.[0]?.label || ''}`.trim();
+    if (!summary) {
+      return SOFT_TIMEOUT_NOTICE_TEXT;
+    }
+    return `I'm still working on ${summary}, and it may take a while. We can talk about something else, and I'll come back when it's ready.`;
   }
 
   function notifySpeechIdleWaiters() {
     if (avatarSpeech.getSnapshot().active || !speechIdleWaiters.length) {
+      if (!avatarSpeech.getSnapshot().active) {
+        void maybePlayQueuedAgentSignalSpeech();
+      }
       return;
     }
 
     const waiters = speechIdleWaiters;
     speechIdleWaiters = [];
     waiters.forEach((resolve) => resolve());
+    void maybePlayQueuedAgentSignalSpeech();
   }
 
   function waitForSpeechIdle() {
@@ -641,10 +859,12 @@ export function createSessionController({
   function stopAgentThinkingTimer() {
     clearThinkingTimer();
     clearThinkingPromptLoop();
+    queuedAgentSignalSpeech = null;
     thinkingStartedAt = 0;
     state.agentThinkingActive = false;
     state.agentThinkingElapsedTenths = 0;
     renderThinkingTimer();
+    scheduleActiveSessionPolling();
   }
 
   function tickAgentThinkingTimer() {
@@ -681,12 +901,168 @@ export function createSessionController({
 
     if (payload?.inspector) {
       state.inspectorSnapshot = payload.inspector;
+      handleAgentSignalEvents(payload.inspector.recentEvents || []);
     }
 
     pruneDeferredTurnTracking();
+    syncDeferredIndicator();
     if (pendingDeferredTurnIds.size) {
       void maybePlayDeferredTurn();
       scheduleDeferredTurnPolling();
+    }
+    scheduleActiveSessionPolling();
+  }
+
+  function shouldPollActiveSession() {
+    return Boolean(
+      state.activeCall &&
+        state.session?.id &&
+        !state.endingCall &&
+        !state.callEndingDimmed &&
+        (state.processingReplies || (state.startupGreetingActive && state.activeReplyAbortController)),
+    );
+  }
+
+  function clearActiveSessionPolling() {
+    if (activeSessionPollTimerId) {
+      timers.clearTimeout?.(activeSessionPollTimerId);
+      activeSessionPollTimerId = 0;
+    }
+  }
+
+  async function pollActiveSessionUpdates() {
+    if (activeSessionPollInFlight || !shouldPollActiveSession()) {
+      return;
+    }
+
+    activeSessionPollInFlight = true;
+    clearActiveSessionPolling();
+    try {
+      const payload = await fetchJson(`/api/call/sessions/${encodeURIComponent(state.session.id)}`);
+      applySessionPayload(payload);
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+    } catch (error) {
+      addLog('error', 'Active session refresh failed.', formatError(error));
+    } finally {
+      activeSessionPollInFlight = false;
+      scheduleActiveSessionPolling();
+    }
+  }
+
+  function scheduleActiveSessionPolling({ immediate = false } = {}) {
+    if (!shouldPollActiveSession()) {
+      clearActiveSessionPolling();
+      return;
+    }
+    clearActiveSessionPolling();
+    if (immediate) {
+      void pollActiveSessionUpdates();
+      return;
+    }
+    activeSessionPollTimerId =
+      timers.setTimeout?.(() => {
+        activeSessionPollTimerId = 0;
+        void pollActiveSessionUpdates();
+      }, ACTIVE_SESSION_POLL_INTERVAL_MS) || 0;
+  }
+
+  function queueAgentSignalSpeech(text = '') {
+    const normalizedText = `${text || ''}`.trim();
+    if (!normalizedText) {
+      return;
+    }
+    queuedAgentSignalSpeech = normalizedText;
+    void maybePlayQueuedAgentSignalSpeech();
+  }
+
+  function canPlayAgentSignalSpeech() {
+    return Boolean(
+      state.activeCall &&
+        !state.endingCall &&
+        !state.callEndingDimmed &&
+        !state.currentTurnId &&
+        !speculativeSpeechActive &&
+        !avatarSpeech.getSnapshot().active &&
+        (
+          (state.startupGreetingActive && state.activeReplyAbortController) ||
+          (state.processingReplies && state.agentThinkingActive)
+        ),
+    );
+  }
+
+  async function maybePlayQueuedAgentSignalSpeech() {
+    if (!queuedAgentSignalSpeech || agentSignalSpeechActive || !canPlayAgentSignalSpeech()) {
+      return;
+    }
+
+    const noticeText = queuedAgentSignalSpeech;
+    queuedAgentSignalSpeech = null;
+    agentSignalSpeechActive = true;
+    let playbackStarted = false;
+    await avatarSpeech
+      .speakText(noticeText, {
+        withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
+        source: 'agent-progress-notice',
+        locale: collectFormState().humanLocale || 'en-US',
+        characterId: resolveActiveCharacterId(),
+        mood: 'focused',
+        onPlaybackStart: () => {
+          playbackStarted = true;
+          setSubtitle('agent', noticeText, 'thinking');
+          renderAgentStatus();
+          sendPlaybackEvent({
+            phase: 'started',
+            kind: 'thinking',
+            source: 'agent-progress-notice',
+            text: noticeText,
+          });
+        },
+      })
+      .catch((error) => {
+        addLog('error', 'Agent progress notice playback failed.', formatError(error));
+      })
+      .finally(() => {
+        if (playbackStarted) {
+          sendPlaybackEvent({
+            phase: 'ended',
+            kind: 'thinking',
+            source: 'agent-progress-notice',
+            text: noticeText,
+          });
+        }
+        agentSignalSpeechActive = false;
+        notifySpeechIdleWaiters();
+        if (queuedAgentSignalSpeech) {
+          void maybePlayQueuedAgentSignalSpeech();
+        }
+      });
+  }
+
+  function handleAgentSignalEvents(events = []) {
+    const unseenEvents = (Array.isArray(events) ? [...events] : [])
+      .reverse()
+      .filter((event) => rememberAgentSignalEventId(event?.id));
+
+    for (const event of unseenEvents) {
+      if (!isDisplayableAgentSignalEvent(event)) {
+        continue;
+      }
+      const uiText = getAgentSignalEventText(event);
+      if (!uiText) {
+        continue;
+      }
+      if (state.startupGreetingActive) {
+        setStartupGreetingStatusText(uiText);
+      } else if (state.processingReplies || state.agentThinkingActive) {
+        setSubtitle('agent', uiText, 'thinking');
+      }
+      const speakText = getAgentSignalSpeakText(event);
+      if (speakText) {
+        queueAgentSignalSpeech(speakText);
+      }
     }
   }
 
@@ -1168,6 +1544,10 @@ export function createSessionController({
 
   function setStartupGreetingActive(active) {
     state.startupGreetingActive = Boolean(active);
+    if (!state.startupGreetingActive) {
+      stopStartupGreetingIndicator();
+    }
+    scheduleActiveSessionPolling();
     renderSessionSnapshot();
     renderTranscriptList();
     renderDebugSnapshot();
@@ -1189,6 +1569,7 @@ export function createSessionController({
       renderDebugSnapshot();
       renderAgentStatus();
       refreshActionButtons();
+      scheduleActiveSessionPolling();
     }
   }
 
@@ -1219,6 +1600,8 @@ export function createSessionController({
       state.processingReplies &&
       state.agentThinkingActive &&
       !state.currentTurnId &&
+      !queuedAgentSignalSpeech &&
+      !agentSignalSpeechActive &&
       !avatarSpeech.getSnapshot().active
     );
   }
@@ -1287,14 +1670,15 @@ export function createSessionController({
       });
   }
 
-  async function playSoftTimeoutNotice() {
+  async function playSoftTimeoutNotice(turnId = '') {
     while (avatarSpeech.getSnapshot().active) {
       await waitForSpeechIdle();
     }
 
+    const noticeText = buildSoftTimeoutNoticeText(turnId);
     let playbackStarted = false;
     await avatarSpeech
-      .speakText(SOFT_TIMEOUT_NOTICE_TEXT, {
+      .speakText(noticeText, {
         withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
         source: 'local-soft-timeout',
         locale: collectFormState().humanLocale || 'en-US',
@@ -1302,14 +1686,14 @@ export function createSessionController({
         mood: 'warm',
         onPlaybackStart: () => {
           playbackStarted = true;
-          setSubtitle('agent', SOFT_TIMEOUT_NOTICE_TEXT, 'thinking');
+          setSubtitle('agent', noticeText, 'thinking');
           renderAgentStatus();
           syncAmbientMotion();
           sendPlaybackEvent({
             phase: 'started',
             kind: 'thinking',
             source: 'local-soft-timeout',
-            text: SOFT_TIMEOUT_NOTICE_TEXT,
+            text: noticeText,
           });
         },
       })
@@ -1322,7 +1706,7 @@ export function createSessionController({
             phase: 'ended',
             kind: 'thinking',
             source: 'local-soft-timeout',
-            text: SOFT_TIMEOUT_NOTICE_TEXT,
+            text: noticeText,
           });
         }
         notifySpeechIdleWaiters();
@@ -1363,6 +1747,100 @@ export function createSessionController({
     if (!state.transcriptPreview && !state.activeUtteranceId) {
       setSubtitle('human', 'Listening…', 'listening');
       setSubtitle('agent', 'Waiting for your first line.', 'ready');
+    }
+  }
+
+  async function finishStartupGreeting() {
+    if (!state.activeCall || state.endingCall || state.callEndingDimmed) {
+      return;
+    }
+
+    setStartupGreetingActive(false);
+    state.humanMicLevel = 0;
+    let listeningReady = false;
+    try {
+      listeningReady = await resumeHumanListeningIfAllowed({
+        updateSubtitle: true,
+        ignoreBlockingAgentSpeech: true,
+      });
+    } catch (error) {
+      addLog('error', 'Speech recognition failed to start after the startup greeting.', formatError(error));
+    }
+    renderCallSnapshot();
+    if (!listeningReady) {
+      updateRoomStatus('warn', 'Microphone inactive', 'Browser listening did not start after the greeting.');
+      setSubtitle('human', 'Mic inactive.', 'idle');
+      setSubtitle('agent', 'Microphone did not start listening.', 'warn');
+      return;
+    }
+    updateRoomStatus('ready', 'Call live', 'Listening for your voice.');
+    if (!state.transcriptPreview && !state.activeUtteranceId) {
+      setSubtitle('human', 'Listening…', 'listening');
+      setSubtitle('agent', 'Waiting for your first line.', 'ready');
+    }
+  }
+
+  async function requestStartupGreeting() {
+    if (!state.activeCall || state.endingCall || !state.session?.id) {
+      return;
+    }
+
+    const requestController = new AbortController();
+    state.activeReplyAbortController = requestController;
+    scheduleActiveSessionPolling();
+    try {
+      const payload = await postJson(
+        `/api/call/sessions/${encodeURIComponent(state.session.id)}/startup-greeting`,
+        {},
+        { signal: requestController.signal },
+      );
+
+      if (
+        state.activeReplyAbortController !== requestController ||
+        !state.activeCall ||
+        state.endingCall ||
+        state.callEndingDimmed
+      ) {
+        return;
+      }
+
+      state.activeReplyAbortController = null;
+      scheduleActiveSessionPolling();
+      applySessionPayload(payload);
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+
+      if (!payload.turn?.agentReply) {
+        throw new Error('Startup greeting did not return an agent reply.');
+      }
+
+      updateRoomStatus('ready', 'Call live', 'Agent is greeting you.');
+      await playTurnReply(payload.turn, {
+        onFirstPlaybackStart() {
+          stopStartupGreetingIndicator();
+        },
+      });
+      await finishStartupGreeting();
+    } catch (error) {
+      if (state.activeReplyAbortController === requestController) {
+        state.activeReplyAbortController = null;
+      }
+      scheduleActiveSessionPolling();
+      if (error?.name === 'AbortError') {
+        return;
+      }
+
+      updateRoomStatus('warn', 'Greeting failed', 'The startup greeting could not be completed.');
+      stopStartupGreetingIndicator();
+      setSubtitle('agent', 'Startup greeting failed.', 'error');
+      renderCallSnapshot();
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      addLog('error', 'Startup greeting failed.', formatError(error));
     }
   }
 
@@ -1905,18 +2383,57 @@ export function createSessionController({
     void postPlaybackEvent(event).catch(() => {});
   }
 
-  function normalizeReplyPauseMs(value) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) {
-      return 0;
+  function shouldPreserveLongReplyPauses(transcript = '') {
+    const normalizedTranscript = `${transcript || ''}`.trim().toLowerCase();
+    if (!normalizedTranscript) {
+      return false;
     }
-    return Math.max(0, Math.min(15_000, Math.round(numeric)));
+
+    return /\b(pause|pauses|paused|seconds?|countdown|one by one|spaced|wait|between each)\b/.test(
+      normalizedTranscript,
+    );
   }
 
-  function expandReplySegment(segment) {
+  function normalizeReplyPauseMs(value, {
+    preserveLongPause = false,
+    fallbackMs = 0,
+  } = {}) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      if (preserveLongPause) {
+        return Math.max(0, Math.min(15_000, Math.round(fallbackMs)));
+      }
+      return Math.max(
+        SHORT_REPLY_PAUSE_MIN_MS,
+        Math.min(
+          SHORT_REPLY_PAUSE_MAX_MS,
+          Math.round(fallbackMs || SHORT_REPLY_PAUSE_FALLBACK_MS),
+        ),
+      );
+    }
+    if (preserveLongPause) {
+      return Math.max(0, Math.min(15_000, Math.round(numeric)));
+    }
+    return Math.max(
+      SHORT_REPLY_PAUSE_MIN_MS,
+      Math.min(SHORT_REPLY_PAUSE_MAX_MS, Math.round(numeric)),
+    );
+  }
+
+  function expandReplySegment(segment, {
+    preserveAsAuthored = false,
+  } = {}) {
     const text = `${segment?.text || ''}`.trim();
     if (!text) {
       return [];
+    }
+
+    if (preserveAsAuthored) {
+      return [{
+        ...segment,
+        text,
+        subtitle: `${segment?.subtitle || text}`.trim() || text,
+      }];
     }
 
     const chunks = splitLongReplyText(text, segment.mood);
@@ -1941,10 +2458,12 @@ export function createSessionController({
     }));
   }
 
-  function buildReplySegments(reply) {
+  function buildReplySegments(reply, transcript = '') {
     if (!reply?.text) {
       return [];
     }
+
+    const preserveLongPause = shouldPreserveLongReplyPauses(transcript);
 
     const baseSegment = {
       text: `${reply.text || ''}`.trim(),
@@ -1968,7 +2487,10 @@ export function createSessionController({
               text,
               subtitle: `${segment?.subtitle || text}`.trim() || text,
               mood: `${segment?.mood || reply.mood || 'warm'}`.trim() || 'warm',
-              pauseMs: normalizeReplyPauseMs(segment?.pauseMs),
+              pauseMs: normalizeReplyPauseMs(segment?.pauseMs, {
+                preserveLongPause,
+                fallbackMs: SHORT_REPLY_PAUSE_FALLBACK_MS,
+              }),
               animationSequence: Array.isArray(segment?.animationSequence)
                 ? structuredClone(segment.animationSequence)
                 : [],
@@ -1977,11 +2499,15 @@ export function createSessionController({
           .filter(Boolean)
       : [];
 
-    return [baseSegment, ...followUps].flatMap((segment) => expandReplySegment(segment));
+    const preserveAsAuthored = followUps.length > 0;
+    return [baseSegment, ...followUps].flatMap((segment) =>
+      expandReplySegment(segment, {
+        preserveAsAuthored,
+      }));
   }
 
   function waitForReplyContinuation(delayMs = 0) {
-    const normalizedDelayMs = normalizeReplyPauseMs(delayMs);
+    const normalizedDelayMs = Math.max(0, Math.min(15_000, Math.round(Number(delayMs) || 0)));
     if (!normalizedDelayMs) {
       return Promise.resolve();
     }
@@ -1996,7 +2522,73 @@ export function createSessionController({
     });
   }
 
-  async function playTurnReply(turn) {
+  function buildReplySpeechOptions(turn, segment, index) {
+    return {
+      source: `codex-turn:${turn.id}:segment-${index}`,
+      locale: collectFormState().humanLocale || 'en-US',
+      characterId: resolveActiveCharacterId(),
+      mood: segment.mood,
+    };
+  }
+
+  function discardPreparedReplySpeech(preparedSpeech) {
+    if (!preparedSpeech || typeof agentVoiceLayer.disposePreparedSpeech !== 'function') {
+      return;
+    }
+    agentVoiceLayer.disposePreparedSpeech(preparedSpeech);
+  }
+
+  function schedulePreparedReplySpeech(turn, segments, index) {
+    if (typeof agentVoiceLayer.prepareSpeech !== 'function' || index >= segments.length) {
+      return null;
+    }
+
+    const segment = segments[index];
+    const task = {
+      index,
+      consumed: false,
+      disposed: false,
+      promise: null,
+    };
+    const speechOptions = buildReplySpeechOptions(turn, segment, index);
+
+    task.promise = Promise.resolve(
+      agentVoiceLayer.prepareSpeech(segment.text, speechOptions.source, speechOptions),
+    ).then((preparedSpeech) => {
+      if (!preparedSpeech) {
+        return null;
+      }
+      if (task.disposed && !task.consumed) {
+        discardPreparedReplySpeech(preparedSpeech);
+        return null;
+      }
+      return preparedSpeech;
+    });
+
+    return task;
+  }
+
+  async function consumePreparedReplySpeech(task) {
+    if (!task) {
+      return null;
+    }
+    task.consumed = true;
+    return task.promise;
+  }
+
+  function disposePreparedReplySpeechTask(task) {
+    if (!task || task.consumed || task.disposed) {
+      return;
+    }
+    task.disposed = true;
+    void task.promise.then((preparedSpeech) => {
+      if (preparedSpeech) {
+        discardPreparedReplySpeech(preparedSpeech);
+      }
+    }).catch(() => {});
+  }
+
+  async function playTurnReply(turn, options = {}) {
     clearPendingReservePlayback({ stopSpeech: true });
     clearThinkingPromptLoop({ stopSpeech: false });
     const reply = turn?.agentReply;
@@ -2004,13 +2596,14 @@ export function createSessionController({
       return;
     }
 
-    const segments = buildReplySegments(reply);
+    const segments = buildReplySegments(reply, turn?.transcript || '');
     if (!segments.length) {
       return;
     }
 
     state.currentTurnId = turn.id;
     const playbackGeneration = state.playbackGeneration;
+    let pendingPreparedSegmentTask = schedulePreparedReplySpeech(turn, segments, 0);
     try {
       for (const [index, segment] of segments.entries()) {
         if (playbackGeneration !== state.playbackGeneration || state.currentTurnId !== turn.id) {
@@ -2033,11 +2626,24 @@ export function createSessionController({
           }
         }
 
+        let preparedSpeech = null;
+        if (pendingPreparedSegmentTask?.index === index) {
+          try {
+            preparedSpeech = await consumePreparedReplySpeech(pendingPreparedSegmentTask);
+          } catch (error) {
+            addLog('warn', 'Reply speech prefetch failed; falling back to direct synthesis.', {
+              error: formatError(error),
+              turnId: turn.id,
+              segmentIndex: index,
+            });
+          } finally {
+            pendingPreparedSegmentTask = null;
+          }
+        }
+
         suspendHumanListening();
-        const renderProfile = agentVoiceLayer.resolveRenderProfile({
-          characterId: resolveActiveCharacterId(),
-          mood: segment.mood,
-        });
+        const speechOptions = buildReplySpeechOptions(turn, segment, index);
+        const renderProfile = agentVoiceLayer.resolveRenderProfile(speechOptions);
         const timeline = avatarSpeech.buildMouthTimeline(segment.text, renderProfile.speechRate);
         const startSpeechBeats = buildSpeechBeatTimers(
           {
@@ -2051,12 +2657,16 @@ export function createSessionController({
         try {
           await avatarSpeech.speakText(segment.text, {
             withVoice: agentVoiceLayer.getSnapshot().speechSynthesisSupported,
-            source: `codex-turn:${turn.id}:segment-${index}`,
-            locale: collectFormState().humanLocale || 'en-US',
-            characterId: resolveActiveCharacterId(),
-            mood: segment.mood,
+            preparedSpeech,
+            ...speechOptions,
             onPlaybackStart: () => {
               playbackStarted = true;
+              if (index === 0) {
+                options.onFirstPlaybackStart?.();
+              }
+              if (!pendingPreparedSegmentTask) {
+                pendingPreparedSegmentTask = schedulePreparedReplySpeech(turn, segments, index + 1);
+              }
               stopAgentThinkingTimer();
               applySpeechScene({
                 ...reply,
@@ -2098,6 +2708,7 @@ export function createSessionController({
         }
       }
     } finally {
+      disposePreparedReplySpeechTask(pendingPreparedSegmentTask);
       clearPendingReplyContinuation();
       stopAgentThinkingTimer();
       state.currentTurnId = null;
@@ -2328,7 +2939,7 @@ export function createSessionController({
 
     const payload = await postJson(
       `/api/call/sessions/${encodeURIComponent(state.session.id)}/state`,
-      { state: 'live' },
+      { state: 'live', skipWarmup: true },
     );
     applySessionPayload(payload);
     state.activeCall = true;
@@ -2337,10 +2948,12 @@ export function createSessionController({
     state.startupGreetingActive = true;
     state.humanMicMuted = false;
     state.humanMicLevel = 0;
-    humanVoiceLayer.updateConfig?.({ autoRestart: true });
+    humanVoiceLayer.updateConfig?.({ autoRestart: false });
+    humanVoiceLayer.stopListening({ suppressAutoRestart: true });
     state.playbackGeneration += 1;
     interruptionIssuedForUtterance = false;
     resetDeferredTurnTracking();
+    startStartupGreetingIndicator();
 
     updateRoomStatus('loading', 'Connecting call', 'Waiting for the agent greeting to start.');
     setSubtitle('human', 'Stand by…', 'idle');
@@ -2356,7 +2969,7 @@ export function createSessionController({
     addLog('info', 'Voice call started.', {
       sessionId: state.session.id,
     });
-    scheduleLocalHello();
+    await requestStartupGreeting();
   }
 
   async function setMicrophoneMuted(muted = true) {
@@ -2425,6 +3038,8 @@ export function createSessionController({
       state.endingCall = true;
       state.callEndingDimmed = false;
       state.startupGreetingActive = false;
+      clearActiveSessionPolling();
+      queuedAgentSignalSpeech = null;
       updateRoomStatus('loading', 'Ending call', 'Wrapping up the conversation.');
       setSubtitle('human', 'Ending call…', 'idle');
       renderSessionSnapshot();
@@ -2725,6 +3340,7 @@ export function createSessionController({
     state.activeUtteranceText = '';
     state.transcriptPreview = '';
     state.processingReplies = true;
+    scheduleActiveSessionPolling();
     scheduleThinkingPromptLoop(INITIAL_THINKING_PROMPT_DELAY_MS);
     setSubtitle('human', cleanedTranscript, 'final');
     setSubtitle('agent', 'Thinking…', 'thinking');
@@ -2765,6 +3381,7 @@ export function createSessionController({
       clearPendingReservePlayback({ stopSpeech: true });
       state.activeReplyAbortController = null;
       state.processingReplies = false;
+      scheduleActiveSessionPolling();
       applySessionPayload(payload);
       renderSessionSnapshot();
       renderTranscriptList();
@@ -2774,7 +3391,7 @@ export function createSessionController({
       if (payload.softTimedOut && payload.deferredTurnId) {
         stopAgentThinkingTimer();
         trackDeferredTurn(payload.deferredTurnId);
-        await playSoftTimeoutNotice();
+        await playSoftTimeoutNotice(payload.deferredTurnId);
         setSubtitle('agent', 'Still working in the background.', 'thinking');
         await resumeHumanListeningIfAllowed({ updateSubtitle: true }).catch((error) => {
           addLog(
@@ -2810,6 +3427,7 @@ export function createSessionController({
       if (state.activeReplyAbortController === requestController) {
         state.activeReplyAbortController = null;
       }
+      scheduleActiveSessionPolling();
 
       if (error?.name === 'AbortError') {
         return;
@@ -2877,6 +3495,8 @@ export function createSessionController({
     clearScheduledLocalHello({ releaseLock: true });
     clearThinkingPromptLoop({ stopSpeech: true });
     clearPendingReservePlayback({ stopSpeech: true });
+    clearActiveSessionPolling();
+    queuedAgentSignalSpeech = null;
     clearAmbientLoop();
     clearSpeechBeats();
     cancelSpeculativeTurn({ stopSpeech: true, resetTranscript: true });
