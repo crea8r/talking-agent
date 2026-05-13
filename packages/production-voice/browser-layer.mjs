@@ -159,6 +159,17 @@ export function createProductionVoiceLayer({
     state.activePlayback = null;
   }
 
+  function disposePreparedSpeech(preparedSpeech) {
+    if (!preparedSpeech || preparedSpeech.disposed) {
+      return;
+    }
+
+    preparedSpeech.disposed = true;
+    if (preparedSpeech.artifact?.objectUrl && typeof urlApi?.revokeObjectURL === 'function') {
+      urlApi.revokeObjectURL(preparedSpeech.artifact.objectUrl);
+    }
+  }
+
   function cancelSpeech({ emitWarning = true } = {}) {
     const hadActivePlayback = Boolean(state.activePlayback);
     state.playbackToken += 1;
@@ -174,6 +185,34 @@ export function createProductionVoiceLayer({
     if (emitWarning && hadActivePlayback) {
       emitLog('warn', 'Production voice playback cancelled.');
     }
+  }
+
+  async function prepareSpeech(text, source = 'typed', renderOptions = {}) {
+    const cleanedText = `${text || ''}`.trim();
+    if (!cleanedText) {
+      throw new Error('Speech text is required.');
+    }
+
+    if (!state.config.ready) {
+      throw new Error('Production voice is not ready.');
+    }
+
+    const resolvedRender = resolveRenderProfile(renderOptions);
+    const synthesisResult = await synthesizeSpeech({
+      text: cleanedText,
+      source,
+      renderProfile: resolvedRender,
+    });
+
+    return {
+      text: cleanedText,
+      source,
+      renderProfile: resolvedRender,
+      artifact: createProductionVoicePlaybackArtifact(synthesisResult, {
+        urlApi,
+      }),
+      disposed: false,
+    };
   }
 
   async function runTextTurn(text, source = 'typed', speechHooks = {}, renderOptions = {}) {
@@ -213,23 +252,41 @@ export function createProductionVoiceLayer({
     state.speaking = true;
     emitStateChange();
 
-    const resolvedRender = resolveRenderProfile(renderOptions);
+    const preparedSpeech =
+      renderOptions?.preparedSpeech &&
+      renderOptions.preparedSpeech.text === cleanedText &&
+      !renderOptions.preparedSpeech.disposed
+        ? renderOptions.preparedSpeech
+        : null;
+    const resolvedRender = preparedSpeech?.renderProfile || resolveRenderProfile(renderOptions);
+    let artifact = preparedSpeech?.artifact || null;
 
-    let synthesisResult;
-    try {
-      synthesisResult = await synthesizeSpeech({
-        text: cleanedText,
-        source,
-        renderProfile: resolvedRender,
-      });
-    } catch (error) {
-      state.lastError = formatError(error);
-      state.speaking = false;
-      emitStateChange();
-      throw error;
+    if (!artifact) {
+      try {
+        const synthesisResult = await synthesizeSpeech({
+          text: cleanedText,
+          source,
+          renderProfile: resolvedRender,
+        });
+        artifact = createProductionVoicePlaybackArtifact(synthesisResult, {
+          urlApi,
+        });
+      } catch (error) {
+        state.lastError = formatError(error);
+        state.speaking = false;
+        emitStateChange();
+        throw error;
+      }
+    } else {
+      preparedSpeech.consumed = true;
     }
 
     if (playbackToken !== state.playbackToken) {
+      if (preparedSpeech) {
+        disposePreparedSpeech(preparedSpeech);
+      } else if (artifact?.objectUrl && typeof urlApi?.revokeObjectURL === 'function') {
+        urlApi.revokeObjectURL(artifact.objectUrl);
+      }
       return {
         at: wallClock(),
         source,
@@ -237,10 +294,6 @@ export function createProductionVoiceLayer({
         reply: cleanedText,
       };
     }
-
-    const artifact = createProductionVoicePlaybackArtifact(synthesisResult, {
-      urlApi,
-    });
     const audio = new AudioImpl(artifact.objectUrl);
 
     const turn = {
@@ -351,6 +404,8 @@ export function createProductionVoiceLayer({
     cancelSpeech,
     destroy,
     getSnapshot,
+    disposePreparedSpeech,
+    prepareSpeech,
     runTextTurn,
     resolveRenderProfile,
     setHandlers(nextHandlers = {}) {

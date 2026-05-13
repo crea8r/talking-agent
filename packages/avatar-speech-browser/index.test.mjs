@@ -74,3 +74,49 @@ test('voice playback waits for the real speech start before animating the avatar
   resolveSpeech();
   await speakPromise;
 });
+
+test('prepared speech is passed through to the voice layer', async () => {
+  const preparedSpeech = {
+    text: 'Hello there.',
+  };
+  let receivedPreparedSpeech = null;
+
+  globalThis.performance = {
+    now() {
+      return 0;
+    },
+  };
+
+  globalThis.requestAnimationFrame = () => 1;
+
+  globalThis.cancelAnimationFrame = () => {};
+
+  const voiceLayer = {
+    cancelSpeech() {},
+    updateConfig() {},
+    async runTextTurn(text, source, hooks, renderOptions) {
+      receivedPreparedSpeech = renderOptions?.preparedSpeech || null;
+      hooks?.onSpeechStart?.();
+      hooks?.onSpeechEnd?.();
+      return { text, source };
+    },
+  };
+
+  const avatarLayer = {
+    setSpeaking() {},
+    setMouthCue() {},
+  };
+
+  const controller = createAvatarSpeechController({
+    avatarLayer,
+    voiceLayer,
+  });
+
+  await controller.speakText('Hello there.', {
+    withVoice: true,
+    source: 'test',
+    preparedSpeech,
+  });
+
+  assert.equal(receivedPreparedSpeech, preparedSpeech);
+});

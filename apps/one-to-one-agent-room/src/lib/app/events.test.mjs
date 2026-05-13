@@ -56,6 +56,8 @@ function createDom() {
     continuitySettingsSave: new FakeElement(),
     continuitySettingsDirty: new FakeElement(),
     smoothGestureTransitionsToggle: new FakeElement(),
+    cameraDistanceInput: new FakeElement({ value: '1' }),
+    cameraDistanceValue: new FakeElement(),
     pluginSettingsDialog: new FakeElement({ tagName: 'DIALOG' }),
     pluginSettingsOpen: new FakeElement(),
     pluginSettingsClose: new FakeElement(),
@@ -358,6 +360,68 @@ test('bindAppEvents syncs the selected character model to the workspace setup st
   await Promise.resolve();
 
   assert.equal(syncedModelId, 'fbf-1-0');
+});
+
+test('bindAppEvents updates camera distance from the setup control and persists it', async () => {
+  globalThis.window = new EventTarget();
+
+  const dom = createDom();
+  const state = {
+    preferences: {
+      cameraDistance: 1,
+    },
+  };
+  let persistedCount = 0;
+  let appliedDistance = 0;
+
+  bindAppEvents({
+    state,
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+      setCameraDistance(distance) {
+        appliedDistance = distance;
+        state.preferences.cameraDistance = distance;
+        dom.cameraDistanceValue.textContent = `${Math.round(distance * 100)}%`;
+      },
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      uploadVoiceSample: async () => {},
+      syncSessionSetup() {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+    },
+    persistState() {
+      persistedCount += 1;
+    },
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.cameraDistanceInput.value = '1.15';
+  dom.cameraDistanceInput.dispatchEvent(new Event('input'));
+  await Promise.resolve();
+
+  assert.equal(appliedDistance, 1.15);
+  assert.equal(state.preferences.cameraDistance, 1.15);
+  assert.equal(dom.cameraDistanceValue.textContent, '115%');
+  assert.equal(persistedCount, 1);
 });
 
 test('bindAppEvents saves continuity settings only when the save button is pressed', async () => {

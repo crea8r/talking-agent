@@ -1,6 +1,37 @@
 import { buildDefaultCallForm } from './call-session.js';
 
 const DEFAULT_SCOPE_KEY = 'default';
+const DEFAULT_CAMERA_DISTANCE = 1;
+const DEFAULT_STAGE_IDS = ['portrait-studio', 'sunset-studio'];
+
+function normalizeCameraDistance(value) {
+  const nextValue = Number(value);
+  if (!Number.isFinite(nextValue)) {
+    return DEFAULT_CAMERA_DISTANCE;
+  }
+
+  return Math.min(2, Math.max(0.85, nextValue));
+}
+
+function formatCameraDistanceValue(value) {
+  return `${Math.round(normalizeCameraDistance(value) * 100)}%`;
+}
+
+function resolveDefaultStageId(stages = []) {
+  return DEFAULT_STAGE_IDS.find((stageId) => stages.some((stage) => stage?.id === stageId)) || stages[0]?.id || '';
+}
+
+function normalizeStageId(stageId, stageMap, stages) {
+  const defaultStageId = resolveDefaultStageId(stages);
+  const nextStageId = `${stageId || ''}`.trim();
+  if (!nextStageId) {
+    return defaultStageId;
+  }
+  if (nextStageId === 'neon-loft' && stageMap.has(defaultStageId)) {
+    return defaultStageId;
+  }
+  return stageMap.has(nextStageId) ? nextStageId : defaultStageId;
+}
 
 export function createAppStore({
   storageKey,
@@ -17,6 +48,7 @@ export function createAppStore({
   const emoteMap = new Map(emotes.map((emote) => [emote.id, emote]));
   const defaultBundledModel = bundledModelMap.get(defaultModel.id) ?? defaultModel;
   const defaultGestures = getGesturePresets(defaultBundledModel.id);
+  const defaultStageId = resolveDefaultStageId(stages);
   let activeScopeKey = DEFAULT_SCOPE_KEY;
 
   const state = {
@@ -70,7 +102,7 @@ export function createAppStore({
     currentTurnId: null,
     playbackGeneration: 0,
     activeReplyAbortController: null,
-    callHistoryCollapsed: false,
+    callHistoryCollapsed: true,
     subtitles: {
       human: {
         mode: 'idle',
@@ -95,7 +127,8 @@ export function createAppStore({
       enableControlComputer: false,
       enableComplexTasks: false,
       smoothGestureTransitions: true,
-      stageId: stages[0].id,
+      cameraDistance: DEFAULT_CAMERA_DISTANCE,
+      stageId: defaultStageId,
       emoteId: emotes[0].id,
       gestureId: defaultGestures[0]?.id || 'Pose',
     },
@@ -143,7 +176,8 @@ export function createAppStore({
     state.preferences.enableControlComputer = storedState.enableControlComputer === true;
     state.preferences.enableComplexTasks = storedState.enableComplexTasks === true;
     state.preferences.smoothGestureTransitions = storedState.smoothGestureTransitions !== false;
-    state.preferences.stageId = stageMap.has(storedState.stageId) ? storedState.stageId : stages[0].id;
+    state.preferences.cameraDistance = normalizeCameraDistance(storedState.cameraDistance);
+    state.preferences.stageId = normalizeStageId(storedState.stageId, stageMap, stages);
     state.preferences.emoteId = emoteMap.has(storedState.emoteId) ? storedState.emoteId : emotes[0].id;
     state.preferences.gestureId = preferredGestureId;
     state.productionVoice.profile = null;
@@ -168,6 +202,7 @@ export function createAppStore({
       enableControlComputer: state.preferences.enableControlComputer,
       enableComplexTasks: state.preferences.enableComplexTasks,
       smoothGestureTransitions: state.preferences.smoothGestureTransitions,
+      cameraDistance: normalizeCameraDistance(state.preferences.cameraDistance),
       stageId: state.preferences.stageId,
       emoteId: state.preferences.emoteId,
       gestureId: state.preferences.gestureId,
@@ -210,6 +245,12 @@ export function createAppStore({
       state.preferences.voiceSampleStatus === 'ready' ? 'muted' : 'danger';
     if (dom.smoothGestureTransitionsToggle) {
       dom.smoothGestureTransitionsToggle.checked = state.preferences.smoothGestureTransitions !== false;
+    }
+    if (dom.cameraDistanceInput) {
+      dom.cameraDistanceInput.value = normalizeCameraDistance(state.preferences.cameraDistance).toFixed(2);
+    }
+    if (dom.cameraDistanceValue) {
+      dom.cameraDistanceValue.textContent = formatCameraDistanceValue(state.preferences.cameraDistance);
     }
   }
 

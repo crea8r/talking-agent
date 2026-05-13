@@ -64,6 +64,8 @@ function createPresenterHarness({
     callSelfPlaceholder: createElement(),
     callStageLoading: createElement({ hidden: true }),
     callStageLoadingLabel: createElement(),
+    callStageLoadingCountdown: createElement({ hidden: true }),
+    callStageLoadingTip: createElement({ hidden: true }),
     callEmptyState: createElement({ hidden: false }),
     callEmptyStateTitle: createElement(),
     callEmptyStateDetail: createElement(),
@@ -76,7 +78,7 @@ function createPresenterHarness({
     callHistoryToggle: createElement({ hidden: false }),
     callThinkingTimer: createElement({ hidden: true }),
     callDeferredIndicator: createElement({ hidden: true }),
-    callDeferredTime: createElement(),
+    callDeferredList: createElement(),
     ...domOverrides,
   };
 
@@ -105,6 +107,12 @@ function createPresenterHarness({
     humanVoiceSnapshot: {
       recognitionSupported: true,
     },
+    startupGreetingIndicator: {
+      active: false,
+      remainingSeconds: 45,
+      tipText: '',
+    },
+    callHistoryCollapsed: true,
     ...stateOverrides,
   };
 
@@ -325,7 +333,23 @@ test('renderCallSnapshot shows the deferred-work timer only while background wor
       deferredIndicator: {
         active: true,
         elapsedSeconds: 37,
-        pendingCount: 1,
+        pendingCount: 2,
+        tasks: [
+          {
+            id: 'turn-a',
+            label: 'save the airplane report to Google Drive',
+            detail: 'Using google drive create file.',
+            elapsedSeconds: 37,
+            phase: 'using-tool',
+          },
+          {
+            id: 'turn-b',
+            label: 'check my Google Calendar availability',
+            detail: 'Still working in the background.',
+            elapsedSeconds: 12,
+            phase: 'background',
+          },
+        ],
       },
       productionVoice: {
         loading: false,
@@ -340,17 +364,22 @@ test('renderCallSnapshot shows the deferred-work timer only while background wor
   presenter.renderCallSnapshot();
 
   assert.equal(dom.callDeferredIndicator.hidden, false);
-  assert.equal(dom.callDeferredTime.textContent, '0:37');
+  assert.match(dom.callDeferredList.innerHTML, /save the airplane report to Google Drive/);
+  assert.match(dom.callDeferredList.innerHTML, /Using google drive create file\./);
+  assert.match(dom.callDeferredList.innerHTML, /check my Google Calendar availability/);
+  assert.match(dom.callDeferredList.innerHTML, /0:37/);
+  assert.match(dom.callDeferredList.innerHTML, /0:12/);
 
   state.deferredIndicator = {
     active: false,
     elapsedSeconds: 0,
     pendingCount: 0,
+    tasks: [],
   };
   presenter.renderCallSnapshot();
 
   assert.equal(dom.callDeferredIndicator.hidden, true);
-  assert.equal(dom.callDeferredTime.textContent, '');
+  assert.equal(dom.callDeferredList.innerHTML, '');
 });
 
 test('renderSubtitles shows chip subtitles only when live transcript content exists', () => {
@@ -374,7 +403,7 @@ test('renderSubtitles shows chip subtitles only when live transcript content exi
   assert.equal(dom.callSubtitleAgent.textContent, 'Thinking…');
 });
 
-test('renderTranscriptList hides history until there are turns', () => {
+test('renderTranscriptList keeps history collapsed when the first turn appears', () => {
   const { presenter, dom, state } = createPresenterHarness();
   globalThis.document = {
     createElement() {
@@ -384,6 +413,7 @@ test('renderTranscriptList hides history until there are turns', () => {
 
   presenter.renderTranscriptList();
   assert.equal(dom.callLayout.dataset.historyVisible, 'false');
+  assert.equal(dom.callLayout.dataset.historyCollapsed, 'true');
   assert.equal(dom.callHistoryPanel.hidden, true);
   assert.equal(dom.callHistoryToggle.disabled, true);
 
@@ -400,8 +430,10 @@ test('renderTranscriptList hides history until there are turns', () => {
 
   presenter.renderTranscriptList();
   assert.equal(dom.callLayout.dataset.historyVisible, 'true');
-  assert.equal(dom.callHistoryPanel.hidden, false);
+  assert.equal(dom.callLayout.dataset.historyCollapsed, 'true');
+  assert.equal(dom.callHistoryPanel.hidden, true);
   assert.equal(dom.callHistoryToggle.disabled, false);
+  assert.equal(dom.callHistoryToggle.attributes.title, 'Show call history');
 
   delete globalThis.document;
 });
@@ -658,6 +690,11 @@ test('startup greeting shows a connecting overlay until hello playback begins', 
     stateOverrides: {
       activeCall: true,
       startupGreetingActive: true,
+      startupGreetingIndicator: {
+        active: true,
+        remainingSeconds: 37,
+        tipText: 'keep your first question short and direct for the fastest reply',
+      },
       productionVoice: {
         loading: false,
         uploading: false,
@@ -679,6 +716,12 @@ test('startup greeting shows a connecting overlay until hello playback begins', 
 
   assert.equal(dom.callStageLoading.hidden, false);
   assert.equal(dom.callStageLoadingLabel.textContent, 'Connecting');
+  assert.equal(dom.callStageLoadingCountdown.hidden, false);
+  assert.equal(dom.callStageLoadingCountdown.textContent, 'Est. 0:37');
+  assert.equal(
+    dom.callStageLoadingTip.textContent,
+    'Tip: keep your first question short and direct for the fastest reply',
+  );
   assert.equal(dom.joinCall.attributes.title, 'End Call · Connecting');
 });
 

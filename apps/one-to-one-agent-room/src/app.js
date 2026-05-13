@@ -264,6 +264,7 @@ function initialize() {
   avatarController.flushEarlyBootIssues();
   applyLaunchContext(state.launchContext);
   store.hydrateInputs(dom);
+  avatarController.setCameraDistance(state.preferences.cameraDistance);
   renderSetupControls();
   renderAgentSelfControls();
   avatarController.refreshSceneNote();
@@ -357,6 +358,7 @@ async function boot() {
     applyLaunchContext(resolvedLaunchContext);
     store.ensureDefaults();
     store.hydrateInputs(dom);
+    avatarController.setCameraDistance(state.preferences.cameraDistance);
     await sessionController.loadAgentSelfSettings();
     await sessionController.loadWorkspaceSetup();
     renderSetupControls();

@@ -20,7 +20,7 @@ test('createAppStore seeds session-first defaults and production voice placehold
     storageKey: 'test-call-form',
     bundledModels: [bundledModel],
     defaultModel: bundledModel,
-    stages: [{ id: 'stage-1' }],
+    stages: [{ id: 'portrait-studio' }, { id: 'stage-1' }],
     emotes: [{ id: 'neutral' }],
     getGesturePresets() {
       return [{ id: 'Pose' }];
@@ -36,6 +36,8 @@ test('createAppStore seeds session-first defaults and production voice placehold
   assert.equal(store.state.preferences.voiceSampleFileName, '');
   assert.equal(store.state.preferences.voiceSampleProfileId, '');
   assert.equal(store.state.preferences.voiceSampleStatus, 'missing');
+  assert.equal(store.state.preferences.cameraDistance, 1);
+  assert.equal(store.state.preferences.stageId, 'portrait-studio');
   assert.equal(store.state.preferences.bundledModelId, 'bhf-1-2');
   assert.deepEqual(store.state.productionVoice.profile, null);
 });
@@ -74,19 +76,24 @@ test('createAppStore persists preferences per workspace scope', () => {
   store.activateScope('workspace-alpha');
   store.state.preferences.bundledModelId = 'fbf-1-0';
   store.state.preferences.voiceSampleFileName = 'alpha.wav';
+  store.state.preferences.cameraDistance = 1.15;
   store.persistState();
 
   store.activateScope('workspace-beta');
   assert.equal(store.state.preferences.bundledModelId, 'bhf-1-2');
   assert.equal(store.state.preferences.voiceSampleFileName, '');
+  assert.equal(store.state.preferences.cameraDistance, 1);
 
   store.state.preferences.voiceSampleFileName = 'beta.wav';
+  store.state.preferences.cameraDistance = 0.9;
   store.persistState();
 
   store.activateScope('workspace-alpha');
   assert.equal(store.state.preferences.bundledModelId, 'fbf-1-0');
   assert.equal(store.state.preferences.voiceSampleFileName, 'alpha.wav');
+  assert.equal(store.state.preferences.cameraDistance, 1.15);
 
   store.activateScope('workspace-beta');
   assert.equal(store.state.preferences.voiceSampleFileName, 'beta.wav');
+  assert.equal(store.state.preferences.cameraDistance, 0.9);
 });

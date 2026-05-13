@@ -80,6 +80,22 @@ export function createPresenter({
     return `${minutes}:${`${seconds}`.padStart(2, '0')}`;
   }
 
+  function formatStartupCountdown(value = 0) {
+    const totalSeconds = Math.max(0, Number(value) || 0);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${`${seconds}`.padStart(2, '0')}`;
+  }
+
+  function escapeHtml(text = '') {
+    return `${text || ''}`
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
   function clampPercent(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) {
@@ -368,9 +384,27 @@ export function createPresenter({
         callVisualPending &&
         (state.modelLoading || !avatarSnapshot.ready || startupGreetingConnecting),
       );
+      const startupGreetingIndicator =
+        state.startupGreetingIndicator && typeof state.startupGreetingIndicator === 'object'
+          ? state.startupGreetingIndicator
+          : {};
       dom.callStageLoading.hidden = !stageLoading;
       if (dom.callStageLoadingLabel) {
         dom.callStageLoadingLabel.textContent = startupGreetingConnecting ? 'Connecting' : 'Loading';
+      }
+      if (dom.callStageLoadingCountdown) {
+        const showCountdown = Boolean(startupGreetingConnecting && startupGreetingIndicator.active);
+        dom.callStageLoadingCountdown.hidden = !showCountdown;
+        dom.callStageLoadingCountdown.textContent = showCountdown
+          ? `Est. ${formatStartupCountdown(startupGreetingIndicator.remainingSeconds)}`
+          : '';
+      }
+      if (dom.callStageLoadingTip) {
+        const showTip = Boolean(startupGreetingConnecting && startupGreetingIndicator.tipText);
+        dom.callStageLoadingTip.hidden = !showTip;
+        dom.callStageLoadingTip.textContent = showTip
+          ? `Tip: ${startupGreetingIndicator.tipText}`
+          : '';
       }
     }
 
@@ -387,11 +421,25 @@ export function createPresenter({
 
     if (dom.callDeferredIndicator) {
       const deferredIndicator = state.deferredIndicator || {};
-      const showDeferredIndicator = Boolean(state.activeCall && deferredIndicator.active);
+      const tasks = Array.isArray(deferredIndicator.tasks) ? deferredIndicator.tasks : [];
+      const showDeferredIndicator = Boolean(state.activeCall && deferredIndicator.active && tasks.length);
       dom.callDeferredIndicator.hidden = !showDeferredIndicator;
-      if (dom.callDeferredTime) {
-        dom.callDeferredTime.textContent = showDeferredIndicator
-          ? formatDeferredElapsedSeconds(deferredIndicator.elapsedSeconds)
+      if (dom.callDeferredList) {
+        dom.callDeferredList.innerHTML = showDeferredIndicator
+          ? tasks
+              .map(
+                (task) => `
+                  <article class="call-deferred-item" data-phase="${escapeHtml(task.phase || '')}">
+                    <span class="call-deferred-dot" aria-hidden="true"></span>
+                    <span class="call-deferred-copy">
+                      <span class="call-deferred-label">${escapeHtml(task.label || 'Working on your request')}</span>
+                      <span class="call-deferred-detail">${escapeHtml(task.detail || '')}</span>
+                    </span>
+                    <span class="call-deferred-time">${escapeHtml(formatDeferredElapsedSeconds(task.elapsedSeconds))}</span>
+                  </article>
+                `,
+              )
+              .join('')
           : '';
       }
     }
