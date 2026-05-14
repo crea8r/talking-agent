@@ -25,6 +25,7 @@ import { createSessionController } from './lib/app/session-controller.js';
 import { createSetupPreviewController } from './lib/app/setup-preview.js';
 import { createLocalCameraController } from './lib/app/local-camera.js';
 import { bindAppEvents } from './lib/app/events.js';
+import { clearLoadingUiState, setLoadingUiState } from './lib/app/loading-ui.js';
 import { resolveLaunchContext } from './lib/app/launch-context.js';
 
 const STORAGE_KEY = 'one-to-one-agent-room.state';
@@ -50,6 +51,9 @@ state.agentSelf ||= {
   saving: false,
   settings: {
     agentMode: 'standard',
+    manualMode: {
+      workspaceRoot: '',
+    },
     selfProfile: {
       name: '',
       pronouns: '',
@@ -92,7 +96,11 @@ const avatarController = createAvatarController({
   persistState: () => store.persistState(dom),
   formatError,
   addLog: logger.addLog,
-  refreshActionButtons: () => presenter?.refreshActionButtons?.(),
+  refreshUi: () => {
+    presenter?.renderCallSnapshot?.();
+    presenter?.refreshActionButtons?.();
+    presenter?.renderDebugSnapshot?.();
+  },
   onBundledModelChange() {},
 });
 
@@ -193,6 +201,7 @@ sessionController = createSessionController({
   syncVoiceSampleProfile: store.syncVoiceSampleProfile,
   persistState: () => store.persistState(dom),
   updateRoomStatus: presenter.updateRoomStatus,
+  onLaunchContextChange: syncLaunchContextState,
 });
 
 setupPreviewController = createSetupPreviewController({
@@ -309,12 +318,22 @@ function renderSetupControls() {
 
 function renderAgentSelfControls() {
   const settings = state.agentSelf?.settings || {};
+  const manualMode = settings.manualMode || {};
   const profile = settings.selfProfile || {};
+  const effectiveWorkspaceRoot =
+    manualMode.workspaceRoot ||
+    state.launchContext?.workspaceRoot ||
+    state.runtimeConfig?.manualMode?.workspaceRoot ||
+    state.runtimeConfig?.codexProjectPath ||
+    '';
   if (dom.smoothGestureTransitionsToggle) {
     dom.smoothGestureTransitionsToggle.checked = state.preferences.smoothGestureTransitions !== false;
   }
   if (dom.agentModeSelect) {
     dom.agentModeSelect.value = settings.agentMode === 'continuity' ? 'continuity' : 'standard';
+  }
+  if (dom.manualWorkspaceRootInput) {
+    dom.manualWorkspaceRootInput.value = effectiveWorkspaceRoot;
   }
   if (dom.agentSelfName) {
     dom.agentSelfName.value = profile.name || '';
@@ -343,8 +362,49 @@ function applyLaunchContext(launchContext) {
   presenter.renderLaunchContext();
 }
 
+function syncLaunchContextState(nextLaunchContext) {
+  const currentScopeKey = `${state.launchContext?.workspaceKey || ''}`.trim();
+  const nextScopeKey = `${nextLaunchContext?.workspaceKey || ''}`.trim();
+  if (nextScopeKey && nextScopeKey !== currentScopeKey) {
+    store.activateScope(nextScopeKey);
+    store.ensureDefaults();
+    store.hydrateInputs(dom);
+    avatarController.setCameraDistance(state.preferences.cameraDistance);
+    renderSetupControls();
+  }
+
+  applyLaunchContext(nextLaunchContext);
+  renderAgentSelfControls();
+  presenter.renderVoiceSampleState();
+  presenter.renderSessionSnapshot();
+  presenter.renderCallSnapshot();
+  presenter.refreshActionButtons();
+  presenter.renderDebugSnapshot();
+}
+
+function syncBootLoadingUi() {
+  presenter.renderCallSnapshot();
+  presenter.refreshActionButtons();
+  presenter.renderDebugSnapshot();
+}
+
+function setBootLoadingPhase(phase, detail) {
+  setLoadingUiState(state, 'boot', {
+    active: true,
+    phase,
+    detail,
+  });
+  presenter.updateRoomStatus('loading', phase, detail);
+  syncBootLoadingUi();
+}
+
+function clearBootLoadingPhase() {
+  clearLoadingUiState(state, 'boot');
+  syncBootLoadingUi();
+}
+
 async function boot() {
-  presenter.updateRoomStatus('loading', 'Loading…', 'Preparing runtime config.');
+  setBootLoadingPhase('Resolving launch', 'Preparing runtime config.');
 
   try {
     state.runtimeConfig = await fetchRuntimeConfig();
@@ -352,6 +412,7 @@ async function boot() {
       locationHref: window.location.href,
       runtimeConfig: state.runtimeConfig,
     });
+    setBootLoadingPhase('Resolving launch', 'Resolving the current launch context.');
     const resolvedLaunchContext = await sessionController.resolveLinkedLaunch();
     state.runtimeConfig.launch = resolvedLaunchContext;
     store.activateScope(resolvedLaunchContext.workspaceKey);
@@ -359,14 +420,20 @@ async function boot() {
     store.ensureDefaults();
     store.hydrateInputs(dom);
     avatarController.setCameraDistance(state.preferences.cameraDistance);
+    syncBootLoadingUi();
+
+    setBootLoadingPhase('Loading continuity settings', 'Loading the agent identity from the host.');
     await sessionController.loadAgentSelfSettings();
+    setBootLoadingPhase('Loading workspace setup', 'Loading the workspace-scoped setup from the host.');
     await sessionController.loadWorkspaceSetup();
     renderSetupControls();
     renderAgentSelfControls();
     store.persistState(dom);
 
     if (resolvedLaunchContext.callStatus === 'ended' || resolvedLaunchContext.callStatus === 'retry-needed') {
+      setBootLoadingPhase('Loading avatar assets', 'Downloading avatar assets from the host.');
       await avatarController.loadModel();
+      clearBootLoadingPhase();
       presenter.updateRoomStatus(
         resolvedLaunchContext.callStatus === 'retry-needed' ? 'warn' : 'idle',
         'Call ended',
@@ -394,11 +461,13 @@ async function boot() {
       return;
     }
 
-    await Promise.all([
-      avatarController.loadModel(),
-      sessionController.loadProductionVoiceState(),
-      sessionController.loadCodexState(),
-    ]);
+    setBootLoadingPhase('Loading avatar assets', 'Downloading avatar assets from the host.');
+    await avatarController.loadModel();
+    setBootLoadingPhase('Checking voice backend', 'Checking the production voice backend on the host.');
+    await sessionController.loadProductionVoiceState();
+    setBootLoadingPhase('Checking Codex runtime', 'Checking the Codex runtime on the host.');
+    await sessionController.loadCodexState();
+    clearBootLoadingPhase();
     presenter.renderSessionSnapshot();
     presenter.renderCallSnapshot();
     presenter.refreshActionButtons();
@@ -408,11 +477,38 @@ async function boot() {
       appName: state.runtimeConfig.appName,
       appMode: state.runtimeConfig.appMode,
     });
+    if (resolvedLaunchContext.mode !== 'linked-call') {
+      sessionController.scheduleLobbySessionPreparation({ force: true, immediate: true });
+    }
     await sessionController.maybeStartLaunchCall();
+    if (!state.activeCall && !state.sessionPreparing) {
+      if (!state.productionVoice.profile?.referenceAvailable) {
+        presenter.updateRoomStatus(
+          'warn',
+          'Setup required',
+          'Upload a WAV voice sample before starting the call.',
+        );
+      } else if (!state.productionVoice.backendRunning) {
+        presenter.updateRoomStatus(
+          'warn',
+          'Voice offline',
+          state.productionVoice.backendDetail || 'Production voice is unavailable.',
+        );
+      } else if (!state.codex.backendRunning) {
+        presenter.updateRoomStatus(
+          'warn',
+          'Codex offline',
+          state.codex.backendDetail || 'Codex is unavailable.',
+        );
+      } else {
+        presenter.updateRoomStatus('ready', 'Ready', 'Room is ready. Start the call when you are.');
+      }
+    }
     await localCameraController.syncCallState({
       activeCall: state.activeCall,
     });
   } catch (error) {
+    clearBootLoadingPhase();
     presenter.updateRoomStatus(
       'error',
       'Bootstrap failed',

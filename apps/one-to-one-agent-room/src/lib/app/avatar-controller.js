@@ -1,4 +1,5 @@
 import { renderSelectOptions } from '../../ui/render.js';
+import { clearLoadingUiState, setLoadingUiState } from './loading-ui.js';
 
 const DEFAULT_CAMERA_DISTANCE = 1;
 
@@ -29,7 +30,7 @@ export function createAvatarController({
   persistState,
   formatError,
   addLog,
-  refreshActionButtons,
+  refreshUi,
   onBundledModelChange = () => {},
 }) {
   const earlyBootIssues = [];
@@ -139,13 +140,84 @@ export function createAvatarController({
     }
   }
 
+  function updateAvatarLoadingState({
+    active = false,
+    phase = '',
+    detail = '',
+    percent = null,
+  } = {}) {
+    if (!active) {
+      clearLoadingUiState(state, 'avatar');
+      return;
+    }
+
+    setLoadingUiState(state, 'avatar', {
+      active: true,
+      phase,
+      detail,
+      percent,
+    });
+  }
+
+  function buildAvatarLoadingCopy(progress = {}) {
+    const progressPhase = `${progress.phase || ''}`.trim().toLowerCase();
+    const percent = Number.isFinite(Number(progress.percent))
+      ? Math.max(0, Math.min(100, Math.round(Number(progress.percent))))
+      : null;
+
+    switch (progressPhase) {
+      case 'prepare':
+        return {
+          phase: 'Preparing character rig',
+          detail: 'Preparing the avatar mesh for live rendering.',
+          percent: percent ?? 90,
+        };
+      case 'hydrate':
+        return {
+          phase: 'Loading character animations',
+          detail: 'Streaming VRMA motion files from your laptop.',
+          percent: percent ?? 94,
+        };
+      case 'ready':
+        return {
+          phase: 'Finalizing character',
+          detail: 'Applying the final avatar state.',
+          percent: percent ?? 100,
+        };
+      case 'model':
+      default:
+        return {
+          phase: 'Loading 3D character',
+          detail: 'Downloading the 3D model from your laptop.',
+          percent: percent ?? 0,
+        };
+    }
+  }
+
   async function loadModel() {
     const model = getSelectedBundledModel();
     state.modelLoading = true;
-    refreshActionButtons();
+    updateAvatarLoadingState({
+      active: true,
+      ...buildAvatarLoadingCopy({
+        phase: 'model',
+        percent: 0,
+      }),
+    });
+    refreshUi();
 
     try {
-      await avatarLayer.loadModel(model.path, { label: model.label, modelId: model.id });
+      await avatarLayer.loadModel(model.path, {
+        label: model.label,
+        modelId: model.id,
+        onProgress(progress) {
+          updateAvatarLoadingState({
+            active: true,
+            ...buildAvatarLoadingCopy(progress),
+          });
+          refreshUi();
+        },
+      });
       const snapshot = avatarLayer.getSnapshot();
       state.preferences.gestureId = snapshot.gestureId;
       syncGestureOptions(snapshot.modelId, snapshot.gestureId);
@@ -163,7 +235,8 @@ export function createAvatarController({
       }
     } finally {
       state.modelLoading = false;
-      refreshActionButtons();
+      updateAvatarLoadingState({ active: false });
+      refreshUi();
 
       if (queuedModelId && queuedModelId !== model.id) {
         queuedModelId = '';

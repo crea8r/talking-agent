@@ -16,6 +16,9 @@ test('agent self starts in standard mode and persists global settings', async ()
 
   const defaults = await agentSelf.getSettings();
   assert.equal(defaults.agentMode, 'standard');
+  assert.deepEqual(defaults.manualMode, {
+    workspaceRoot: '',
+  });
   assert.deepEqual(defaults.selfProfile, {
     name: '',
     pronouns: '',
@@ -26,6 +29,9 @@ test('agent self starts in standard mode and persists global settings', async ()
 
   const saved = await agentSelf.updateSettings({
     agentMode: 'continuity',
+    manualMode: {
+      workspaceRoot: '/tmp/workspace-alpha',
+    },
     selfProfile: {
       name: 'Moth',
       pronouns: 'they/them',
@@ -36,11 +42,13 @@ test('agent self starts in standard mode and persists global settings', async ()
   });
 
   assert.equal(saved.agentMode, 'continuity');
+  assert.equal(saved.manualMode.workspaceRoot, '/tmp/workspace-alpha');
   assert.equal(saved.selfProfile.name, 'Moth');
   assert.equal(saved.selfProfile.pronouns, 'they/them');
 
   const reloaded = await agentSelf.getSettings();
   assert.equal(reloaded.agentMode, 'continuity');
+  assert.equal(reloaded.manualMode.workspaceRoot, '/tmp/workspace-alpha');
   assert.equal(reloaded.selfProfile.interests, 'memory, bridges, poems');
 });
 

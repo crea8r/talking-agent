@@ -71,6 +71,24 @@ export function createAppStore({
     agentThinkingActive: false,
     agentThinkingElapsedTenths: 0,
     modelLoading: false,
+    loadingUi: {
+      boot: {
+        active: false,
+        phase: '',
+        detail: '',
+      },
+      call: {
+        active: false,
+        phase: '',
+        detail: '',
+      },
+      avatar: {
+        active: false,
+        phase: '',
+        detail: '',
+        percent: null,
+      },
+    },
     avatarSpeechSnapshot: null,
     humanVoiceSnapshot: null,
     agentVoiceSnapshot: null,

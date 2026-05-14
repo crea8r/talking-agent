@@ -114,6 +114,22 @@ function createAvatarState({
   };
 }
 
+function createStandbyState({
+  status = 'idle',
+  requestId = '',
+  preparedAt = '',
+  updatedAt = '',
+  error = '',
+} = {}) {
+  return {
+    status: normalizeString(status) || 'idle',
+    requestId: normalizeString(requestId),
+    preparedAt: normalizeString(preparedAt),
+    updatedAt: normalizeString(updatedAt) || new Date().toISOString(),
+    error: normalizeString(error),
+  };
+}
+
 function isLinkedCallLaunch(launch = {}) {
   return normalizeString(launch?.mode) === 'linked-call' && normalizeString(launch?.launchId);
 }
@@ -218,6 +234,7 @@ function createTurnOperation(session, transcript = '') {
     phase: 'accepted',
     statusText: '',
     toolName: '',
+    auth: null,
     startedAt: now,
     updatedAt: now,
     deferredAt: null,
@@ -372,6 +389,72 @@ function markTurnInterrupted(turn, reason) {
     sessionEventUnsubscribers.delete(key);
   }
 
+  function updateStandbyState(session, patch = {}) {
+    if (!session) {
+      return;
+    }
+
+    session.standby = createStandbyState({
+      ...(session.standby || {}),
+      ...(patch && typeof patch === 'object' ? patch : {}),
+      updatedAt: patch?.updatedAt || new Date().toISOString(),
+    });
+  }
+
+  function trackSessionWarmup(session, warmup, { origin = 'live' } = {}) {
+    if (!session || !warmup?.requestId) {
+      return;
+    }
+
+    updateStandbyState(session, {
+      status: 'warming',
+      requestId: warmup.requestId,
+      preparedAt: '',
+      error: '',
+    });
+    recordEvent(session, 'codex.warmup_started', {
+      requestId: warmup.requestId,
+      origin: normalizeString(origin) || 'live',
+    });
+    void warmup.promise
+      .then(() => {
+        const activeSession = sessions.get(session.id);
+        if (!activeSession) {
+          return;
+        }
+        activeSession.updatedAt = new Date().toISOString();
+        updateStandbyState(activeSession, {
+          status: 'ready',
+          requestId: warmup.requestId,
+          preparedAt: new Date().toISOString(),
+          error: '',
+        });
+        recordEvent(activeSession, 'codex.warmup_completed', {
+          requestId: warmup.requestId,
+          origin: normalizeString(origin) || 'live',
+        });
+      })
+      .catch((error) => {
+        const activeSession = sessions.get(session.id);
+        if (!activeSession) {
+          return;
+        }
+        const status = error?.name === 'AbortError' ? 'aborted' : 'failed';
+        activeSession.updatedAt = new Date().toISOString();
+        updateStandbyState(activeSession, {
+          status,
+          requestId: warmup.requestId,
+          preparedAt: '',
+          error: error instanceof Error ? error.message : 'Session warmup failed.',
+        });
+        recordEvent(activeSession, error?.name === 'AbortError' ? 'codex.warmup_aborted' : 'codex.warmup_failed', {
+          requestId: warmup.requestId,
+          origin: normalizeString(origin) || 'live',
+          error: error instanceof Error ? error.message : 'Session warmup failed.',
+        });
+      });
+  }
+
   function normalizeCodexSignal(signal = {}) {
     const kind = normalizeString(signal.kind);
     const text = normalizeString(signal.text);
@@ -403,6 +486,11 @@ function markTurnInterrupted(turn, reason) {
         method: normalizeString(signal.method),
         payloadType: normalizeString(signal.payloadType),
         toolName: normalizeString(signal.toolName),
+        connectorName: normalizeString(signal.connectorName),
+        connectorId: normalizeString(signal.connectorId),
+        linkId: normalizeString(signal.linkId),
+        authReason: normalizeString(signal.authReason),
+        errorAction: normalizeString(signal.errorAction),
       },
     };
   }
@@ -447,6 +535,13 @@ function markTurnInterrupted(turn, reason) {
               statusText: normalizeString(normalized.details.text),
               blockedAt: new Date().toISOString(),
               toolName: normalizeString(normalized.details.toolName),
+              auth: {
+                connectorName: normalizeString(normalized.details.connectorName),
+                connectorId: normalizeString(normalized.details.connectorId),
+                linkId: normalizeString(normalized.details.linkId),
+                authReason: normalizeString(normalized.details.authReason),
+                errorAction: normalizeString(normalized.details.errorAction),
+              },
             });
           }
         }
@@ -585,6 +680,7 @@ function markTurnInterrupted(turn, reason) {
         turnCount: 0,
         unplayedReplies: 0,
       },
+      standby: createStandbyState(),
       lastAgentReply: null,
     };
 
@@ -632,6 +728,58 @@ function markTurnInterrupted(turn, reason) {
     return buildPayload(session, activeRequests.get(session.id) || null);
   }
 
+  async function prepareSessionStandby({ sessionId } = {}) {
+    const session = getRequiredSession(sessionId);
+    if (session.state === 'ended') {
+      throw new Error('Cannot prepare standby for an ended session.');
+    }
+
+    const launch = session?.metadata?.launch || {};
+    if (isLinkedCallLaunch(launch) || typeof agentRunner.startSessionWarmup !== 'function') {
+      updateStandbyState(session, {
+        status: 'ready',
+        requestId: '',
+        preparedAt: session.standby?.preparedAt || new Date().toISOString(),
+        error: '',
+      });
+      return buildPayload(session, activeRequests.get(session.id) || null);
+    }
+
+    const status = normalizeString(session.standby?.status).toLowerCase();
+    if (status === 'warming' || status === 'ready') {
+      return buildPayload(session, activeRequests.get(session.id) || null);
+    }
+
+    try {
+      const warmup = await agentRunner.startSessionWarmup({ session });
+      if (!warmup?.requestId) {
+        updateStandbyState(session, {
+          status: 'ready',
+          requestId: '',
+          preparedAt: new Date().toISOString(),
+          error: '',
+        });
+        return buildPayload(session, activeRequests.get(session.id) || null);
+      }
+
+      trackSessionWarmup(session, warmup, { origin: 'standby' });
+    } catch (error) {
+      updateStandbyState(session, {
+        status: 'failed',
+        requestId: '',
+        preparedAt: '',
+        error: error instanceof Error ? error.message : 'Session warmup failed.',
+      });
+      recordEvent(session, 'codex.warmup_failed', {
+        requestId: '',
+        origin: 'standby',
+        error: error instanceof Error ? error.message : 'Session warmup failed.',
+      });
+    }
+
+    return buildPayload(session, activeRequests.get(session.id) || null);
+  }
+
   async function setCallState({ sessionId, state, reason = '', skipWarmup = false } = {}) {
     const session = getRequiredSession(sessionId);
     session.state = normalizeString(state) || session.state;
@@ -645,33 +793,63 @@ function markTurnInterrupted(turn, reason) {
       try {
         const warmup = await agentRunner.startSessionWarmup({ session });
         if (warmup?.requestId) {
-          recordEvent(session, 'codex.warmup_started', {
-            requestId: warmup.requestId,
-          });
-          void warmup.promise
-            .then(() => {
-              session.updatedAt = new Date().toISOString();
-              recordEvent(session, 'codex.warmup_completed', {
-                requestId: warmup.requestId,
-              });
-            })
-            .catch((error) => {
-              session.updatedAt = new Date().toISOString();
-              recordEvent(session, error?.name === 'AbortError' ? 'codex.warmup_aborted' : 'codex.warmup_failed', {
-                requestId: warmup.requestId,
-                error: error instanceof Error ? error.message : 'Session warmup failed.',
-              });
-            });
+          trackSessionWarmup(session, warmup, { origin: 'live' });
         }
       } catch (error) {
+        updateStandbyState(session, {
+          status: 'failed',
+          requestId: '',
+          preparedAt: '',
+          error: error instanceof Error ? error.message : 'Session warmup failed.',
+        });
         recordEvent(session, 'codex.warmup_failed', {
           requestId: '',
+          origin: 'live',
           error: error instanceof Error ? error.message : 'Session warmup failed.',
         });
       }
     }
 
     return buildPayload(session, activeRequests.get(session.id) || null);
+  }
+
+  async function discardSession({
+    sessionId,
+    reason = 'Session discarded before the call started.',
+  } = {}) {
+    const session = getRequiredSession(sessionId);
+    const activeRequest = activeRequests.get(session.id) || null;
+    if (activeRequest) {
+      activeRequest.abort(reason);
+      activeRequests.delete(session.id);
+      const activeTurn = session.turns.find((turn) => turn.id === activeRequest.turnId) || null;
+      markTurnInterrupted(activeTurn, reason);
+    }
+
+    const deferredRequestMap = getDeferredRequestMap(session.id);
+    if (deferredRequestMap) {
+      for (const request of deferredRequestMap.values()) {
+        request.abort(reason);
+      }
+      deferredRequests.delete(session.id);
+    }
+    abortSpeculativeRequest(session.id, reason);
+    await agentRunner.abortSessionWarmup?.({
+      sessionId: session.id,
+      reason,
+    }).catch(() => {});
+    await agentRunner.resetSession?.({
+      sessionId: session.id,
+    }).catch(() => {});
+    clearSessionEventSubscription(session.id);
+    sessions.delete(session.id);
+    activeRequests.delete(session.id);
+    deferredRequests.delete(session.id);
+    activeSpeculativeRequests.delete(session.id);
+    return {
+      ok: true,
+      sessionId: session.id,
+    };
   }
 
   async function deferActiveTurn({
@@ -1144,7 +1322,9 @@ function markTurnInterrupted(turn, reason) {
     createSession,
     getSession,
     syncSetup,
+    prepareSessionStandby,
     setCallState,
+    discardSession,
     interrupt,
     deferActiveTurn,
     startSpeculativeHumanTurn,

@@ -258,6 +258,110 @@ test('runtime can mark the call live without starting hidden warmup', async () =
   assert.equal(live.session.events.some((event) => event.type === 'codex.warmup_started'), false);
 });
 
+test('runtime can prepare a manual standby session before the call goes live', async () => {
+  const warmupDeferred = createDeferred();
+  const runtime = createDirectSessionRuntime({
+    agentRunner: {
+      async resetSession() {},
+      async startSessionWarmup({ session }) {
+        return {
+          started: true,
+          requestId: `warmup-${session.id}`,
+          promise: warmupDeferred.promise,
+        };
+      },
+      async startReply({ turn }) {
+        return {
+          requestId: `req-${turn.id}`,
+          abort() {
+            return true;
+          },
+          promise: Promise.resolve({
+            text: `Reply to ${turn.transcript}`,
+            subtitle: `Reply to ${turn.transcript}`,
+            mood: 'warm',
+            emoteId: 'warm',
+            gestureId: 'Greeting',
+            animationSequence: [{ gestureId: 'Greeting', atRatio: 0 }],
+            rawText: '{"spokenText":"ok"}',
+            runMode: 'resume',
+          }),
+        };
+      },
+    },
+    modelsById: new Map([
+      ['bhf-1-2', { id: 'bhf-1-2', label: 'Red Tinker Bell' }],
+    ]),
+    gestureCatalogByModel: {
+      'bhf-1-2': [{ id: 'Greeting', intent: 'greet', bestFor: ['hello'] }],
+    },
+    defaultModelId: 'bhf-1-2',
+    projectTitle: 'talking-agent',
+  });
+
+  const created = await runtime.createSession({});
+  const sessionId = created.session.id;
+  const prepared = await runtime.prepareSessionStandby({ sessionId });
+
+  assert.equal(prepared.session.standby.status, 'warming');
+  assert.equal(prepared.session.standby.requestId, `warmup-${sessionId}`);
+
+  warmupDeferred.resolve();
+  await Promise.resolve();
+
+  const payload = await runtime.getSession(sessionId);
+  assert.equal(payload.session.standby.status, 'ready');
+  assert.ok(payload.session.standby.preparedAt);
+});
+
+test('runtime can discard an unused manual standby session', async () => {
+  const resetCalls = [];
+  const runtime = createDirectSessionRuntime({
+    agentRunner: {
+      async resetSession({ sessionId }) {
+        resetCalls.push(sessionId);
+      },
+      async startReply({ turn }) {
+        return {
+          requestId: `req-${turn.id}`,
+          abort() {
+            return true;
+          },
+          promise: Promise.resolve({
+            text: `Reply to ${turn.transcript}`,
+            subtitle: `Reply to ${turn.transcript}`,
+            mood: 'warm',
+            emoteId: 'warm',
+            gestureId: 'Greeting',
+            animationSequence: [{ gestureId: 'Greeting', atRatio: 0 }],
+            rawText: '{"spokenText":"ok"}',
+            runMode: 'resume',
+          }),
+        };
+      },
+    },
+    modelsById: new Map([
+      ['bhf-1-2', { id: 'bhf-1-2', label: 'Red Tinker Bell' }],
+    ]),
+    gestureCatalogByModel: {
+      'bhf-1-2': [{ id: 'Greeting', intent: 'greet', bestFor: ['hello'] }],
+    },
+    defaultModelId: 'bhf-1-2',
+    projectTitle: 'talking-agent',
+  });
+
+  const created = await runtime.createSession({});
+  const sessionId = created.session.id;
+  const discarded = await runtime.discardSession({
+    sessionId,
+    reason: 'setup changed before the call started',
+  });
+
+  assert.equal(discarded.ok, true);
+  assert.equal(resetCalls.at(-1), sessionId);
+  await assert.rejects(() => runtime.getSession(sessionId), /Unknown session/);
+});
+
 test('runtime records worker notifications in the session event timeline', async () => {
   let sessionListener = null;
   const runtime = createDirectSessionRuntime({
@@ -313,12 +417,27 @@ test('runtime records worker notifications in the session event timeline', async
     text: 'warning: connector is slow',
     source: 'mcp-stderr',
   });
+  sessionListener?.({
+    kind: 'auth-required',
+    level: 'warn',
+    text: 'Google Calendar needs reconnecting.',
+    speakText: 'Google Calendar needs reconnecting before I can keep going.',
+    source: 'mcp-notification',
+    connectorName: 'Google Calendar',
+    connectorId: 'connector_1',
+    linkId: 'link_1',
+    authReason: 'reauthentication_required',
+    errorAction: 'TRIGGER_REAUTHENTICATION',
+  });
   const payload = await runtime.getSession(sessionId);
 
-  assert.equal(payload.session.events[0].type, 'codex.log');
-  assert.equal(payload.session.events[0].details.text, 'warning: connector is slow');
-  assert.equal(payload.session.events[1].type, 'codex.notice');
-  assert.equal(payload.session.events[1].details.speakText, 'Checking your calendar connection.');
+  assert.equal(payload.session.events[0].type, 'codex.auth_required');
+  assert.equal(payload.session.events[0].details.connectorName, 'Google Calendar');
+  assert.equal(payload.session.events[0].details.errorAction, 'TRIGGER_REAUTHENTICATION');
+  assert.equal(payload.session.events[1].type, 'codex.log');
+  assert.equal(payload.session.events[1].details.text, 'warning: connector is slow');
+  assert.equal(payload.session.events[2].type, 'codex.notice');
+  assert.equal(payload.session.events[2].details.speakText, 'Checking your calendar connection.');
 });
 
 test('runtime tracks a generic operation summary across defer and background completion', async () => {

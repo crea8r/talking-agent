@@ -110,7 +110,7 @@ test('selectBundledModel queues the last requested model while an earlier load i
       return error;
     },
     addLog() {},
-    refreshActionButtons() {},
+    refreshUi() {},
   });
 
   const firstLoadPromise = controller.loadModel();
@@ -223,7 +223,7 @@ test('smooth transition flag is forwarded to the avatar layer and can be updated
       return error;
     },
     addLog() {},
-    refreshActionButtons() {},
+    refreshUi() {},
   });
 
   controller.setSmoothGestureTransitions(false);
@@ -335,7 +335,7 @@ test('camera distance preference is forwarded to the avatar layer and can be upd
       return error;
     },
     addLog() {},
-    refreshActionButtons() {},
+    refreshUi() {},
   });
 
   controller.setCameraDistance(1.15);
@@ -345,4 +345,156 @@ test('camera distance preference is forwarded to the avatar layer and can be upd
   assert.equal(state.preferences.cameraDistance, 1.15);
   assert.equal(dom.cameraDistanceInput.value, '1.15');
   assert.equal(dom.cameraDistanceValue.textContent, '115%');
+});
+
+test('loadModel surfaces phased loading progress for the setup overlay while the model and animations hydrate', async () => {
+  globalThis.document = {
+    createElement() {
+      return {
+        value: '',
+        textContent: '',
+        title: '',
+      };
+    },
+  };
+
+  const loadingSnapshots = [];
+  const avatarLayer = {
+    async loadModel(path, { label, modelId, onProgress }) {
+      onProgress?.({
+        phase: 'model',
+        percent: 42,
+      });
+      onProgress?.({
+        phase: 'hydrate',
+        percent: 94,
+      });
+      return {
+        ready: true,
+        modelId,
+        modelLabel: label,
+        gestureId: 'Pose',
+        emoteId: 'neutral',
+        mouthCue: 'rest',
+        lookTargetLabel: 'center',
+      };
+    },
+    getSnapshot() {
+      return {
+        ready: true,
+        modelId: 'fbf-1-0',
+        modelLabel: 'Green Fairy',
+        gestureId: 'Pose',
+        emoteId: 'neutral',
+        mouthCue: 'rest',
+        lookTargetLabel: 'center',
+      };
+    },
+    setStage() {},
+    setEmote() {},
+    setGesture() {},
+    setMouthCue() {},
+    setSpeaking() {},
+    destroy() {},
+  };
+
+  const dom = {
+    agentCanvas: {},
+    stageShell: { style: { setProperty() {} } },
+    bundledModelSelect: { value: 'fbf-1-0' },
+    stageSelect: { value: 'neon-loft' },
+    emoteSelect: { value: 'neutral' },
+    gestureSelect: {
+      value: 'Pose',
+      replaceChildren() {},
+      append() {},
+    },
+    activeAvatar: { textContent: '' },
+    activeEmote: { textContent: '' },
+    activeGesture: { textContent: '' },
+    activeMouth: { textContent: '' },
+    lookTarget: { textContent: '' },
+    sceneNote: { textContent: '' },
+  };
+
+  const bundledModels = new Map([
+    ['fbf-1-0', { id: 'fbf-1-0', label: 'Green Fairy', path: '/models/Fbf_1_0.vrm' }],
+  ]);
+
+  const state = {
+    preferences: {
+      bundledModelId: 'fbf-1-0',
+      stageId: 'neon-loft',
+      emoteId: 'neutral',
+      gestureId: 'Pose',
+    },
+    modelLoading: false,
+    loadingUi: {
+      avatar: {
+        active: false,
+        phase: '',
+        detail: '',
+        percent: null,
+      },
+    },
+  };
+
+  const controller = createAvatarController({
+    dom,
+    state,
+    createAvatarLayer() {
+      return avatarLayer;
+    },
+    bundledModelMap: bundledModels,
+    stageMap: new Map([['neon-loft', { id: 'neon-loft', note: '' }]]),
+    emoteMap: new Map([['neutral', { id: 'neutral', label: 'Neutral', note: '' }]]),
+    getGesturePresets() {
+      return [{ id: 'Pose', label: 'Pose' }];
+    },
+    resolveGesturePreset() {
+      return { id: 'Pose', label: 'Pose', note: '' };
+    },
+    defaultModel: bundledModels.get('fbf-1-0'),
+    getSelectedBundledModel() {
+      return bundledModels.get(state.preferences.bundledModelId);
+    },
+    persistState() {},
+    formatError(error) {
+      return error;
+    },
+    addLog() {},
+    refreshUi() {
+      loadingSnapshots.push({ ...state.loadingUi.avatar });
+    },
+  });
+
+  await controller.loadModel();
+
+  assert.deepEqual(loadingSnapshots.slice(0, 4), [
+    {
+      active: true,
+      phase: 'Loading 3D character',
+      detail: 'Downloading the 3D model from your laptop.',
+      percent: 0,
+    },
+    {
+      active: true,
+      phase: 'Loading 3D character',
+      detail: 'Downloading the 3D model from your laptop.',
+      percent: 42,
+    },
+    {
+      active: true,
+      phase: 'Loading character animations',
+      detail: 'Streaming VRMA motion files from your laptop.',
+      percent: 94,
+    },
+    {
+      active: false,
+      phase: '',
+      detail: '',
+      percent: null,
+    },
+  ]);
+  assert.equal(state.modelLoading, false);
 });

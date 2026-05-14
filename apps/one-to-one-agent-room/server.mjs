@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -26,14 +26,27 @@ import { createProductionVoiceClient } from '../../packages/production-voice/cli
 import { createProductionVoiceProfileStore } from '../../packages/production-voice/profile-store.mjs';
 import { createWorkspaceSetupStore } from '../../packages/workspace-setup-store/index.mjs';
 
+import { resolvePublicBaseUrl } from './server-config.mjs';
 import { createDirectCodexAgent } from './lib/server/direct-codex-agent.mjs';
 import { createDirectSessionRuntime } from './lib/server/direct-session-runtime.mjs';
+import { createManualStandbyManager } from './lib/server/manual-standby-manager.mjs';
+import { selectManualWorkspaceRoot } from './lib/server/manual-workspace-picker.mjs';
+import {
+  persistCurrentSessionSnapshot,
+  persistSessionPayload,
+} from './lib/server/session-persistence.mjs';
+import { applyManualSettingsToLaunchContext } from './src/lib/app/launch-context.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const HOST = '127.0.0.1';
 const PORT = Number.parseInt(process.env.PORT || '4384', 10);
+const PUBLIC_BASE_URL = resolvePublicBaseUrl({
+  env: process.env,
+  host: HOST,
+  port: PORT,
+});
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CODEX_PROJECT_NAME = path.basename(REPO_ROOT);
 const SRC_DIR = path.join(__dirname, 'src');
@@ -104,6 +117,12 @@ const SOFT_TURN_TIMEOUT_MS = Number.parseInt(
   process.env.ONE_TO_ONE_AGENT_ROOM_SOFT_TURN_TIMEOUT_MS || '30000',
   10,
 );
+const APP_RUNTIME_CONFIG = {
+  appName: 'one-to-one-agent-room',
+  appMode: 'app4-direct-codex-session',
+  codexProjectName: CODEX_PROJECT_NAME,
+  codexProjectPath: REPO_ROOT,
+};
 
 const MODELS_BY_ID = new Map(BUNDLED_MODELS.map((model) => [model.id, model]));
 const GESTURE_CATALOG_BY_MODEL = Object.fromEntries(
@@ -151,7 +170,7 @@ const directCodexAgent = createDirectCodexAgent({
   },
 });
 const callLinkService = createCallLinkService({
-  appBaseUrl: `http://${HOST}:${PORT}`,
+  appBaseUrl: PUBLIC_BASE_URL,
   sourceCodexHome: CODEX_SOURCE_HOME,
   callRecordStore,
   workspaceSetupStore,
@@ -169,6 +188,15 @@ const sessionRuntime = createDirectSessionRuntime({
   gestureCatalogByModel: GESTURE_CATALOG_BY_MODEL,
   defaultModelId: DEFAULT_MODEL.id,
   projectTitle: CODEX_PROJECT_NAME,
+});
+const manualStandbyManager = createManualStandbyManager({
+  sessionRuntime,
+  agentSelf,
+  workspaceSetupStore,
+  productionVoiceProfileStore,
+  runtimeConfig: APP_RUNTIME_CONFIG,
+  persistSessionPayload: persistCodexSessionPayload,
+  syncSessionCapabilities: syncSessionCodexHomeCapabilities,
 });
 
 function getSessionCapabilityPolicy(session = {}) {
@@ -279,25 +307,30 @@ function sendText(res, statusCode, text) {
   res.end(text);
 }
 
-async function persistSessionPayload(payload) {
-  const sessionId = `${payload?.session?.id || ''}`.trim();
-  if (!sessionId) {
-    return;
-  }
-
-  const sessionDir = path.join(CODEX_SESSION_ROOT, sessionId);
-  await mkdir(sessionDir, { recursive: true });
-  await writeFile(
-    path.join(sessionDir, 'session-report.json'),
-    JSON.stringify(payload, null, 2),
-    'utf8',
-  );
+async function persistCodexSessionPayload(payload) {
+  return persistSessionPayload({
+    rootDir: CODEX_SESSION_ROOT,
+    payload,
+  });
 }
 
-async function persistCurrentSessionSnapshot(sessionId) {
-  const payload = await sessionRuntime.getSession(sessionId);
-  await persistSessionPayload(payload);
-  return payload;
+async function persistCodexCurrentSessionSnapshot(sessionId) {
+  return persistCurrentSessionSnapshot({
+    sessionRuntime,
+    rootDir: CODEX_SESSION_ROOT,
+    sessionId,
+  });
+}
+
+async function tryPersistCodexCurrentSessionSnapshot(sessionId, contextLabel) {
+  try {
+    await persistCodexCurrentSessionSnapshot(sessionId);
+  } catch (snapshotError) {
+    console.error(`Failed to persist ${contextLabel} session snapshot.`, {
+      sessionId,
+      error: snapshotError,
+    });
+  }
 }
 
 async function raceTurnAgainstSoftTimeout(turnPromise, timeoutMs) {
@@ -421,6 +454,19 @@ async function buildWorkspaceSetupState({ scopeKey = '' } = {}) {
     ok: true,
     setup: await workspaceSetupStore.loadSetup({ scopeKey }),
   };
+}
+
+async function buildManualLaunchContextPayload() {
+  const settings = await agentSelf.getSettings();
+  return applyManualSettingsToLaunchContext({
+    launchContext: {
+      mode: 'manual',
+      autoStart: false,
+      initialScreen: 'setup',
+    },
+    runtimeConfig: APP_RUNTIME_CONFIG,
+    settings,
+  });
 }
 
 async function buildLaunchState({ launchId = '' } = {}) {
@@ -574,12 +620,10 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/runtime-config') {
+    const manualLaunch = await buildManualLaunchContextPayload();
     sendJson(res, 200, {
       ok: true,
-      appName: 'one-to-one-agent-room',
-      appMode: 'app4-direct-codex-session',
-      codexProjectName: CODEX_PROJECT_NAME,
-      codexProjectPath: REPO_ROOT,
+      ...APP_RUNTIME_CONFIG,
       avatar: {
         defaultModelId: DEFAULT_MODEL.id,
         defaultModel: path.basename(DEFAULT_MODEL.path),
@@ -620,12 +664,20 @@ const server = createServer(async (req, res) => {
         turnCompleteRoute: '/api/agent-self/turn-complete',
         modes: ['standard', 'continuity'],
       },
+      manualMode: {
+        workspaceRoot: manualLaunch.workspaceRoot,
+        workspaceKey: manualLaunch.workspaceKey,
+        displayTitle: manualLaunch.displayTitle,
+        sessionRoute: '/api/manual-session',
+        selectWorkspaceRoute: '/api/manual-workspace/select',
+      },
       launch: {
         resolveRouteTemplate: '/api/launch/:launchId',
+        publicBaseUrl: PUBLIC_BASE_URL,
       },
       mcp: {
         route: '/mcp',
-        url: `http://${HOST}:${PORT}/mcp`,
+        url: `${PUBLIC_BASE_URL}/mcp`,
         toolNames: ['create_call_link'],
       },
       productionVoice: {
@@ -684,14 +736,45 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/agent-self/settings') {
     try {
       const body = await readJsonBody(req);
+      const settings = await agentSelf.updateSettings(body);
+      await manualStandbyManager.handleSettingsChanged().catch(() => null);
       sendJson(res, 200, {
         ok: true,
-        settings: await agentSelf.updateSettings(body),
+        settings,
       });
     } catch (error) {
       sendJson(res, 400, {
         ok: false,
         error: error instanceof Error ? error.message : 'Unable to save agent self settings.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/manual-workspace/select') {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      const manualLaunch = await buildManualLaunchContextPayload();
+      const workspaceRoot = await selectManualWorkspaceRoot({
+        defaultPath: `${body?.defaultPath || ''}`.trim() || manualLaunch.workspaceRoot,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        cancelled: false,
+        workspaceRoot,
+      });
+    } catch (error) {
+      if (error?.code === 'MANUAL_WORKSPACE_PICKER_CANCELED') {
+        sendJson(res, 200, {
+          ok: true,
+          cancelled: true,
+          workspaceRoot: '',
+        });
+        return;
+      }
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to select a manual workspace root.',
       });
     }
     return;
@@ -752,6 +835,7 @@ const server = createServer(async (req, res) => {
         enableControlComputer: body.enableControlComputer,
         enableComplexTasks: body.enableComplexTasks,
       });
+      await manualStandbyManager.handleWorkspaceSetupChanged({ scopeKey }).catch(() => null);
       sendJson(res, 200, {
         ok: true,
         setup,
@@ -820,6 +904,7 @@ const server = createServer(async (req, res) => {
         meloBaseSpeakerLabel:
           `${formData.get('meloBaseSpeakerLabel') || ''}`.trim() || speakerId,
       });
+      await manualStandbyManager.handleVoiceProfileChanged({ scopeKey }).catch(() => null);
 
       sendJson(res, 200, await buildProductionVoiceStateForScope({ scopeKey }));
     } catch (error) {
@@ -871,7 +956,7 @@ const server = createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const payload = await sessionRuntime.createSession(body);
-      await persistSessionPayload(payload);
+      await persistCodexSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -882,11 +967,25 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/manual-session') {
+    try {
+      const payload = await manualStandbyManager.ensureStandby();
+      await persistCodexSessionPayload(payload);
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to load the manual standby session.',
+      });
+    }
+    return;
+  }
+
   const sessionMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)$/);
   if (req.method === 'GET' && sessionMatch) {
     try {
       const payload = await sessionRuntime.getSession(decodeURIComponent(sessionMatch[1]));
-      await persistSessionPayload(payload);
+      await persistCodexSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 404, {
@@ -906,7 +1005,7 @@ const server = createServer(async (req, res) => {
         metadata: body.metadata,
       });
       await syncSessionCodexHomeCapabilities(payload.session);
-      await persistSessionPayload(payload);
+      await persistCodexSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -921,13 +1020,17 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && stateMatch) {
     try {
       const body = await readJsonBody(req);
+      const sessionId = decodeURIComponent(stateMatch[1]);
       const payload = await sessionRuntime.setCallState({
-        sessionId: decodeURIComponent(stateMatch[1]),
+        sessionId,
         state: body.state,
         reason: body.reason,
         skipWarmup: body.skipWarmup === true,
       });
-      await persistSessionPayload(payload);
+      if (`${body.state || ''}`.trim() === 'live') {
+        await manualStandbyManager.claimStandby({ sessionId }).catch(() => false);
+      }
+      await persistCodexSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -938,16 +1041,53 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const standbyMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)\/standby$/);
+  if (req.method === 'POST' && standbyMatch) {
+    try {
+      const payload = await sessionRuntime.prepareSessionStandby({
+        sessionId: decodeURIComponent(standbyMatch[1]),
+      });
+      await persistCodexSessionPayload(payload);
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to prepare the standby session.',
+      });
+    }
+    return;
+  }
+
+  const discardMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)\/discard$/);
+  if (req.method === 'POST' && discardMatch) {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      const payload = await sessionRuntime.discardSession({
+        sessionId: decodeURIComponent(discardMatch[1]),
+        reason: body.reason,
+      });
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to discard the standby session.',
+      });
+    }
+    return;
+  }
+
   const endMatch = url.pathname.match(/^\/api\/call\/sessions\/([^/]+)\/end$/);
   if (req.method === 'POST' && endMatch) {
     try {
       const body = await readJsonBody(req);
+      const sessionId = decodeURIComponent(endMatch[1]);
       const payload = await sessionRuntime.endSession({
-        sessionId: decodeURIComponent(endMatch[1]),
+        sessionId,
         reason: body.reason,
         skipAgentFinalize: body.skipAgentFinalize === true,
       });
-      await persistSessionPayload(payload);
+      await persistCodexSessionPayload(payload);
+      void manualStandbyManager.handleSessionEnded({ sessionId }).catch(() => {});
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -966,7 +1106,7 @@ const server = createServer(async (req, res) => {
         sessionId: decodeURIComponent(interruptMatch[1]),
         reason: body.reason,
       });
-      await persistSessionPayload(payload);
+      await persistCodexSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -982,15 +1122,20 @@ const server = createServer(async (req, res) => {
   );
   if (req.method === 'POST' && startupGreetingMatch) {
     try {
+      const sessionId = decodeURIComponent(startupGreetingMatch[1]);
       const body = await readJsonBody(req).catch(() => ({}));
       const payload = await sessionRuntime.submitHumanTurn({
-        sessionId: decodeURIComponent(startupGreetingMatch[1]),
+        sessionId,
         text: `${body?.text || 'Hello.'}`.trim() || 'Hello.',
         source: 'startup',
       });
-      await persistSessionPayload(payload);
+      await persistCodexSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
+      await tryPersistCodexCurrentSessionSnapshot(
+        decodeURIComponent(startupGreetingMatch[1]),
+        'startup greeting failure',
+      );
       sendJson(res, 500, {
         ok: false,
         error: error instanceof Error ? error.message : 'Unable to create the startup greeting.',
@@ -1010,7 +1155,7 @@ const server = createServer(async (req, res) => {
         text: body.text,
         source: body.source,
       });
-      await persistSessionPayload(payload);
+      await persistCodexSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 500, {
@@ -1036,7 +1181,7 @@ const server = createServer(async (req, res) => {
       void turnPromise.catch(() => {});
       const outcome = await raceTurnAgainstSoftTimeout(turnPromise, SOFT_TURN_TIMEOUT_MS);
       if (outcome.kind === 'reply') {
-        await persistSessionPayload(outcome.payload);
+        await persistCodexSessionPayload(outcome.payload);
         sendJson(res, 200, outcome.payload);
         return;
       }
@@ -1047,19 +1192,19 @@ const server = createServer(async (req, res) => {
       });
       if (deferredPayload.deferred !== true) {
         const finalPayload = await turnPromise;
-        await persistSessionPayload(finalPayload);
+        await persistCodexSessionPayload(finalPayload);
         sendJson(res, 200, finalPayload);
         return;
       }
 
-      await persistSessionPayload(deferredPayload);
+      await persistCodexSessionPayload(deferredPayload);
       void turnPromise
         .then(async (payload) => {
-          await persistSessionPayload(payload);
+          await persistCodexSessionPayload(payload);
         })
         .catch(async (error) => {
           try {
-            await persistCurrentSessionSnapshot(sessionId);
+            await persistCodexCurrentSessionSnapshot(sessionId);
           } catch (snapshotError) {
             console.error('Failed to persist deferred turn snapshot.', {
               sessionId,
@@ -1073,6 +1218,10 @@ const server = createServer(async (req, res) => {
         });
       sendJson(res, 200, deferredPayload);
     } catch (error) {
+      await tryPersistCodexCurrentSessionSnapshot(
+        decodeURIComponent(turnMatch[1]),
+        'human turn failure',
+      );
       sendJson(res, 500, {
         ok: false,
         error: error instanceof Error ? error.message : 'Unable to process the human turn.',
@@ -1090,7 +1239,7 @@ const server = createServer(async (req, res) => {
         sessionId: decodeURIComponent(replyPlayedMatch[1]),
         turnId: decodeURIComponent(replyPlayedMatch[2]),
       });
-      await persistSessionPayload(payload);
+      await persistCodexSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -1116,7 +1265,7 @@ const server = createServer(async (req, res) => {
         text: body.text,
         turnCompleted: body.turnCompleted,
       });
-      await persistSessionPayload(payload);
+      await persistCodexSessionPayload(payload);
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 400, {
@@ -1146,4 +1295,7 @@ server.on('close', () => {
 
 server.listen(PORT, HOST, () => {
   console.log(`one-to-one-agent-room listening at http://${HOST}:${PORT}`);
+  void manualStandbyManager.ensureStandby().catch((error) => {
+    console.error('manual standby warmup failed', error);
+  });
 });

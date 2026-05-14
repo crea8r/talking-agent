@@ -18,9 +18,20 @@ export function bindAppEvents({
   formatError,
 }) {
   let lastSavedAgentSelfSettings = null;
+  let pluginSettingsAuthContext = null;
+
+  const normalizeConnectorLabel = (value = '') =>
+    `${value || ''}`
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
 
   const readAgentSelfSettings = () => ({
     agentMode: dom.agentModeSelect?.value || 'standard',
+    manualMode: {
+      workspaceRoot: dom.manualWorkspaceRootInput?.value || '',
+    },
     selfProfile: {
       name: dom.agentSelfName?.value || '',
       pronouns: dom.agentSelfPronouns?.value || '',
@@ -32,6 +43,9 @@ export function bindAppEvents({
 
   const cloneAgentSelfSettings = (settings) => ({
     agentMode: settings?.agentMode === 'continuity' ? 'continuity' : 'standard',
+    manualMode: {
+      workspaceRoot: settings?.manualMode?.workspaceRoot || '',
+    },
     selfProfile: {
       name: settings?.selfProfile?.name || '',
       pronouns: settings?.selfProfile?.pronouns || '',
@@ -45,6 +59,9 @@ export function bindAppEvents({
     const nextSettings = cloneAgentSelfSettings(settings);
     if (dom.agentModeSelect) {
       dom.agentModeSelect.value = nextSettings.agentMode;
+    }
+    if (dom.manualWorkspaceRootInput) {
+      dom.manualWorkspaceRootInput.value = nextSettings.manualMode.workspaceRoot;
     }
     if (dom.agentSelfName) {
       dom.agentSelfName.value = nextSettings.selfProfile.name;
@@ -131,10 +148,41 @@ export function bindAppEvents({
     openDialog(dialog);
   };
 
-  const renderPluginSettingsList = (plugins = []) => {
+  const findHighlightedPluginId = (plugins = [], authContext = null) => {
+    const connectorName = normalizeConnectorLabel(authContext?.connectorName);
+    if (!connectorName) {
+      return '';
+    }
+
+    const connectorTerms = connectorName.split(/\s+/).filter(Boolean);
+    const match = plugins.find((plugin) => {
+      const haystack = normalizeConnectorLabel([
+        plugin.displayName,
+        plugin.name,
+        plugin.id,
+        plugin.description,
+      ].filter(Boolean).join(' '));
+      return connectorTerms.every((term) => haystack.includes(term));
+    });
+    return `${match?.id || ''}`.trim();
+  };
+
+  const renderPluginSettingsAuthHint = (authContext = null) => {
+    const connectorName = `${authContext?.connectorName || ''}`.trim();
+    if (!dom.pluginSettingsAuthHint) {
+      return;
+    }
+    dom.pluginSettingsAuthHint.hidden = !connectorName;
+    dom.pluginSettingsAuthHint.textContent = connectorName
+      ? `${connectorName} needs reconnecting. Reconnect it in your Codex or ChatGPT connectors settings, then return to this call.`
+      : '';
+  };
+
+  const renderPluginSettingsList = (plugins = [], authContext = null) => {
     if (dom.codexPluginEmpty) {
       dom.codexPluginEmpty.hidden = plugins.length > 0;
     }
+    renderPluginSettingsAuthHint(authContext);
     if (!dom.codexPluginList) {
       return;
     }
@@ -144,9 +192,11 @@ export function bindAppEvents({
     }
 
     const selectedPluginIds = new Set(state.preferences.enabledPluginIds || []);
+    const highlightedPluginId = findHighlightedPluginId(plugins, authContext);
     const items = plugins.map((plugin) => {
       const label = document.createElement('label');
       label.className = 'plugin-setting-card';
+      label.dataset.highlighted = highlightedPluginId === plugin.id ? 'true' : 'false';
 
       const input = document.createElement('input');
       input.className = 'plugin-setting-checkbox';
@@ -185,13 +235,14 @@ export function bindAppEvents({
       .sort((left, right) => left.localeCompare(right));
   };
 
-  const openPluginSettings = async () => {
+  const openPluginSettings = async (authContext = null) => {
+    pluginSettingsAuthContext = authContext && typeof authContext === 'object' ? authContext : null;
     try {
       await sessionController.loadAvailablePlugins?.();
     } catch (error) {
       addLog('error', 'Loading Codex plugins failed.', formatError(error));
     }
-    renderPluginSettingsList(state.codex?.availablePlugins || []);
+    renderPluginSettingsList(state.codex?.availablePlugins || [], pluginSettingsAuthContext);
     openDialog(dom.pluginSettingsDialog);
   };
 
@@ -206,6 +257,8 @@ export function bindAppEvents({
       enableComplexTasks: state.preferences.enableComplexTasks,
     });
     await sessionController.syncSessionSetup?.();
+    pluginSettingsAuthContext = null;
+    renderPluginSettingsAuthHint(null);
     closeDialog(dom.pluginSettingsDialog);
   };
 
@@ -272,6 +325,43 @@ export function bindAppEvents({
       closeContinuitySettings();
     } catch (error) {
       addLog('error', 'Saving continuity settings failed.', formatError(error));
+    }
+  };
+
+  const saveManualWorkspaceRoot = async () => {
+    if (!sessionController.saveAgentSelfSettings) {
+      syncSavedAgentSelfSettingsFromForm();
+      return;
+    }
+
+    const nextSettings = cloneAgentSelfSettings(readAgentSelfSettings());
+    try {
+      await sessionController.saveAgentSelfSettings(nextSettings);
+      lastSavedAgentSelfSettings = nextSettings;
+      renderContinuityDirtyState();
+    } catch (error) {
+      addLog('error', 'Saving manual workspace root failed.', formatError(error));
+    }
+  };
+
+  const chooseManualWorkspaceRoot = async () => {
+    if (!sessionController.selectManualWorkspaceRoot) {
+      return;
+    }
+
+    try {
+      const selectedPath = await sessionController.selectManualWorkspaceRoot({
+        defaultPath: dom.manualWorkspaceRootInput?.value || '',
+      });
+      if (!selectedPath) {
+        return;
+      }
+      if (dom.manualWorkspaceRootInput) {
+        dom.manualWorkspaceRootInput.value = selectedPath;
+      }
+      await saveManualWorkspaceRoot();
+    } catch (error) {
+      addLog('error', 'Selecting manual workspace root failed.', formatError(error));
     }
   };
 
@@ -471,7 +561,13 @@ export function bindAppEvents({
     await saveContinuitySettings();
   });
 
+  dom.manualWorkspaceRootSelect?.addEventListener('click', async () => {
+    await chooseManualWorkspaceRoot();
+  });
+
   dom.pluginSettingsClose?.addEventListener('click', () => {
+    pluginSettingsAuthContext = null;
+    renderPluginSettingsAuthHint(null);
     closeDialog(dom.pluginSettingsDialog);
   });
 
@@ -503,8 +599,23 @@ export function bindAppEvents({
 
   dom.pluginSettingsDialog?.addEventListener?.('click', (event) => {
     if (event.target === dom.pluginSettingsDialog) {
+      pluginSettingsAuthContext = null;
+      renderPluginSettingsAuthHint(null);
       closeDialog(dom.pluginSettingsDialog);
     }
+  });
+
+  dom.callDeferredList?.addEventListener?.('click', (event) => {
+    const target = event?.target;
+    const action = `${target?.dataset?.action || ''}`.trim();
+    if (action !== 'open-plugin-settings') {
+      return;
+    }
+    void openPluginSettings({
+      connectorName: `${target?.dataset?.connectorName || ''}`.trim(),
+      connectorId: `${target?.dataset?.connectorId || ''}`.trim(),
+      linkId: `${target?.dataset?.linkId || ''}`.trim(),
+    });
   });
 
   dom.advancedSettingsDialog?.addEventListener?.('click', (event) => {
@@ -542,6 +653,7 @@ export function bindAppEvents({
 
   [
     dom.agentModeSelect,
+    dom.manualWorkspaceRootInput,
     dom.agentSelfName,
     dom.agentSelfPronouns,
     dom.agentSelfPersonality,

@@ -13,6 +13,7 @@ class FakeElement extends EventTarget {
     this.open = false;
     this.hidden = false;
     this.tagName = tagName;
+    this.dataset = {};
   }
 
   showModal() {
@@ -47,7 +48,10 @@ function createDom() {
     continuitySettingsOpen: new FakeElement(),
     continuitySettingsClose: new FakeElement(),
     callHistoryToggle: new FakeElement(),
+    callDeferredList: new FakeElement(),
+    manualWorkspaceRootSelect: new FakeElement(),
     agentModeSelect: new FakeElement({ value: 'standard', tagName: 'SELECT' }),
+    manualWorkspaceRootInput: new FakeElement(),
     agentSelfName: new FakeElement(),
     agentSelfPronouns: new FakeElement(),
     agentSelfPersonality: new FakeElement(),
@@ -62,6 +66,7 @@ function createDom() {
     pluginSettingsOpen: new FakeElement(),
     pluginSettingsClose: new FakeElement(),
     pluginSettingsSave: new FakeElement(),
+    pluginSettingsAuthHint: new FakeElement(),
     codexPluginList: Object.assign(new FakeElement(), {
       replaceChildren(...children) {
         this.children = children;
@@ -490,6 +495,9 @@ test('bindAppEvents saves continuity settings only when the save button is press
 
   assert.deepEqual(savedSettings, {
     agentMode: 'continuity',
+    manualMode: {
+      workspaceRoot: '',
+    },
     selfProfile: {
       name: 'Moth',
       pronouns: 'they/them',
@@ -501,6 +509,73 @@ test('bindAppEvents saves continuity settings only when the save button is press
   assert.equal(dom.continuitySettingsDialog.open, false);
   assert.equal(dom.continuitySettingsSave.disabled, true);
   assert.equal(dom.continuitySettingsDirty.hidden, true);
+});
+
+test('bindAppEvents chooses and saves the manual workspace root from the continuity dialog', async () => {
+  globalThis.window = Object.assign(new EventTarget(), {
+    confirm() {
+      return true;
+    },
+  });
+
+  const dom = createDom();
+  let savedSettings = null;
+
+  bindAppEvents({
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      uploadVoiceSample: async () => {},
+      selectManualWorkspaceRoot: async () => '/tmp/workspace-beta',
+      saveAgentSelfSettings: async (settings) => {
+        savedSettings = settings;
+      },
+      syncSessionSetup() {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+    },
+    persistState() {},
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.continuitySettingsOpen.dispatchEvent(new Event('click'));
+  dom.manualWorkspaceRootSelect.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(dom.manualWorkspaceRootInput.value, '/tmp/workspace-beta');
+  assert.deepEqual(savedSettings, {
+    agentMode: 'standard',
+    manualMode: {
+      workspaceRoot: '/tmp/workspace-beta',
+    },
+    selfProfile: {
+      name: '',
+      pronouns: '',
+      personality: '',
+      interests: '',
+      selfPrompt: '',
+    },
+  });
 });
 
 test('bindAppEvents warns before closing dirty continuity settings without saving', () => {
@@ -776,6 +851,79 @@ test('bindAppEvents loads live Codex plugins when opening the plugin dialog and 
     enableControlComputer: false,
     enableComplexTasks: false,
   });
+});
+
+test('bindAppEvents can open plugin settings from a blocked connector task with an auth hint', async () => {
+  globalThis.window = new EventTarget();
+
+  const dom = createDom();
+  const state = {
+    callHistoryCollapsed: true,
+    preferences: {
+      bundledModelId: 'bhf-1-2',
+      enabledPluginIds: ['google-calendar@openai-curated'],
+      enableControlComputer: false,
+      enableComplexTasks: false,
+    },
+    codex: {
+      availablePlugins: [],
+    },
+  };
+
+  bindAppEvents({
+    state,
+    dom,
+    humanVoiceLayer: {
+      runTextTurn: async () => {},
+    },
+    avatarController: {
+      selectBundledModel() {
+        return Promise.resolve();
+      },
+      selectStage() {},
+      selectEmote() {},
+      selectGesture() {},
+    },
+    sessionController: {
+      handlePrimaryCallAction: async () => {},
+      ensureSessionReady: async () => {},
+      refreshSession: async () => {},
+      loadAvailablePlugins: async () => {
+        state.codex.availablePlugins = [
+          {
+            id: 'google-calendar@openai-curated',
+            displayName: 'Google Calendar',
+            marketplace: 'openai-curated',
+            version: '1.0.0',
+            description: 'Look up events and availability.',
+          },
+        ];
+      },
+      syncWorkspaceSetup: async () => {},
+      syncSessionSetup: async () => {},
+      destroy() {},
+    },
+    presenter: {
+      refreshActionButtons() {},
+      renderDebugSnapshot() {},
+      renderTranscriptList() {},
+    },
+    persistState() {},
+    addLog() {},
+    formatError(error) {
+      return error;
+    },
+  });
+
+  dom.callDeferredList.dataset.action = 'open-plugin-settings';
+  dom.callDeferredList.dataset.connectorName = 'Google Calendar';
+  dom.callDeferredList.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(dom.pluginSettingsDialog.open, true);
+  assert.equal(dom.pluginSettingsAuthHint.hidden, false);
+  assert.match(dom.pluginSettingsAuthHint.textContent, /Google Calendar needs reconnecting/);
 });
 
 test('bindAppEvents persists advanced Codex tool toggles', async () => {

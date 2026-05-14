@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 import {
+  buildTailscaleServeArgs,
   createOneToOneAgentRoomPlan,
+  extractTailscaleDnsName,
+  parseOneToOneAgentRoomLauncherArgs,
   resolveProductionVoicePythonCandidates,
+  resolveTailscalePublicBaseUrl,
 } from './one-to-one-agent-room-launcher.mjs';
 
 const REPO_ROOT = '/repo';
@@ -58,4 +62,72 @@ test('createOneToOneAgentRoomPlan honors env overrides for ports and mode', () =
   assert.equal(plan.productionVoice.vendorRoot, '/vendor-root');
   assert.equal(plan.roomApp.port, 4499);
   assert.equal(plan.roomApp.npmScript, 'dev');
+});
+
+test('parseOneToOneAgentRoomLauncherArgs accepts the tailscale flag', () => {
+  const options = parseOneToOneAgentRoomLauncherArgs(['dev', '--tailscale']);
+
+  assert.deepEqual(options, {
+    mode: 'dev',
+    tailscale: true,
+  });
+});
+
+test('extractTailscaleDnsName strips the trailing dot from tailscale status output', () => {
+  const dnsName = extractTailscaleDnsName({
+    Self: {
+      DNSName: 'laptop.tail1234.ts.net.',
+    },
+  });
+
+  assert.equal(dnsName, 'laptop.tail1234.ts.net');
+});
+
+test('resolveTailscalePublicBaseUrl keeps non-default https ports in the URL', () => {
+  const publicBaseUrl = resolveTailscalePublicBaseUrl({
+    dnsName: 'laptop.tail1234.ts.net.',
+    httpsPort: 4384,
+  });
+
+  assert.equal(publicBaseUrl, 'https://laptop.tail1234.ts.net:4384');
+});
+
+test('buildTailscaleServeArgs proxies the room app through tailscale serve', () => {
+  const args = buildTailscaleServeArgs({
+    targetPort: 4384,
+    httpsPort: 443,
+  });
+
+  assert.deepEqual(args, [
+    'serve',
+    '--bg',
+    '--https=443',
+    'http://127.0.0.1:4384',
+  ]);
+});
+
+test('createOneToOneAgentRoomPlan enables tailscale with default external https port 443', () => {
+  const plan = createOneToOneAgentRoomPlan({
+    mode: 'start',
+    repoRoot: REPO_ROOT,
+    env: {},
+    enableTailscale: true,
+  });
+
+  assert.equal(plan.tailscale.enabled, true);
+  assert.equal(plan.tailscale.httpsPort, 443);
+});
+
+test('createOneToOneAgentRoomPlan still honors an explicit tailscale https port override', () => {
+  const plan = createOneToOneAgentRoomPlan({
+    mode: 'start',
+    repoRoot: REPO_ROOT,
+    env: {
+      ONE_TO_ONE_AGENT_ROOM_TAILSCALE_HTTPS_PORT: '4384',
+    },
+    enableTailscale: true,
+  });
+
+  assert.equal(plan.tailscale.enabled, true);
+  assert.equal(plan.tailscale.httpsPort, 4384);
 });

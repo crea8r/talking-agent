@@ -15,6 +15,13 @@ import {
 import {
   pickRandomThinkingPromptPhrase,
 } from './thinking-prompt-sequence.js';
+import {
+  clearLoadingUiState,
+  setLoadingUiState,
+} from './loading-ui.js';
+import {
+  applyManualSettingsToLaunchContext,
+} from './launch-context.js';
 
 const INITIAL_THINKING_PROMPT_DELAY_MS = 550;
 const THINKING_PROMPT_LOOP_BASE_DELAY_MS = 1_000;
@@ -82,10 +89,13 @@ export function createSessionController({
   syncVoiceSampleProfile,
   persistState,
   updateRoomStatus,
+  onLaunchContextChange = null,
   timers = globalThis,
   random = Math.random,
 }) {
   let prepareDebounceId = 0;
+  let activeLobbyPreparation = null;
+  let nextLobbyPreparationId = 0;
   let ambientTimerId = 0;
   let speechBeatTimerIds = [];
   let interruptionIssuedForUtterance = false;
@@ -136,6 +146,29 @@ export function createSessionController({
         };
   }
 
+  function renderLoadingUiState() {
+    renderCallSnapshot();
+    refreshActionButtons();
+    renderDebugSnapshot();
+  }
+
+  function setCallLoadingPhase(phase = '', detail = '') {
+    setLoadingUiState(state, 'call', {
+      active: Boolean(`${phase || ''}`.trim()),
+      phase,
+      detail,
+    });
+    if (`${phase || ''}`.trim()) {
+      updateRoomStatus('loading', phase, detail);
+    }
+    renderLoadingUiState();
+  }
+
+  function clearCallLoadingPhase() {
+    clearLoadingUiState(state, 'call');
+    renderLoadingUiState();
+  }
+
   function buildVoiceScopeQuery() {
     const workspaceKey = `${getLaunchContext().workspaceKey || ''}`.trim();
     return workspaceKey ? `?scope=${encodeURIComponent(workspaceKey)}` : '';
@@ -147,6 +180,14 @@ export function createSessionController({
 
   function buildAgentSelfScopeQuery() {
     return buildVoiceScopeQuery();
+  }
+
+  function getManualSessionRoute() {
+    return `${state.runtimeConfig?.manualMode?.sessionRoute || '/api/manual-session'}`.trim() || '/api/manual-session';
+  }
+
+  function getManualWorkspaceSelectRoute() {
+    return `${state.runtimeConfig?.manualMode?.selectWorkspaceRoute || '/api/manual-workspace/select'}`.trim() || '/api/manual-workspace/select';
   }
 
   function getProductionVoiceState() {
@@ -195,6 +236,9 @@ export function createSessionController({
         saving: false,
         settings: {
           agentMode: 'standard',
+          manualMode: {
+            workspaceRoot: '',
+          },
           selfProfile: {
             name: '',
             pronouns: '',
@@ -213,6 +257,15 @@ export function createSessionController({
     return globalThis.crypto?.randomUUID?.()
       ? globalThis.crypto.randomUUID()
       : `utt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function buildCurrentCallSessionPayload() {
+    return buildCallSessionPayload(
+      collectFormState(),
+      state.runtimeConfig,
+      getLaunchContext(),
+      getAgentSelfState().settings,
+    );
   }
 
   function getStartupGreetingIndicatorState() {
@@ -278,6 +331,19 @@ export function createSessionController({
       text,
     };
     renderSubtitles();
+  }
+
+  function getLatestTurnErrorText(session = state.session) {
+    const turns = Array.isArray(session?.turns) ? [...session.turns] : [];
+    const latestTurnWithError = turns
+      .reverse()
+      .find((turn) => `${turn?.errorText || ''}`.trim());
+    const turnErrorText = `${latestTurnWithError?.errorText || ''}`.trim();
+    if (turnErrorText) {
+      return turnErrorText;
+    }
+
+    return `${session?.agent?.lastError || ''}`.trim();
   }
 
   function setStartupGreetingStatusText(text = '') {
@@ -477,6 +543,31 @@ export function createSessionController({
     return 'Working on it.';
   }
 
+  function buildTaskAction(turn = {}) {
+    const phase = `${turn?.operation?.phase || ''}`.trim();
+    const auth = turn?.operation?.auth;
+    if (phase !== 'blocked' || !auth || typeof auth !== 'object') {
+      return null;
+    }
+
+    const connectorName = `${auth.connectorName || ''}`.trim();
+    const connectorId = `${auth.connectorId || ''}`.trim();
+    const linkId = `${auth.linkId || ''}`.trim();
+    if (!connectorName && !connectorId && !linkId) {
+      return null;
+    }
+
+    return {
+      kind: 'open-plugin-settings',
+      label: 'Reconnect',
+      connectorName,
+      connectorId,
+      linkId,
+      authReason: `${auth.authReason || ''}`.trim(),
+      errorAction: `${auth.errorAction || ''}`.trim(),
+    };
+  }
+
   function getDeferredIndicatorState() {
     if (!state.deferredIndicator || typeof state.deferredIndicator !== 'object') {
       state.deferredIndicator = {
@@ -558,6 +649,7 @@ export function createSessionController({
           label: pickOperationSummary(turn) || 'Working on your request',
           detail: buildOperationStatusText(turn, { background }),
           phase: `${turn?.operation?.phase || (background ? 'background' : 'working')}`.trim(),
+          action: buildTaskAction(turn),
           background,
           startedAt,
           elapsedSeconds: Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
@@ -1240,6 +1332,9 @@ export function createSessionController({
     const settings = payload?.settings || {};
     agentSelf.settings = {
       agentMode: `${settings.agentMode || 'standard'}`.trim() === 'continuity' ? 'continuity' : 'standard',
+      manualMode: {
+        workspaceRoot: `${settings.manualMode?.workspaceRoot || ''}`.trim(),
+      },
       selfProfile: {
         name: `${settings.selfProfile?.name || ''}`.trim(),
         pronouns: `${settings.selfProfile?.pronouns || ''}`.trim(),
@@ -1249,6 +1344,29 @@ export function createSessionController({
       },
     };
     renderDebugSnapshot();
+  }
+
+  function commitLaunchContext(nextLaunchContext) {
+    if (typeof onLaunchContextChange === 'function') {
+      onLaunchContextChange(nextLaunchContext);
+      return;
+    }
+    state.launchContext = nextLaunchContext;
+    renderDebugSnapshot();
+  }
+
+  function syncManualLaunchContextFromSettings() {
+    const launch = getLaunchContext();
+    const nextLaunchContext = applyManualSettingsToLaunchContext({
+      launchContext: launch,
+      runtimeConfig: state.runtimeConfig || {},
+      settings: getAgentSelfState().settings,
+    });
+    if (JSON.stringify(nextLaunchContext) === JSON.stringify(launch)) {
+      return launch;
+    }
+    commitLaunchContext(nextLaunchContext);
+    return nextLaunchContext;
   }
 
   function applyWorkspaceSetupPayload(payload) {
@@ -2030,7 +2148,7 @@ export function createSessionController({
     }
   }
 
-  async function syncSessionSetup() {
+  async function syncSessionSetup({ allowLobbyRebuild = true } = {}) {
     if (!state.session?.id || !state.runtimeConfig) {
       return;
     }
@@ -2039,12 +2157,16 @@ export function createSessionController({
       defaultCharacterId: resolveActiveCharacterId(),
     });
 
-    const payload = buildCallSessionPayload(
-      collectFormState(),
-      state.runtimeConfig,
-      getLaunchContext(),
-      getAgentSelfState().settings,
-    );
+    if (
+      allowLobbyRebuild &&
+      !state.activeCall &&
+      getLaunchContext().mode !== 'linked-call'
+    ) {
+      scheduleLobbySessionPreparation({ force: true, immediate: true });
+      return;
+    }
+
+    const payload = buildCurrentCallSessionPayload();
     const merged = await postJson(
       `/api/call/sessions/${encodeURIComponent(state.session.id)}/setup`,
       {
@@ -2070,6 +2192,7 @@ export function createSessionController({
     try {
       const payload = await fetchJson('/api/agent-self/settings');
       applyAgentSelfSettingsPayload(payload);
+      syncManualLaunchContextFromSettings();
       return payload;
     } finally {
       agentSelf.loading = false;
@@ -2083,11 +2206,27 @@ export function createSessionController({
     try {
       const payload = await postJson('/api/agent-self/settings', settings);
       applyAgentSelfSettingsPayload(payload);
+      syncManualLaunchContextFromSettings();
+      if (!state.activeCall && getLaunchContext().mode !== 'linked-call') {
+        scheduleLobbySessionPreparation({ force: true, immediate: true });
+      } else if (state.session?.id) {
+        await syncSessionSetup({ allowLobbyRebuild: false });
+      }
       return payload;
     } finally {
       agentSelf.saving = false;
       renderDebugSnapshot();
     }
+  }
+
+  async function selectManualWorkspaceRoot({ defaultPath = '' } = {}) {
+    const payload = await postJson(getManualWorkspaceSelectRoute(), {
+      defaultPath: `${defaultPath || ''}`.trim(),
+    });
+    if (payload?.cancelled === true) {
+      return '';
+    }
+    return `${payload?.workspaceRoot || ''}`.trim();
   }
 
   async function syncWorkspaceSetup({
@@ -2254,20 +2393,104 @@ export function createSessionController({
     }
   }
 
-  async function prepareLobbySession({ force = false } = {}) {
+  function isDisposableLobbySession(session = state.session) {
+    if (!session || state.activeCall || getLaunchContext().mode === 'linked-call') {
+      return false;
+    }
+
+    const sessionState = `${session.state || ''}`.trim();
+    if (sessionState === 'live' || sessionState === 'ended') {
+      return false;
+    }
+
+    return (session.turns || []).length === 0;
+  }
+
+  async function discardLobbySession(sessionId, reason = 'Lobby session discarded because the setup changed.') {
+    const cleanedSessionId = `${sessionId || ''}`.trim();
+    if (!cleanedSessionId) {
+      return;
+    }
+
+    await postJson(
+      `/api/call/sessions/${encodeURIComponent(cleanedSessionId)}/discard`,
+      { reason },
+    );
+    if (state.session?.id === cleanedSessionId) {
+      state.session = null;
+      state.sessionKey = '';
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+    }
+  }
+
+  async function waitForManualStandbyReady({ sessionId, preparationId } = {}) {
+    const cleanedSessionId = `${sessionId || ''}`.trim();
+    while (cleanedSessionId && activeLobbyPreparation?.id === preparationId) {
+      const standbyStatus = `${state.session?.standby?.status || ''}`.trim().toLowerCase();
+      if (!standbyStatus || standbyStatus === 'ready') {
+        return state.session;
+      }
+      if (standbyStatus === 'failed' || standbyStatus === 'aborted') {
+        throw new Error(
+          `${state.session?.standby?.error || 'Codex standby warmup failed.'}`.trim() ||
+            'Codex standby warmup failed.',
+        );
+      }
+
+      await new Promise((resolve) => {
+        timers.setTimeout?.(resolve, ACTIVE_SESSION_POLL_INTERVAL_MS);
+      });
+      if (activeLobbyPreparation?.id !== preparationId) {
+        return state.session;
+      }
+
+      const payload = await fetchJson(`/api/call/sessions/${encodeURIComponent(cleanedSessionId)}`);
+      if (activeLobbyPreparation?.id !== preparationId) {
+        return state.session;
+      }
+      applySessionPayload(payload);
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+    }
+
+    return state.session;
+  }
+
+  async function prepareLobbySession({ force = false, onPhaseChange = null } = {}) {
     if (!state.runtimeConfig) {
       return state.session;
     }
 
+    const launch = getLaunchContext();
+    const standbyReady =
+      launch.mode === 'linked-call' ||
+      `${state.session?.standby?.status || ''}`.trim().toLowerCase() === 'ready';
     const form = collectFormState();
     const sessionKey = buildCallSessionKey(
       form,
       state.runtimeConfig,
-      getLaunchContext(),
+      launch,
       getAgentSelfState().settings,
     );
-    if (!force && state.session?.id && state.sessionKey === sessionKey) {
+    if (
+      !force &&
+      state.session?.id &&
+      state.sessionKey === sessionKey &&
+      state.session?.state !== 'ended' &&
+      !state.sessionPreparing &&
+      standbyReady
+    ) {
       return state.session;
+    }
+    if (
+      activeLobbyPreparation &&
+      activeLobbyPreparation.sessionKey === sessionKey &&
+      launch.mode !== 'linked-call'
+    ) {
+      return activeLobbyPreparation.promise;
     }
 
     state.sessionPreparing = true;
@@ -2275,19 +2498,93 @@ export function createSessionController({
     renderAgentStatus();
     renderDebugSnapshot();
 
-    try {
-      const sessionResponse = await postJson(
-        '/api/call/sessions',
-        buildCallSessionPayload(
-          form,
-          state.runtimeConfig,
-          getLaunchContext(),
-          getAgentSelfState().settings,
-        ),
-      );
+    const preparationId = ++nextLobbyPreparationId;
+    const preparationPromise = (async () => {
+      const nextPayload = buildCurrentCallSessionPayload();
+      const reportPhase =
+        typeof onPhaseChange === 'function'
+          ? onPhaseChange
+          : () => {};
+
+      if (launch.mode !== 'linked-call') {
+        reportPhase('Attaching standby session', 'Attaching the manual standby Codex session from the host.');
+        const sessionResponse = await fetchJson(getManualSessionRoute());
+        if (activeLobbyPreparation?.id !== preparationId) {
+          return state.session;
+        }
+
+        applySessionPayload(sessionResponse);
+        state.sessionKey = sessionKey;
+        if (`${sessionResponse?.session?.standby?.status || ''}`.trim().toLowerCase() !== 'ready') {
+          await waitForManualStandbyReady({
+            sessionId: state.session.id,
+            preparationId,
+          });
+        }
+
+        renderSessionSnapshot();
+        renderTranscriptList();
+        renderDebugSnapshot();
+        addLog('info', 'Attached manual standby Codex session.', {
+          sessionId: state.session?.id || '',
+          title: state.session?.title || '',
+        });
+        return state.session;
+      }
+
+      reportPhase('Creating session', 'Creating a direct Codex session on the host.');
+      const sessionResponse = await postJson('/api/call/sessions', nextPayload);
+      if (activeLobbyPreparation?.id !== preparationId) {
+        await discardLobbySession(
+          sessionResponse?.session?.id,
+          'Superseded lobby session discarded before activation.',
+        ).catch(() => {});
+        return state.session;
+      }
+
       applySessionPayload(sessionResponse);
       state.sessionKey = sessionKey;
-      await syncSessionSetup();
+
+      reportPhase('Syncing setup', 'Syncing the workspace setup with the host session.');
+      const setupResponse = await postJson(
+        `/api/call/sessions/${encodeURIComponent(state.session.id)}/setup`,
+        {
+          metadata: nextPayload.metadata,
+        },
+      );
+      if (activeLobbyPreparation?.id !== preparationId) {
+        await discardLobbySession(
+          sessionResponse?.session?.id,
+          'Superseded lobby session discarded before activation.',
+        ).catch(() => {});
+        return state.session;
+      }
+
+      applySessionPayload(setupResponse);
+      state.sessionKey = sessionKey;
+
+      if (launch.mode !== 'linked-call') {
+        const standbyResponse = await postJson(
+          `/api/call/sessions/${encodeURIComponent(state.session.id)}/standby`,
+          {},
+        );
+        if (activeLobbyPreparation?.id !== preparationId) {
+          await discardLobbySession(
+            sessionResponse?.session?.id,
+            'Superseded standby session discarded before activation.',
+          ).catch(() => {});
+          return state.session;
+        }
+
+        applySessionPayload(standbyResponse);
+        if (`${standbyResponse?.session?.standby?.status || ''}`.trim().toLowerCase() !== 'ready') {
+          await waitForManualStandbyReady({
+            sessionId: state.session.id,
+            preparationId,
+          });
+        }
+      }
+
       renderSessionSnapshot();
       renderTranscriptList();
       renderDebugSnapshot();
@@ -2296,13 +2593,23 @@ export function createSessionController({
         title: state.session.title,
       });
       return state.session;
-    } finally {
-      state.sessionPreparing = false;
-      renderSessionSnapshot();
-      renderAgentStatus();
-      renderDebugSnapshot();
-      refreshActionButtons();
-    }
+    })().finally(() => {
+      if (activeLobbyPreparation?.id === preparationId) {
+        activeLobbyPreparation = null;
+        state.sessionPreparing = false;
+        renderSessionSnapshot();
+        renderAgentStatus();
+        renderDebugSnapshot();
+        refreshActionButtons();
+      }
+    });
+
+    activeLobbyPreparation = {
+      id: preparationId,
+      sessionKey,
+      promise: preparationPromise,
+    };
+    return preparationPromise;
   }
 
   function scheduleLobbySessionPreparation({ force = false, immediate = false } = {}) {
@@ -2918,6 +3225,7 @@ export function createSessionController({
   async function startCall() {
     const productionVoice = getProductionVoiceState();
     const codex = getCodexState();
+    const launch = getLaunchContext();
 
     if (!productionVoice.profile?.referenceAvailable) {
       throw new Error('Upload a WAV production voice sample before starting the call.');
@@ -2933,43 +3241,52 @@ export function createSessionController({
       throw new Error(codex.backendDetail || 'Codex exec is unavailable.');
     }
 
-    await prepareLobbySession({ force: true });
-    await ensureSessionReady();
-    await syncSessionSetup();
+    try {
+      await prepareLobbySession({
+        force: launch.mode === 'linked-call',
+        onPhaseChange: setCallLoadingPhase,
+      });
+      await ensureSessionReady();
 
-    const payload = await postJson(
-      `/api/call/sessions/${encodeURIComponent(state.session.id)}/state`,
-      { state: 'live', skipWarmup: true },
-    );
-    applySessionPayload(payload);
-    state.activeCall = true;
-    state.endingCall = false;
-    state.callEndingDimmed = false;
-    state.startupGreetingActive = true;
-    state.humanMicMuted = false;
-    state.humanMicLevel = 0;
-    humanVoiceLayer.updateConfig?.({ autoRestart: false });
-    humanVoiceLayer.stopListening({ suppressAutoRestart: true });
-    state.playbackGeneration += 1;
-    interruptionIssuedForUtterance = false;
-    resetDeferredTurnTracking();
-    startStartupGreetingIndicator();
+      setCallLoadingPhase('Starting call runtime', 'Starting the direct Codex runtime on the host.');
+      const payload = await postJson(
+        `/api/call/sessions/${encodeURIComponent(state.session.id)}/state`,
+        { state: 'live', skipWarmup: true },
+      );
+      applySessionPayload(payload);
+      state.activeCall = true;
+      state.endingCall = false;
+      state.callEndingDimmed = false;
+      state.startupGreetingActive = true;
+      state.humanMicMuted = false;
+      state.humanMicLevel = 0;
+      humanVoiceLayer.updateConfig?.({ autoRestart: false });
+      humanVoiceLayer.stopListening({ suppressAutoRestart: true });
+      state.playbackGeneration += 1;
+      interruptionIssuedForUtterance = false;
+      resetDeferredTurnTracking();
+      setCallLoadingPhase('Waiting for greeting', 'Waiting for the first greeting from the host.');
+      startStartupGreetingIndicator();
+      clearCallLoadingPhase();
 
-    updateRoomStatus('loading', 'Connecting call', 'Waiting for the agent greeting to start.');
-    setSubtitle('human', 'Stand by…', 'idle');
-    setSubtitle('agent', 'Connecting…', 'ready');
-    renderCallSnapshot();
-    renderSessionSnapshot();
-    renderTranscriptList();
-    renderDebugSnapshot();
-    renderAgentStatus();
-    refreshActionButtons();
-    syncAmbientMotion();
+      setSubtitle('human', 'Stand by…', 'idle');
+      setSubtitle('agent', 'Connecting…', 'ready');
+      renderCallSnapshot();
+      renderSessionSnapshot();
+      renderTranscriptList();
+      renderDebugSnapshot();
+      renderAgentStatus();
+      refreshActionButtons();
+      syncAmbientMotion();
 
-    addLog('info', 'Voice call started.', {
-      sessionId: state.session.id,
-    });
-    await requestStartupGreeting();
+      addLog('info', 'Voice call started.', {
+        sessionId: state.session.id,
+      });
+      await requestStartupGreeting();
+    } catch (error) {
+      clearCallLoadingPhase();
+      throw error;
+    }
   }
 
   async function setMicrophoneMuted(muted = true) {
@@ -3433,7 +3750,23 @@ export function createSessionController({
         return;
       }
 
-      setSubtitle('agent', 'Codex could not reply.', 'error');
+      let failureText = '';
+      try {
+        await refreshSession();
+        failureText = getLatestTurnErrorText();
+      } catch (refreshError) {
+        addLog(
+          'warn',
+          'Failed to refresh the session after a Codex turn error.',
+          formatError(refreshError),
+        );
+      }
+
+      setSubtitle(
+        'agent',
+        failureText || formatError(error) || 'Codex could not reply.',
+        'error',
+      );
       await resumeHumanListeningIfAllowed({ updateSubtitle: true }).catch((resumeError) => {
         addLog(
           'error',
@@ -3526,6 +3859,7 @@ export function createSessionController({
     loadWorkspaceSetup,
     loadAgentSelfSettings,
     saveAgentSelfSettings,
+    selectManualWorkspaceRoot,
     resolveLinkedLaunch,
     refreshSession,
     enqueueHumanTurn,

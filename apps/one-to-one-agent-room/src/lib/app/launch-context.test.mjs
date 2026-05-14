@@ -9,6 +9,9 @@ test('resolveLaunchContext defaults to manual mode and setup-first navigation', 
     runtimeConfig: {
       codexProjectName: 'talking-agent',
       codexProjectPath: '/Users/hieu/Work/crea8r/talking-agent',
+      manualMode: {
+        workspaceRoot: '/tmp/manual-workspace',
+      },
     },
   });
 
@@ -16,9 +19,9 @@ test('resolveLaunchContext defaults to manual mode and setup-first navigation', 
     mode: 'manual',
     autoStart: false,
     initialScreen: 'setup',
-    workspaceRoot: '/Users/hieu/Work/crea8r/talking-agent',
-    workspaceKey: 'users-hieu-work-crea8r-talking-agent',
-    displayTitle: 'talking-agent',
+    workspaceRoot: '/tmp/manual-workspace',
+    workspaceKey: 'tmp-manual-workspace',
+    displayTitle: 'manual-workspace',
     launchId: '',
     originalSessionId: '',
     callSessionId: '',

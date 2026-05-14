@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 
 import {
   DEFAULT_MODE,
+  DEFAULT_MANUAL_MODE,
   DEFAULT_PROFILE,
   DEFAULT_PROJECT_TURN_RANGE,
   ensureDir,
@@ -137,6 +138,7 @@ export function createAgentSelf({
     const saved = await readJson(settingsPath, null);
     return normalizeSettings(saved || {
       agentMode: DEFAULT_MODE,
+      manualMode: DEFAULT_MANUAL_MODE,
       selfProfile: DEFAULT_PROFILE,
     });
   }

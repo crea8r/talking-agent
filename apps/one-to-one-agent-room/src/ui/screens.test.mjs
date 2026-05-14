@@ -73,6 +73,11 @@ test('index.html exposes Setup and Call tabs without a visible debug surface', (
   assert.match(html, /id="plugin-settings-open"/);
   assert.match(html, /id="advanced-settings-open"/);
   assert.match(html, /id="continuity-settings-dialog"/);
+  assert.ok(
+    html.indexOf('id="continuity-settings-dialog"') <
+      html.indexOf('id="manual-workspace-root"'),
+  );
+  assert.match(html, /id="manual-workspace-root-select"/);
   assert.match(html, /id="plugin-settings-dialog"/);
   assert.match(html, /id="advanced-settings-dialog"/);
   assert.match(html, /id="continuity-settings-close"/);

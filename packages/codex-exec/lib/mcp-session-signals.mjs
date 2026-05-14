@@ -48,6 +48,16 @@ function pickToolName(payload = {}) {
   );
 }
 
+function pickConnectorName(payload = {}, params = {}) {
+  return normalizeString(
+    payload?.connector_name ||
+      payload?._meta?.connector_name ||
+      payload?.tool?._meta?.connector_name ||
+      params?.connector_name ||
+      params?._meta?.connector_name,
+  );
+}
+
 function humanizeToolName(toolName = '') {
   const cleaned = normalizeString(toolName);
   if (!cleaned) {
@@ -57,6 +67,21 @@ function humanizeToolName(toolName = '') {
     .replace(/^_+/, '')
     .replace(/[._-]+/g, ' ')
     .trim();
+}
+
+function inferConnectorNameFromTool(toolName = '') {
+  const cleaned = normalizeString(toolName);
+  if (!cleaned) {
+    return '';
+  }
+  const inferred = cleaned.includes('_') ? cleaned.split('_')[0] : humanizeToolName(cleaned);
+  return inferred
+    .replace(/[._-]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 export async function readThreadState(sessionReadyPath) {
@@ -80,12 +105,17 @@ export function normalizeWorkerNotification(message = {}) {
   const params = message?.params || {};
   const payload = pickPayload(params);
   const payloadType = normalizeString(payload?.type || params?.type);
+  const toolName = pickToolName(payload);
   const authFailure =
     payload?._meta?._codex_apps?.connector_auth_failure ||
     params?._meta?._codex_apps?.connector_auth_failure ||
     null;
   if (authFailure?.is_auth_failure) {
-    const connector = normalizeString(authFailure.connector_name) || 'Connected app';
+    const connector =
+      normalizeString(authFailure.connector_name) ||
+      pickConnectorName(payload, params) ||
+      inferConnectorNameFromTool(toolName) ||
+      'Connected app';
     return {
       kind: 'auth-required',
       level: 'warn',
@@ -94,7 +124,12 @@ export function normalizeWorkerNotification(message = {}) {
       source: 'mcp-notification',
       method,
       payloadType: payloadType || 'connector_auth_failure',
-      toolName: pickToolName(payload),
+      toolName,
+      connectorName: connector,
+      connectorId: normalizeString(authFailure.connector_id),
+      linkId: normalizeString(authFailure.link_id),
+      authReason: normalizeString(authFailure.auth_reason),
+      errorAction: normalizeString(authFailure.error_action),
     };
   }
 
@@ -113,11 +148,10 @@ export function normalizeWorkerNotification(message = {}) {
       source: 'mcp-notification',
       method,
       payloadType,
-      toolName: pickToolName(payload),
+      toolName,
     };
   }
 
-  const toolName = pickToolName(payload);
   const readableToolName = humanizeToolName(toolName);
   if (toolName && TOOL_START_TYPES.has(payloadType)) {
     return {

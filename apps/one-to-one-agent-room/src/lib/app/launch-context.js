@@ -25,7 +25,7 @@ function normalizeScreen(value, fallbackValue) {
   return cleaned === 'call' || cleaned === 'setup' ? cleaned : fallbackValue;
 }
 
-function slugifyWorkspaceKey(value) {
+export function slugifyWorkspaceKey(value) {
   const slug = normalizeString(value)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -33,7 +33,7 @@ function slugifyWorkspaceKey(value) {
   return slug || 'default';
 }
 
-function deriveWorkspaceLabel(workspaceRoot, runtimeConfig = {}) {
+export function deriveWorkspaceLabel(workspaceRoot, runtimeConfig = {}) {
   const cleanedWorkspaceRoot = normalizeString(workspaceRoot);
   if (cleanedWorkspaceRoot) {
     const segments = cleanedWorkspaceRoot.split('/').filter(Boolean);
@@ -41,6 +41,41 @@ function deriveWorkspaceLabel(workspaceRoot, runtimeConfig = {}) {
   }
 
   return normalizeString(runtimeConfig.codexProjectName || runtimeConfig.appName || 'Codex Project');
+}
+
+export function resolveConfiguredManualWorkspaceRoot(runtimeConfig = {}) {
+  return (
+    normalizeString(runtimeConfig?.manualMode?.workspaceRoot) ||
+    normalizeString(runtimeConfig?.codexProjectPath)
+  );
+}
+
+export function applyManualSettingsToLaunchContext({
+  launchContext = {},
+  runtimeConfig = {},
+  settings = {},
+} = {}) {
+  const currentLaunch =
+    launchContext && typeof launchContext === 'object'
+      ? launchContext
+      : {};
+  if (normalizeMode(currentLaunch.mode) === 'linked-call') {
+    return currentLaunch;
+  }
+
+  const workspaceRoot =
+    normalizeString(settings?.manualMode?.workspaceRoot) ||
+    resolveConfiguredManualWorkspaceRoot(runtimeConfig);
+
+  return {
+    ...currentLaunch,
+    mode: 'manual',
+    autoStart: false,
+    initialScreen: normalizeScreen(currentLaunch.initialScreen, 'setup'),
+    workspaceRoot,
+    workspaceKey: slugifyWorkspaceKey(workspaceRoot),
+    displayTitle: deriveWorkspaceLabel(workspaceRoot, runtimeConfig),
+  };
 }
 
 export function resolveLaunchContext({
@@ -52,7 +87,7 @@ export function resolveLaunchContext({
   const workspaceRoot =
     normalizeString(url.searchParams.get('cwd')) ||
     normalizeString(url.searchParams.get('workspaceRoot')) ||
-    normalizeString(runtimeConfig.codexProjectPath);
+    resolveConfiguredManualWorkspaceRoot(runtimeConfig);
   const displayTitle =
     normalizeString(url.searchParams.get('title')) || deriveWorkspaceLabel(workspaceRoot, runtimeConfig);
   const autoStart = normalizeBooleanFlag(url.searchParams.get('autostart'), mode === 'linked-call');

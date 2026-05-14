@@ -57,6 +57,10 @@ function createPresenterHarness({
     callSpeakerToggle: createElement(),
     callMicToggle: createElement(),
     callAvatarHost: createElement(),
+    setupAvatarLoading: createElement({ hidden: true }),
+    setupAvatarLoadingLabel: createElement(),
+    setupAvatarLoadingProgress: createElement({ hidden: true }),
+    setupAvatarLoadingDetail: createElement({ hidden: true }),
     callSelfCluster: createElement({ hidden: true }),
     callSelfView: createElement({ hidden: true }),
     callSelfVideo: createElement({ hidden: true, play() { return Promise.resolve(); } }),
@@ -83,6 +87,27 @@ function createPresenterHarness({
   };
 
   const state = {
+    launchContext: {
+      initialScreen: 'setup',
+    },
+    loadingUi: {
+      boot: {
+        active: false,
+        phase: '',
+        detail: '',
+      },
+      call: {
+        active: false,
+        phase: '',
+        detail: '',
+      },
+      avatar: {
+        active: false,
+        phase: '',
+        detail: '',
+        percent: null,
+      },
+    },
     productionVoice: {
       loading: false,
       uploading: false,
@@ -195,6 +220,83 @@ test('renderCallSnapshot keeps the stage clear during initial avatar loading bef
   assert.equal(dom.callStageLoading.hidden, true);
   assert.equal(dom.joinCall.disabled, false);
   assert.equal(dom.callEmptyStateDetail.textContent, 'Ready to start');
+});
+
+test('renderCallSnapshot shows boot phase copy when the call screen opens before remote dependencies finish loading', () => {
+  const { presenter, dom } = createPresenterHarness({
+    stateOverrides: {
+      launchContext: {
+        initialScreen: 'call',
+      },
+      loadingUi: {
+        boot: {
+          active: true,
+          phase: 'Loading avatar assets',
+          detail: 'Downloading avatar assets from the host.',
+        },
+        call: {
+          active: false,
+          phase: '',
+          detail: '',
+        },
+      },
+      productionVoice: {
+        loading: false,
+        uploading: false,
+        backendRunning: true,
+        profile: { referenceAvailable: true },
+        validationMessage: '',
+      },
+    },
+    avatarLayerSnapshot: {
+      ready: false,
+    },
+  });
+
+  presenter.renderCallSnapshot();
+
+  assert.equal(dom.callStageLoading.hidden, false);
+  assert.equal(dom.callStageLoadingLabel.textContent, 'Loading avatar assets');
+  assert.equal(dom.callStageLoadingTip.hidden, false);
+  assert.equal(dom.callStageLoadingTip.textContent, 'Downloading avatar assets from the host.');
+});
+
+test('refreshActionButtons shows an obvious setup overlay while the remote avatar and VRMA assets are loading', () => {
+  const { presenter, dom } = createPresenterHarness({
+    stateOverrides: {
+      modelLoading: true,
+      loadingUi: {
+        boot: {
+          active: false,
+          phase: '',
+          detail: '',
+        },
+        call: {
+          active: false,
+          phase: '',
+          detail: '',
+        },
+        avatar: {
+          active: true,
+          phase: 'Loading character animations',
+          detail: 'Streaming VRMA motion files from your laptop.',
+          percent: 94,
+        },
+      },
+    },
+  });
+
+  presenter.refreshActionButtons();
+
+  assert.equal(dom.setupAvatarLoading.hidden, false);
+  assert.equal(dom.setupAvatarLoadingLabel.textContent, 'Loading character animations');
+  assert.equal(dom.setupAvatarLoadingProgress.hidden, false);
+  assert.equal(dom.setupAvatarLoadingProgress.textContent, '94%');
+  assert.equal(dom.setupAvatarLoadingDetail.hidden, false);
+  assert.equal(
+    dom.setupAvatarLoadingDetail.textContent,
+    'Streaming VRMA motion files from your laptop.',
+  );
 });
 
 test('renderCallSnapshot makes the mic live and glowing while the user is speaking', () => {
@@ -345,9 +447,16 @@ test('renderCallSnapshot shows the deferred-work timer only while background wor
           {
             id: 'turn-b',
             label: 'check my Google Calendar availability',
-            detail: 'Still working in the background.',
+            detail: 'Google Calendar needs reconnecting.',
             elapsedSeconds: 12,
-            phase: 'background',
+            phase: 'blocked',
+            action: {
+              kind: 'open-plugin-settings',
+              label: 'Reconnect',
+              connectorName: 'Google Calendar',
+              connectorId: 'connector_1',
+              linkId: 'link_1',
+            },
           },
         ],
       },
@@ -367,6 +476,8 @@ test('renderCallSnapshot shows the deferred-work timer only while background wor
   assert.match(dom.callDeferredList.innerHTML, /save the airplane report to Google Drive/);
   assert.match(dom.callDeferredList.innerHTML, /Using google drive create file\./);
   assert.match(dom.callDeferredList.innerHTML, /check my Google Calendar availability/);
+  assert.match(dom.callDeferredList.innerHTML, /data-action=\"open-plugin-settings\"/);
+  assert.match(dom.callDeferredList.innerHTML, /Reconnect/);
   assert.match(dom.callDeferredList.innerHTML, /0:37/);
   assert.match(dom.callDeferredList.innerHTML, /0:12/);
 
@@ -516,6 +627,18 @@ test('renderCallSnapshot shows the stage loading overlay while starting the call
   const { presenter, dom } = createPresenterHarness({
     stateOverrides: {
       sessionPreparing: true,
+      loadingUi: {
+        boot: {
+          active: false,
+          phase: '',
+          detail: '',
+        },
+        call: {
+          active: true,
+          phase: 'Creating session',
+          detail: 'Creating a direct Codex session on the host.',
+        },
+      },
       productionVoice: {
         loading: false,
         uploading: false,
@@ -529,7 +652,10 @@ test('renderCallSnapshot shows the stage loading overlay while starting the call
   presenter.renderCallSnapshot();
 
   assert.equal(dom.callStageLoading.hidden, false);
-  assert.equal(dom.joinCall.attributes.title, 'Starting… · Starting session');
+  assert.equal(dom.callStageLoadingLabel.textContent, 'Creating session');
+  assert.equal(dom.callStageLoadingTip.hidden, false);
+  assert.equal(dom.callStageLoadingTip.textContent, 'Creating a direct Codex session on the host.');
+  assert.equal(dom.joinCall.attributes.title, 'Starting… · Creating session');
 });
 
 test('renderCallSnapshot hides the stage loading overlay once the avatar visual is ready', () => {

@@ -2,6 +2,9 @@ import path from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
 export const DEFAULT_MODE = 'standard';
+export const DEFAULT_MANUAL_MODE = Object.freeze({
+  workspaceRoot: '',
+});
 export const DEFAULT_PROFILE = Object.freeze({
   name: '',
   pronouns: '',
@@ -70,10 +73,17 @@ export function normalizeProfile(profile = {}) {
   };
 }
 
+export function normalizeManualMode(manualMode = {}) {
+  return {
+    workspaceRoot: normalizeString(manualMode.workspaceRoot),
+  };
+}
+
 export function normalizeSettings(settings = {}) {
   const nextMode = normalizeString(settings.agentMode).toLowerCase();
   return {
     agentMode: nextMode === 'continuity' ? 'continuity' : DEFAULT_MODE,
+    manualMode: normalizeManualMode(settings.manualMode),
     selfProfile: normalizeProfile(settings.selfProfile),
   };
 }
@@ -81,6 +91,10 @@ export function normalizeSettings(settings = {}) {
 export function mergeSettings(current = {}, patch = {}) {
   return normalizeSettings({
     agentMode: patch.agentMode ?? current.agentMode,
+    manualMode: {
+      ...(current.manualMode || DEFAULT_MANUAL_MODE),
+      ...(patch.manualMode || {}),
+    },
     selfProfile: {
       ...(current.selfProfile || DEFAULT_PROFILE),
       ...(patch.selfProfile || {}),

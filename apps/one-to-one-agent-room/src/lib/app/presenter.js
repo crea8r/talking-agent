@@ -10,6 +10,7 @@ import {
   getCallTitle,
   getCodexProjectTitle,
 } from './call-session.js';
+import { getLoadingUiState } from './loading-ui.js';
 
 export function createPresenter({
   dom,
@@ -85,6 +86,14 @@ export function createPresenter({
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}:${`${seconds}`.padStart(2, '0')}`;
+  }
+
+  function formatLoadingPercent(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return '';
+    }
+    return `${Math.max(0, Math.min(100, Math.round(numeric)))}%`;
   }
 
   function escapeHtml(text = '') {
@@ -194,7 +203,34 @@ export function createPresenter({
     );
   }
 
+  function renderAvatarLoadingState() {
+    const avatarLoading = getLoadingUiState(state, 'avatar');
+    const visible = Boolean(avatarLoading.active && state.modelLoading);
+    const loadingPercent = formatLoadingPercent(avatarLoading.percent);
+
+    if (dom.avatarPreviewShell) {
+      dom.avatarPreviewShell.dataset.loading = visible ? 'true' : 'false';
+    }
+    if (dom.setupAvatarLoading) {
+      dom.setupAvatarLoading.hidden = !visible;
+    }
+    if (dom.setupAvatarLoadingLabel) {
+      dom.setupAvatarLoadingLabel.textContent = avatarLoading.phase || 'Loading 3D character';
+    }
+    if (dom.setupAvatarLoadingProgress) {
+      dom.setupAvatarLoadingProgress.hidden = !loadingPercent;
+      dom.setupAvatarLoadingProgress.textContent = loadingPercent;
+    }
+    if (dom.setupAvatarLoadingDetail) {
+      const detail =
+        avatarLoading.detail || 'Loading the avatar and motion files from your laptop.';
+      dom.setupAvatarLoadingDetail.hidden = !detail;
+      dom.setupAvatarLoadingDetail.textContent = detail;
+    }
+  }
+
   function renderCallSnapshot() {
+    renderAvatarLoadingState();
     const humanVoiceSnapshot = state.humanVoiceSnapshot || humanVoiceLayer.getSnapshot();
     const agentVoiceSnapshot = state.agentVoiceSnapshot || agentVoiceLayer.getSnapshot();
     const avatarSpeechSnapshot = avatarSpeech.getSnapshot();
@@ -223,6 +259,9 @@ export function createPresenter({
       productionVoiceReady: productionVoiceReady(),
       codexReady: codexReady(),
     });
+    const bootLoading = getLoadingUiState(state, 'boot');
+    const callLoading = getLoadingUiState(state, 'call');
+    const avatarLoading = getLoadingUiState(state, 'avatar');
     const agentOnline = Boolean(
       state.activeCall ||
       state.sessionPreparing ||
@@ -252,6 +291,18 @@ export function createPresenter({
       !state.endingCall &&
       !startupGreetingLocked &&
       agentVoiceSnapshot.speechSynthesisSupported,
+    );
+    const bootLoadingVisible = Boolean(
+      bootLoading.active &&
+      state.launchContext?.initialScreen === 'call' &&
+      !state.callEndingDimmed,
+    );
+    const callLoadingVisible = Boolean(callLoading.active && !state.callEndingDimmed);
+    const avatarLoadingVisible = Boolean(
+      avatarLoading.active &&
+      state.modelLoading &&
+      !startupGreetingConnecting &&
+      !state.callEndingDimmed,
     );
 
     if (dom.callTitle) {
@@ -380,9 +431,14 @@ export function createPresenter({
 
     if (dom.callStageLoading) {
       const callVisualPending = Boolean((state.activeCall || state.sessionPreparing) && !state.callEndingDimmed);
-      const stageLoading = Boolean(
+      const genericStageLoading = Boolean(
         callVisualPending &&
         (state.modelLoading || !avatarSnapshot.ready || startupGreetingConnecting),
+      );
+      const stageLoading = Boolean(
+        genericStageLoading ||
+        callLoadingVisible ||
+        bootLoadingVisible,
       );
       const startupGreetingIndicator =
         state.startupGreetingIndicator && typeof state.startupGreetingIndicator === 'object'
@@ -390,7 +446,15 @@ export function createPresenter({
           : {};
       dom.callStageLoading.hidden = !stageLoading;
       if (dom.callStageLoadingLabel) {
-        dom.callStageLoadingLabel.textContent = startupGreetingConnecting ? 'Connecting' : 'Loading';
+        dom.callStageLoadingLabel.textContent = startupGreetingConnecting
+          ? 'Connecting'
+          : callLoadingVisible
+            ? callLoading.phase || 'Loading'
+            : avatarLoadingVisible
+              ? avatarLoading.phase || 'Loading'
+            : bootLoadingVisible
+              ? bootLoading.phase || 'Loading'
+              : 'Loading';
       }
       if (dom.callStageLoadingCountdown) {
         const showCountdown = Boolean(startupGreetingConnecting && startupGreetingIndicator.active);
@@ -400,10 +464,22 @@ export function createPresenter({
           : '';
       }
       if (dom.callStageLoadingTip) {
-        const showTip = Boolean(startupGreetingConnecting && startupGreetingIndicator.tipText);
+        const loadingDetail = callLoadingVisible
+          ? callLoading.detail
+          : avatarLoadingVisible
+            ? avatarLoading.detail
+          : bootLoadingVisible
+            ? bootLoading.detail
+            : '';
+        const showTip = Boolean(
+          (startupGreetingConnecting && startupGreetingIndicator.tipText) ||
+          (!startupGreetingConnecting && loadingDetail),
+        );
         dom.callStageLoadingTip.hidden = !showTip;
         dom.callStageLoadingTip.textContent = showTip
-          ? `Tip: ${startupGreetingIndicator.tipText}`
+          ? startupGreetingConnecting
+            ? `Tip: ${startupGreetingIndicator.tipText}`
+            : loadingDetail
           : '';
       }
     }
@@ -435,6 +511,21 @@ export function createPresenter({
                       <span class="call-deferred-label">${escapeHtml(task.label || 'Working on your request')}</span>
                       <span class="call-deferred-detail">${escapeHtml(task.detail || '')}</span>
                     </span>
+                    ${
+                      task.action?.kind
+                        ? `
+                          <button
+                            class="call-deferred-action"
+                            type="button"
+                            data-action="${escapeHtml(task.action.kind)}"
+                            data-connector-name="${escapeHtml(task.action.connectorName || '')}"
+                            data-connector-id="${escapeHtml(task.action.connectorId || '')}"
+                            data-link-id="${escapeHtml(task.action.linkId || '')}"
+                            aria-label="${escapeHtml(task.action.label || 'Open settings')}"
+                          >${escapeHtml(task.action.label || 'Open')}</button>
+                        `
+                        : ''
+                    }
                     <span class="call-deferred-time">${escapeHtml(formatDeferredElapsedSeconds(task.elapsedSeconds))}</span>
                   </article>
                 `,
@@ -446,6 +537,16 @@ export function createPresenter({
 
     if (startupGreetingConnecting) {
       setCallButtonMeta(action.label, 'Connecting');
+      return;
+    }
+
+    if (callLoadingVisible) {
+      setCallButtonMeta(action.label, callLoading.phase || 'Loading');
+      return;
+    }
+
+    if (bootLoadingVisible) {
+      setCallButtonMeta(action.label, bootLoading.phase || 'Loading');
       return;
     }
 
@@ -735,6 +836,7 @@ export function createPresenter({
     });
 
     dom.joinCall.disabled = action.disabled;
+    renderAvatarLoadingState();
     if (dom.typedInput) {
       dom.typedInput.disabled = !state.activeCall || state.endingCall || callInputLocked;
     }
@@ -858,6 +960,7 @@ export function createPresenter({
       codex: state.codex,
       avatarSpeech: state.avatarSpeechSnapshot || avatarSpeech.getSnapshot(),
       avatar: avatarLayer.getSnapshot(),
+      loadingUi: state.loadingUi,
       inspector: state.inspectorSnapshot,
       recentLogs: state.logs.slice(0, 8),
       form: collectFormState(),
@@ -876,6 +979,7 @@ export function createPresenter({
     renderAgentStatus,
     renderVoiceSampleState,
     refreshActionButtons,
+    renderAvatarLoadingState,
     renderTranscriptList,
     renderDebugSnapshot,
   };

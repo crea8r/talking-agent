@@ -71,6 +71,30 @@
           <section class="avatar-preview-card" aria-label="Avatar preview">
             <div id="setup-avatar-host" class="avatar-host">
               <section id="avatar-preview-shell" class="avatar-preview-shell">
+                <section
+                  id="setup-avatar-loading"
+                  class="avatar-preview-loading"
+                  aria-live="polite"
+                  hidden
+                >
+                  <div class="avatar-preview-loading-card">
+                    <p class="avatar-preview-loading-kicker">Loading Character</p>
+                    <p
+                      id="setup-avatar-loading-label"
+                      class="avatar-preview-loading-label"
+                    >Loading 3D character</p>
+                    <p
+                      id="setup-avatar-loading-progress"
+                      class="avatar-preview-loading-progress"
+                      hidden
+                    >0%</p>
+                    <p
+                      id="setup-avatar-loading-detail"
+                      class="avatar-preview-loading-detail"
+                      hidden
+                    >Loading the avatar and motion files from your laptop.</p>
+                  </div>
+                </section>
                 <div id="stage-shell" class="stage-shell">
                   <canvas id="agent-canvas" aria-label="Agent avatar stage"></canvas>
                   <div class="orb orb-a"></div>
@@ -452,6 +476,26 @@
               <option value="continuity">Continuity</option>
             </select>
           </label>
+          <label class="agent-self-field agent-self-field--wide" for="manual-workspace-root">
+            <span class="setup-control-label">Workspace Root</span>
+            <div class="workspace-picker-row">
+              <input
+                id="manual-workspace-root"
+                name="manual-workspace-root"
+                type="text"
+                readonly
+                spellcheck="false"
+                placeholder="Defaults to the server project root"
+              />
+              <button
+                id="manual-workspace-root-select"
+                class="workspace-picker-button"
+                type="button"
+              >
+                Choose Folder
+              </button>
+            </div>
+          </label>
           <label class="agent-self-field">
             <span class="setup-control-label">Name</span>
             <input id="agent-self-name" name="agent-self-name" type="text" placeholder="Optional" />
@@ -518,6 +562,7 @@
         <p class="dialog-note">
           This list syncs with the installed Codex plugins each time you open it.
         </p>
+        <p id="plugin-settings-auth-hint" class="dialog-note dialog-note--accent" hidden></p>
         <div id="codex-plugin-list" class="plugin-settings-list" aria-live="polite"></div>
         <div id="codex-plugin-empty" class="plugin-settings-empty" hidden>
           No installed Codex plugins were found.
