@@ -363,6 +363,36 @@ test('renderCallSnapshot exposes camera and speaker controls on the call surface
   assert.equal(dom.callSelfCluster.hidden, false);
   assert.equal(dom.callSelfView.hidden, false);
   assert.equal(dom.callSelfView.dataset.state, 'live');
+  assert.equal(dom.callCameraToggle.dataset.state, 'live');
+});
+
+test('renderCallSnapshot marks the camera control off when local video is disabled', () => {
+  const { presenter, dom } = createPresenterHarness({
+    stateOverrides: {
+      activeCall: true,
+      localCameraSnapshot: {
+        supported: true,
+        enabled: false,
+        active: false,
+        loading: false,
+        permissionState: 'granted',
+        status: 'Camera off',
+      },
+      productionVoice: {
+        loading: false,
+        uploading: false,
+        backendRunning: true,
+        profile: { referenceAvailable: true },
+        validationMessage: '',
+      },
+    },
+  });
+
+  presenter.renderCallSnapshot();
+
+  assert.equal(dom.callCameraToggle.dataset.state, 'off');
+  assert.equal(dom.callCameraToggle.attributes.title, 'Turn camera on');
+  assert.equal(dom.callSelfView.dataset.state, 'off');
 });
 
 test('renderCallSnapshot keeps the mic visibly live while the browser is listening', () => {

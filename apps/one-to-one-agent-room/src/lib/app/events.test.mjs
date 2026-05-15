@@ -511,7 +511,7 @@ test('bindAppEvents saves continuity settings only when the save button is press
   assert.equal(dom.continuitySettingsDirty.hidden, true);
 });
 
-test('bindAppEvents chooses and saves the manual workspace root from the continuity dialog', async () => {
+test('bindAppEvents marks the continuity dialog dirty after choosing a manual workspace root', async () => {
   globalThis.window = Object.assign(new EventTarget(), {
     confirm() {
       return true;
@@ -563,6 +563,14 @@ test('bindAppEvents chooses and saves the manual workspace root from the continu
   await Promise.resolve();
 
   assert.equal(dom.manualWorkspaceRootInput.value, '/tmp/workspace-beta');
+  assert.equal(dom.continuitySettingsSave.disabled, false);
+  assert.equal(dom.continuitySettingsDirty.hidden, false);
+  assert.equal(savedSettings, null);
+
+  dom.continuitySettingsSave.dispatchEvent(new Event('click'));
+  await Promise.resolve();
+  await Promise.resolve();
+
   assert.deepEqual(savedSettings, {
     agentMode: 'standard',
     manualMode: {
@@ -576,6 +584,8 @@ test('bindAppEvents chooses and saves the manual workspace root from the continu
       selfPrompt: '',
     },
   });
+  assert.equal(dom.continuitySettingsSave.disabled, true);
+  assert.equal(dom.continuitySettingsDirty.hidden, true);
 });
 
 test('bindAppEvents warns before closing dirty continuity settings without saving', () => {

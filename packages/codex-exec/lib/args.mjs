@@ -3,12 +3,15 @@ import {
   DEFAULT_CODEX_MODEL,
   DEFAULT_REASONING_EFFORT,
 } from './constants.mjs';
-import { buildCapabilityDisableArgs } from './capability-policy.mjs';
+import {
+  buildCapabilityDisableArgs,
+  resolveCapabilitySandbox,
+} from './capability-policy.mjs';
 
 export function buildCodexBaseArgs({ workdir, capabilityPolicy } = {}) {
   return [
     '-a', 'never',
-    '-s', 'read-only',
+    '-s', resolveCapabilitySandbox(capabilityPolicy),
     ...buildCapabilityDisableArgs(capabilityPolicy),
     '-C', workdir,
   ];

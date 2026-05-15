@@ -10,3 +10,5 @@ packages/production-voice/__pycache__/
 
 .superpowers/
 tmp/
+
+notes/

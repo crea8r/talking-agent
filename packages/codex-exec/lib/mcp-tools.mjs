@@ -1,4 +1,8 @@
 import { buildCodexBaseArgs } from './args.mjs';
+import {
+  normalizeCapabilityPolicy,
+  resolveCapabilitySandbox,
+} from './capability-policy.mjs';
 import { normalizeString } from './strings.mjs';
 
 export function buildMcpServerArgs({
@@ -13,13 +17,15 @@ export function buildCodexToolArguments({
   workdir,
   model,
   reasoningEffort,
+  capabilityPolicy,
 } = {}) {
+  const normalizedPolicy = normalizeCapabilityPolicy(capabilityPolicy);
   return {
     prompt: normalizeString(prompt),
     cwd: normalizeString(workdir),
     model: normalizeString(model),
     'approval-policy': 'never',
-    sandbox: 'read-only',
+    sandbox: resolveCapabilitySandbox(normalizedPolicy),
     config: {
       model_reasoning_effort: normalizeString(reasoningEffort),
     },

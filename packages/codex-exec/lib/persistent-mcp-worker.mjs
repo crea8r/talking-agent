@@ -138,6 +138,7 @@ export function createPersistentCodexMcpWorker({
               workdir: executionWorkdir,
               model,
               reasoningEffort,
+              capabilityPolicy,
             }),
     });
 

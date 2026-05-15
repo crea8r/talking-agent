@@ -43,6 +43,8 @@ test('index.html exposes Setup and Call tabs without a visible debug surface', (
   assert.match(html, /id="call-self-status"/);
   assert.match(html, /class="call-self-controls"/);
   assert.match(html, /id="call-camera-toggle"/);
+  assert.match(html, /class="call-camera-icon call-camera-icon--live"/);
+  assert.match(html, /class="call-camera-icon call-camera-icon--off"/);
   assert.match(html, /id="call-speaker-toggle"/);
   assert.match(html, /id="call-history-toggle"/);
   assert.match(html, /id="call-mic-toggle"/);
@@ -160,9 +162,11 @@ test('styles keep the floating mode switch compact', () => {
   assert.match(css, /\.call-deferred-time\s*\{[\s\S]*font-family:\s*var\(--mono\)/);
   assert.match(css, /\.call-action-bar\s*\{[\s\S]*display:\s*flex;[\s\S]*justify-content:\s*center;/);
   assert.match(css, /\.call-action-button\s*\{[\s\S]*border-radius:\s*999px;[\s\S]*background:\s*rgba?\(/);
+  assert.match(css, /\.call-camera-icon--off\s*\{[\s\S]*display:\s*none;/);
+  assert.match(css, /#call-camera-toggle\[data-state='off'\]\s*\{[\s\S]*rgba\(112,\s*20,\s*32,\s*0\.94\)/);
   assert.match(css, /#join-call\[data-mode='start-call'\]\s*\{[\s\S]*#63dc8d[\s\S]*#1fb86b/);
   assert.match(css, /\.call-action-button--danger\s*\{[\s\S]*background:[\s\S]*rgba?\(/);
-  assert.match(css, /\.call-self-cluster\s*\{[\s\S]*position:\s*absolute;[\s\S]*bottom:\s*clamp\(248px,\s*26vh,\s*324px\);/);
+  assert.match(css, /\.call-self-cluster\s*\{[\s\S]*position:\s*absolute;[\s\S]*bottom:\s*clamp\(248px,\s*26vh,\s*324px\);[\s\S]*z-index:\s*5;/);
   assert.match(css, /\.call-self-view\s*\{[\s\S]*position:\s*relative;[\s\S]*width:\s*100%;/);
   assert.match(css, /\.call-self-controls\s*\{[\s\S]*position:\s*absolute;[\s\S]*top:\s*100%;[\s\S]*transform:\s*translate\(-50%,\s*-30%\)/);
   assert.match(css, /\.call-self-video\s*\{[\s\S]*width:\s*100%;[\s\S]*height:\s*100%;/);

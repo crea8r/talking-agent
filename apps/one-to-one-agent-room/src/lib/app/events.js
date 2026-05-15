@@ -328,22 +328,6 @@ export function bindAppEvents({
     }
   };
 
-  const saveManualWorkspaceRoot = async () => {
-    if (!sessionController.saveAgentSelfSettings) {
-      syncSavedAgentSelfSettingsFromForm();
-      return;
-    }
-
-    const nextSettings = cloneAgentSelfSettings(readAgentSelfSettings());
-    try {
-      await sessionController.saveAgentSelfSettings(nextSettings);
-      lastSavedAgentSelfSettings = nextSettings;
-      renderContinuityDirtyState();
-    } catch (error) {
-      addLog('error', 'Saving manual workspace root failed.', formatError(error));
-    }
-  };
-
   const chooseManualWorkspaceRoot = async () => {
     if (!sessionController.selectManualWorkspaceRoot) {
       return;
@@ -359,7 +343,7 @@ export function bindAppEvents({
       if (dom.manualWorkspaceRootInput) {
         dom.manualWorkspaceRootInput.value = selectedPath;
       }
-      await saveManualWorkspaceRoot();
+      renderContinuityDirtyState();
     } catch (error) {
       addLog('error', 'Selecting manual workspace root failed.', formatError(error));
     }

@@ -35,3 +35,8 @@ export function buildCapabilityDisableArgs(capabilityPolicy = {}) {
 
   return args;
 }
+
+export function resolveCapabilitySandbox(capabilityPolicy = {}) {
+  const normalizedPolicy = normalizeCapabilityPolicy(capabilityPolicy);
+  return normalizedPolicy.enableControlComputer ? 'workspace-write' : 'read-only';
+}
